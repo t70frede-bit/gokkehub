@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import type { PublicSessionData } from "@gokkehub/auth/types";
-import { Button, Panel, Modal, useToast } from "@gokkehub/ui";
+import { Button, Panel, useToast } from "@gokkehub/ui";
 
 interface Props {
   session: PublicSessionData;
@@ -18,10 +18,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [nameValue, setNameValue] = useState(session.displayName ?? "");
   const [savingName, setSavingName] = useState(false);
 
-  const [editingEmail, setEditingEmail] = useState(false);
-  const [emailValue, setEmailValue] = useState(session.email ?? "");
-  const [savingEmail, setSavingEmail] = useState(false);
-
   const [editingPassword, setEditingPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -29,8 +25,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [passwordErrors, setPasswordErrors] = useState<{ new?: string; confirm?: string }>({});
 
   const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
 
   /* ── Avatar ── */
 
@@ -77,23 +71,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     finally { setSavingName(false); }
   };
 
-  /* ── Email ── */
-
-  const handleSaveEmail = async () => {
-    const trimmed = emailValue.trim().toLowerCase();
-    if (!trimmed.includes("@")) { addToast("Enter a valid email address", "error"); return; }
-    setSavingEmail(true);
-    try {
-      const res = await fetch("/profile/update", {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ email: trimmed }),
-      });
-      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to update email", "error"); return; }
-      onSessionRefresh(); setEditingEmail(false); addToast("Email updated", "success");
-    } catch { addToast("Failed to update email", "error"); }
-    finally { setSavingEmail(false); }
-  };
-
   /* ── Password change ── */
 
   const handleSavePassword = async () => {
@@ -123,6 +100,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
 
   /* ── Linked accounts ── */
 
+
   const handleDisconnect = async (provider: "discord" | "spotify" | "steam") => {
     setDisconnecting(provider);
     try {
@@ -132,17 +110,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
       addToast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} disconnected`, "success");
     } catch { addToast(`Failed to disconnect ${provider}`, "error"); }
     finally { setDisconnecting(null); }
-  };
-
-  /* ── Delete account ── */
-
-  const handleDeleteAccount = async () => {
-    setDeletingAccount(true);
-    try {
-      const res = await fetch("/profile/delete", { method: "DELETE", credentials: "include" });
-      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to delete account", "error"); setDeletingAccount(false); return; }
-      window.location.replace("/login");
-    } catch { addToast("Failed to delete account", "error"); setDeletingAccount(false); }
   };
 
   return (
@@ -221,31 +188,17 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           </div>
         </SettingRow>
 
-        {/* Email */}
-        <SettingRow
-          label="Email address"
-          value={session.email ?? "—"}
-          editing={editingEmail}
-          onEdit={() => { setEditingEmail(true); setEmailValue(session.email ?? ""); }}
-          onCancel={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}
-        >
-          <div className="flex gap-2">
-            <input
-              type="email"
-              value={emailValue}
-              onChange={(e) => setEmailValue(e.target.value)}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSaveEmail();
-                if (e.key === "Escape") { setEditingEmail(false); setEmailValue(session.email ?? ""); }
-              }}
-              className="input flex-1"
-              placeholder="New email address"
-            />
-            <Button size="sm" onClick={handleSaveEmail} loading={savingEmail}>Save</Button>
-            <ChipButton onClick={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}>Cancel</ChipButton>
+        {/* Email — read-only display */}
+        <Panel variant="bare">
+          <div className="p-4 space-y-1">
+            <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Email address
+            </span>
+            <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>
+              {session.email ?? "—"}
+            </p>
           </div>
-        </SettingRow>
+        </Panel>
 
         {/* Inline password change */}
         {session.email && (
@@ -328,44 +281,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           description="Give GokkeHub access to view your game library"
         />
 
-        {/* Danger zone */}
-        <SectionLabel>Danger zone</SectionLabel>
-        <Panel variant="bare">
-          <div className="flex items-center justify-between p-4">
-            <div>
-              <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>Delete account</p>
-              <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                Permanently removes all your data
-              </p>
-            </div>
-            <Button variant="danger" size="sm" onClick={() => setShowDeleteModal(true)}>
-              Delete account
-            </Button>
-          </div>
-        </Panel>
-
       </div>
-
-      {/* Delete confirmation modal */}
-      <Modal open={showDeleteModal} onClose={() => !deletingAccount && setShowDeleteModal(false)}>
-        <div className="space-y-4">
-          <h2 className="text-xl font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>
-            Delete your account?
-          </h2>
-          <p className="text-sm leading-relaxed" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-            This permanently deletes your GokkeHub account and all associated data.
-            This action <strong style={{ color: "rgb(var(--text-primary-rgb))" }}>cannot be undone</strong>.
-          </p>
-          <div className="flex gap-3 justify-end pt-2">
-            <ChipButton onClick={() => setShowDeleteModal(false)} disabled={deletingAccount}>
-              Cancel
-            </ChipButton>
-            <Button variant="danger" onClick={handleDeleteAccount} loading={deletingAccount}>
-              Yes, delete my account
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }
