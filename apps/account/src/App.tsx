@@ -1,10 +1,47 @@
+import { useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.tsx";
 import ProfilePage from "./pages/ProfilePage.tsx";
 import { useSession } from "./hooks/useSession.ts";
+import { useToast } from "@gokkehub/ui";
 
 export default function App() {
   const { session, loading, refresh } = useSession();
+  const { addToast } = useToast();
+
+  // Handle Supabase email confirmation redirect:
+  // After clicking the link in the signup email the user lands on
+  // /profile#access_token=...&type=signup — exchange it for a real session.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash) return;
+
+    const params = new URLSearchParams(hash.slice(1));
+    const accessToken = params.get("access_token");
+    const type = params.get("type");
+
+    if (!accessToken || type !== "signup") return;
+
+    // Clear the hash so it doesn't re-trigger on back/forward navigation
+    window.history.replaceState(null, "", window.location.pathname);
+
+    fetch("/auth/confirm", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken }),
+    }).then((res) => {
+      if (res.ok) {
+        addToast("Account confirmed — welcome to GokkeHub!", "success");
+        refresh();
+      } else {
+        addToast("Confirmation failed — the link may have expired", "error");
+      }
+    }).catch(() => {
+      addToast("Network error during confirmation", "error");
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) {
     return (
