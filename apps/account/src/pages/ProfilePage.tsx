@@ -11,7 +11,6 @@ interface Props {
 export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const [loggingOut, setLoggingOut] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(session.avatarUrl);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [removingAvatar, setRemovingAvatar] = useState(false);
@@ -119,16 +118,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     finally { setDisconnecting(null); }
   };
 
-  /* ── Logout ── */
-
-  const handleLogout = async () => {
-    setLoggingOut(true);
-    try {
-      await fetch("/auth/logout", { method: "DELETE", credentials: "include" });
-      navigate("/login", { replace: true });
-    } catch { addToast("Logout failed — please try again", "error"); setLoggingOut(false); }
-  };
-
   /* ── Delete account ── */
 
   const handleDeleteAccount = async () => {
@@ -141,46 +130,8 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   };
 
   return (
-    <div className="min-h-screen p-4 sm:p-8">
+    <div className="p-4 sm:p-8">
       <div className="max-w-lg mx-auto space-y-6">
-
-        {/* Navigation bar */}
-        <div className="flex items-center justify-between">
-          <a
-            href="https://gokkehub.com"
-            className="group flex items-center gap-1.5 text-sm font-medium transition-colors"
-            style={{ color: "rgb(var(--text-muted-rgb))" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "rgb(var(--text-primary-rgb))")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "rgb(var(--text-muted-rgb))")}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:-translate-x-0.5">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-            GokkeHub
-          </a>
-
-          <button
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-1.5 transition-all disabled:opacity-50"
-            style={{
-              color: "rgb(var(--text-secondary-rgb))",
-              background: "rgba(var(--surface-raised-rgb), 0.5)",
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            {loggingOut ? (
-              <SpinnerIcon />
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-            )}
-            Sign out
-          </button>
-        </div>
 
         <h1 className="text-2xl font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>My Account</h1>
 
