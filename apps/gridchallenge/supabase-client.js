@@ -1,25 +1,17 @@
-// Supabase client initialization
-// Values are read from environment variables — NEVER hardcode them here.
-//
-// Static file (current): create a local env.js (gitignored) that sets window.__ENV__
-// Vite app (Step 4 migration): use import.meta.env.VITE_SUPABASE_URL etc.
-//
-// See .env.example for required variable names.
-const SUPABASE_URL =
-  (typeof process !== "undefined" && process.env?.SUPABASE_URL) ||
-  window.__ENV__?.SUPABASE_URL ||
-  "";
-const SUPABASE_ANON_KEY =
-  (typeof process !== "undefined" && process.env?.SUPABASE_ANON_KEY) ||
-  window.__ENV__?.SUPABASE_ANON_KEY ||
-  "";
+// Supabase client — ES module (Vite build)
+// Credentials come from VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in .env.local
+// Never commit .env.local — see .env.example for the required variable names.
+
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL     ?? "";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error(
-    "[supabase-client] SUPABASE_URL or SUPABASE_ANON_KEY is not set. " +
-    "Copy .env.example → env.js and fill in your values (never commit env.js)."
+    "[supabase-client] VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is not set.\n" +
+    "Copy .env.example → .env.local and fill in your values (never commit .env.local)."
   );
 }
 
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

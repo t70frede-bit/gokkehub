@@ -1,5 +1,3 @@
-import React from "react";
-
 export interface ToggleOption<T extends string = string> {
   value: T;
   label: string;

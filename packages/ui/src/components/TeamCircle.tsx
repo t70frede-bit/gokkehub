@@ -1,4 +1,3 @@
-import React from "react";
 import type { TeamColor } from "@gokkehub/db/types";
 
 export type TeamOption = TeamColor | "spectator";

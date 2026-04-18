@@ -1,4 +1,10 @@
 // Join Lobby Page Logic
+import { db } from "./supabase-client.js";
+import {
+  generatePlayerId,
+  TEAM_COLORS, TEAM_LABELS, TEAM_EMOJIS,
+} from "./shared.js";
+
 const params = new URLSearchParams(window.location.search);
 const lobbyId = params.get("lobby");
 

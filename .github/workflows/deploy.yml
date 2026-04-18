@@ -25,36 +25,22 @@ jobs:
       - name: Build all apps
         run: npm run build
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # gridchallenge reads these at build time via import.meta.env.VITE_*
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
       - name: Upload build artefacts
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: apps/*/dist
+          # Upload the full app directory so wrangler can find functions/ next to dist/
+          path: |
+            apps/web/dist
+            apps/account/dist
+            apps/account/functions
+            apps/account/wrangler.toml
+            apps/gridchallenge/dist
           retention-days: 1
-
-  # ── Deploy gridchallenge (partybingo.gokkehub.com) ───────────────────────────
-  deploy-gridchallenge:
-    name: Deploy gridchallenge
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artefacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-          path: apps
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/gridchallenge/dist --project-name=gridchallenge
 
   # ── Deploy web (gokkehub.com) ─────────────────────────────────────────────────
   deploy-web:
@@ -62,8 +48,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download build artefacts
         uses: actions/download-artifact@v4
         with:
@@ -75,16 +59,15 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/web/dist --project-name=web
+          command: pages deploy apps/web/dist --project-name=web --branch=main
 
   # ── Deploy account (account.gokkehub.com) ────────────────────────────────────
+  # Runs wrangler from apps/account/ so it picks up functions/ alongside dist/
   deploy-account:
     name: Deploy account
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download build artefacts
         uses: actions/download-artifact@v4
         with:
@@ -96,16 +79,15 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/account/dist --project-name=account
+          workingDirectory: apps/account
+          command: pages deploy dist --project-name=account --branch=main
 
-  # ── Deploy trackguess (musicquiz.gokkehub.com) ────────────────────────────────
-  deploy-trackguess:
-    name: Deploy trackguess
+  # ── Deploy gridchallenge (partybingo.gokkehub.com) ───────────────────────────
+  deploy-gridchallenge:
+    name: Deploy gridchallenge
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download build artefacts
         uses: actions/download-artifact@v4
         with:
@@ -117,46 +99,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/trackguess/dist --project-name=trackguess
+          command: pages deploy apps/gridchallenge/dist --project-name=gridchallenge --branch=main
 
-  # ── Deploy timelinedrop (hitster.gokkehub.com) ────────────────────────────────
-  deploy-timelinedrop:
-    name: Deploy timelinedrop
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artefacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-          path: apps
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/timelinedrop/dist --project-name=timelinedrop
-
-  # ── Deploy beatrank (bezzerwizzer.gokkehub.com) ───────────────────────────────
-  deploy-beatrank:
-    name: Deploy beatrank
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artefacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-          path: apps
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/beatrank/dist --project-name=beatrank
+  # trackguess, timelinedrop, beatrank deploy jobs will be added once those apps are built

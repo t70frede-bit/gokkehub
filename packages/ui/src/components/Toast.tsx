@@ -2,14 +2,17 @@ import React, { createContext, useCallback, useContext, useRef, useState } from 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export type ToastVariant = "info" | "success" | "error";
+
 export interface ToastItem {
   id: string;
   message: string;
+  variant: ToastVariant;
   visible: boolean;
 }
 
 export interface ToastContextValue {
-  addToast: (message: string) => void;
+  addToast: (message: string, variant?: ToastVariant) => void;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -22,11 +25,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  const addToast = useCallback((message: string) => {
+  const addToast = useCallback((message: string, variant: ToastVariant = "info") => {
     const id = crypto.randomUUID();
 
     // Mount invisible first, then make visible on next frame for CSS transition
-    setToasts((prev) => [...prev, { id, message, visible: false }]);
+    setToasts((prev) => [...prev, { id, message, variant, visible: false }]);
 
     requestAnimationFrame(() => {
       setToasts((prev) =>
@@ -61,7 +64,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             className="max-w-xs px-4 py-3 rounded-xl text-sm text-white pointer-events-auto"
             style={{
               background: "rgba(var(--surface-base-rgb), 0.96)",
-              border: "1px solid rgba(var(--color-primary-rgb), 0.6)",
+              border: `1px solid ${
+                toast.variant === "error"
+                  ? "rgba(220,38,38,0.7)"
+                  : toast.variant === "success"
+                  ? "rgba(34,197,94,0.7)"
+                  : "rgba(var(--color-primary-rgb), 0.6)"
+              }`,
               boxShadow: "var(--shadow-card)",
               opacity: toast.visible ? 1 : 0,
               transform: toast.visible ? "translateX(0)" : "translateX(40px)",

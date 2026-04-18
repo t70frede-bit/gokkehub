@@ -9,6 +9,7 @@
   },
   "files": ["src"],
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "typescript": "^5.4.0"
   }

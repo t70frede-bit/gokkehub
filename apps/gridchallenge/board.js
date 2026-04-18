@@ -1,4 +1,14 @@
 // Board Display and Persistence Logic
+import { db } from "./supabase-client.js";
+import {
+  loadChallenges, allChallenges, getChallengeById, shuffleArray,
+  gameNames, normalizeGameKey,
+  saveBoardState, loadBoardState, getUrlParams,
+  customChallengeId, csvChallengeId,
+  TEAM_COLORS, TEAM_LABELS, TEAM_EMOJIS,
+  iconMap,
+} from "./shared.js";
+
 const gridEl = document.getElementById("bingoGrid");
 const backBtn = document.getElementById("backBtn");
 const shareBtn = document.getElementById("shareBtn");

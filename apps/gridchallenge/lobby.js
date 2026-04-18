@@ -1,4 +1,12 @@
 // Lobby Page Logic
+import { db } from "./supabase-client.js";
+import {
+  loadChallenges, allChallenges, shuffleArray,
+  gameNames, generatePlayerId,
+  csvChallengeId, customChallengeId,
+  TEAM_COLORS, TEAM_LABELS, TEAM_EMOJIS,
+} from "./shared.js";
+
 const params = new URLSearchParams(window.location.search);
 const lobbyId = params.get("lobby");
 const urlPlayerId = params.get("player");

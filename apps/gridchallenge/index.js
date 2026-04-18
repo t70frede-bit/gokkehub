@@ -1,4 +1,11 @@
 // Landing Page Logic
+import { db } from "./supabase-client.js";
+import {
+  loadChallenges, allChallenges, shuffleArray,
+  gameNames, generateLobbyId, generatePlayerId,
+  csvChallengeId, customChallengeId,
+  TEAM_COLORS, TEAM_LABELS, TEAM_EMOJIS,
+} from "./shared.js";
 
 // ── MENU NAVIGATION ────────────────────────────────────────────────────────────
 

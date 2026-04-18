@@ -1,16 +1,18 @@
-// Shared constants and functions
-const APP_VERSION = "1.3.1";
+// Shared constants and utilities — ES module
+import Papa from "papaparse";
+
+export const APP_VERSION = "1.3.1";
 document.addEventListener("DOMContentLoaded", () => {
   const el = document.getElementById("versionTag");
   if (el) el.textContent = "v" + APP_VERSION;
 });
-const iconMap = {
+export const iconMap = {
   single: "👤",
   group: "👥",
   versus: "👤–👤"
 };
 
-const gameEmojis = {
+export const gameEmojis = {
   overwatch: "🎮",
   lol: "⚔️",
   cs2: "🔫",
@@ -19,7 +21,7 @@ const gameEmojis = {
   wow: "🐉"
 };
 
-const gameNames = {
+export const gameNames = {
   overwatch: "Overwatch",
   lol: "League of Legends",
   cs2: "CS2",
@@ -36,7 +38,7 @@ const gameNames = {
   partyanimals: "Party Animals"
 };
 
-const gameIconUrls = {
+export const gameIconUrls = {
   overwatch: "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/overwatch.svg",
   lol: "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/leagueoflegends.svg",
   cs2: "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/counterstrike.svg",
@@ -53,14 +55,14 @@ const gameIconUrls = {
   partyanimals: "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/partyanimals.svg"
 };
 
-function createGameIconElement(gameKey) {
+export function createGameIconElement(gameKey) {
   // No icon needed in current design; return empty fragment.
   const wrapper = document.createElement("span");
   wrapper.className = "game-icon-wrapper";
   return wrapper;
 }
 
-const gameAliasMap = {
+export const gameAliasMap = {
   "lol": "lol",
   "league of legends": "lol",
   "league-of-legends": "lol",
@@ -91,23 +93,24 @@ const gameAliasMap = {
   "partyanimals": "partyanimals"
 };
 
-function normalizeGameKey(rawGame) {
+export function normalizeGameKey(rawGame) {
   if (!rawGame || typeof rawGame !== "string") return "";
   const key = rawGame.trim().toLowerCase();
   return gameAliasMap[key] || key.replace(/[^a-z0-9]/g, "");
 }
 
-let allChallenges = [];
+// Exported as a mutable array — mutated in-place by loadChallenges() so all importers see updates.
+export const allChallenges = [];
 
 // Load CSV data
-function loadChallenges() {
+export function loadChallenges() {
   return new Promise((resolve) => {
     Papa.parse("challenges.csv", {
       download: true,
       header: true,
       delimiter: ";",
       complete: function(results) {
-        allChallenges = results.data
+        const parsed = results.data
           .filter(c => c.text && c.type && c.game)
           .map(c => {
             const canonicalGame = normalizeGameKey(c.game);
@@ -119,7 +122,9 @@ function loadChallenges() {
               id: Number(c.id)
             };
           });
-
+        // Mutate in-place so all importers see the populated array
+        allChallenges.length = 0;
+        allChallenges.push(...parsed);
         console.log(`Loaded ${allChallenges.length} challenges`);
         resolve(allChallenges);
       }
@@ -128,7 +133,7 @@ function loadChallenges() {
 }
 
 // Shuffle array
-function shuffleArray(arr) {
+export function shuffleArray(arr) {
   const shuffled = [...arr];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -138,19 +143,19 @@ function shuffleArray(arr) {
 }
 
 // Get challenge by ID
-function getChallengeById(id) {
+export function getChallengeById(id) {
   return allChallenges.find(c => c.id == id);
 }
 
 // Save board state to localStorage
-function saveBoardState(challengeIds, boardState) {
+export function saveBoardState(challengeIds, boardState) {
   localStorage.setItem("currentBoardIds", JSON.stringify(challengeIds));
   localStorage.setItem("boardState", JSON.stringify(boardState));
   localStorage.setItem("lastBoardTime", new Date().getTime());
 }
 
 // Load board state from localStorage
-function loadBoardState() {
+export function loadBoardState() {
   return {
     ids: JSON.parse(localStorage.getItem("currentBoardIds") || "[]"),
     state: JSON.parse(localStorage.getItem("boardState") || "{}")
@@ -158,7 +163,7 @@ function loadBoardState() {
 }
 
 // Get URL parameters
-function getUrlParams() {
+export function getUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const challenges = params.get("challenges");
   return challenges ? challenges.split(",").map(Number) : null;
@@ -166,7 +171,7 @@ function getUrlParams() {
 
 // --- Lobby / multiplayer helpers ---
 
-function generateLobbyId() {
+export function generateLobbyId() {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "";
   for (let i = 0; i < 6; i++) {
@@ -175,7 +180,7 @@ function generateLobbyId() {
   return id;
 }
 
-function generatePlayerId() {
+export function generatePlayerId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
@@ -183,10 +188,10 @@ function generatePlayerId() {
 }
 
 // Challenge IDs are prefixed to distinguish CSV vs custom challenges
-function csvChallengeId(n) { return "csv_" + n; }
-function customChallengeId(n) { return "custom_" + n; }
+export function csvChallengeId(n) { return "csv_" + n; }
+export function customChallengeId(n) { return "custom_" + n; }
 
-function parseChallengeId(id) {
+export function parseChallengeId(id) {
   if (typeof id !== "string") return null;
   if (id.startsWith("csv_")) return { source: "csv", id: Number(id.slice(4)) };
   if (id.startsWith("custom_")) return { source: "custom", id: Number(id.slice(7)) };
@@ -196,6 +201,6 @@ function parseChallengeId(id) {
   return null;
 }
 
-const TEAM_COLORS = ["blue", "red", "green", "yellow"];
-const TEAM_LABELS = { blue: "Blue", red: "Red", green: "Green", yellow: "Yellow" };
-const TEAM_EMOJIS = { blue: "🔵", red: "🔴", green: "🟢", yellow: "🟡" };
+export const TEAM_COLORS = ["blue", "red", "green", "yellow"];
+export const TEAM_LABELS = { blue: "Blue", red: "Red", green: "Green", yellow: "Yellow" };
+export const TEAM_EMOJIS = { blue: "🔵", red: "🔴", green: "🟢", yellow: "🟡" };

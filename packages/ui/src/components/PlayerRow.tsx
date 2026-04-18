@@ -1,4 +1,3 @@
-import React from "react";
 import type { Player } from "@gokkehub/db/types";
 import Badge from "./Badge.tsx";
 
