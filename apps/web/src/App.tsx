@@ -95,7 +95,7 @@ export default function App() {
           href="https://account.gokkehub.com"
           className="text-sm text-content-secondary hover:text-content-primary transition-colors border border-white/10 rounded-xl px-4 py-2 hover:border-white/25"
         >
-          Sign in
+          My Account
         </a>
       </header>
 
