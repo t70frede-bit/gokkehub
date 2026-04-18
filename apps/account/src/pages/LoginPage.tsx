@@ -78,8 +78,9 @@ export default function LoginPage() {
           ))}
         </div>
 
-        {/* Panel with animated height */}
-        <Panel>
+        {/* Panel with animated height — bare so padding lives on the slide divs,
+             not on the clip boundary */}
+        <Panel variant="bare" style={{ overflow: "hidden" }}>
           <div
             style={{
               height: panelHeight > 0 ? panelHeight : "auto",
@@ -98,19 +99,20 @@ export default function LoginPage() {
                 transition: "transform 0.32s cubic-bezier(0.4, 0, 0.2, 1)",
               }}
             >
-              {/* Login form — left half */}
-              <div ref={loginRef} style={{ width: "50%", flexShrink: 0 }}>
+              {/* Login form — left half, padding lives here */}
+              <div ref={loginRef} style={{ width: "50%", flexShrink: 0, padding: "28px 28px 24px" }}>
                 <LoginForm
                   onSuccess={() => navigate("/profile", { replace: true })}
                   addToast={addToast}
                 />
               </div>
 
-              {/* Register / confirmation — right half */}
+              {/* Register / confirmation — right half, same padding */}
               <div style={{ width: "50%", flexShrink: 0, position: "relative" }}>
                 <div
                   ref={registerRef}
                   style={{
+                    padding: "28px 28px 24px",
                     position: confirmed ? "absolute" : "relative",
                     top: 0, left: 0, width: "100%",
                     visibility: confirmed ? "hidden" : "visible",
@@ -125,6 +127,7 @@ export default function LoginPage() {
                 <div
                   ref={confirmRef}
                   style={{
+                    padding: "28px 28px 24px",
                     position: confirmed ? "relative" : "absolute",
                     top: 0, left: 0, width: "100%",
                     visibility: confirmed ? "visible" : "hidden",
