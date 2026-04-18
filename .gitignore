@@ -1,5 +1,5 @@
 # Legacy source folder (migrated to apps/gridchallenge — kept locally for reference)
-Games/
+/Games/
 
 # Claude Code local settings
 .claude/

@@ -1,0 +1,14 @@
+/**
+ * trackguess (musicquiz.gokkehub.com)
+ * Spotify Green → Lime — music / listening energy
+ */
+:root {
+  --color-primary-rgb:       29, 185,  84;   /* #1db954 Spotify green */
+  --color-primary-light-rgb: 80, 220, 120;
+  --color-primary-dark-rgb:  18, 130,  56;
+  --color-secondary-rgb:     30, 215,  96;   /* #1ed760 bright green  */
+
+  --bg-tint-1: #001a08;
+  --bg-tint-2: #000d04;
+  --bg-tint-3: #001a0e;
+}

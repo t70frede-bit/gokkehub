@@ -1,0 +1,14 @@
+/**
+ * timelinedrop (hitster.gokkehub.com)
+ * Orange → Gold — vinyl / retro / warm energy
+ */
+:root {
+  --color-primary-rgb:       255, 107,   0;   /* #ff6b00 orange */
+  --color-primary-light-rgb: 255, 160,  60;
+  --color-primary-dark-rgb:  200,  70,   0;
+  --color-secondary-rgb:     255, 215,   0;   /* #ffd700 gold   */
+
+  --bg-tint-1: #1a0e00;
+  --bg-tint-2: #0d0700;
+  --bg-tint-3: #1a1000;
+}

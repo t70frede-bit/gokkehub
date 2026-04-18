@@ -1,0 +1,14 @@
+/**
+ * account (account.gokkehub.com)
+ * Indigo → Rose — calm / trustworthy / auth feel
+ */
+:root {
+  --color-primary-rgb:       108,  99, 255;   /* #6c63ff soft indigo */
+  --color-primary-light-rgb: 160, 150, 255;
+  --color-primary-dark-rgb:   70,  60, 200;
+  --color-secondary-rgb:     247,  37, 133;   /* #f72585 rose        */
+
+  --bg-tint-1: #0a0818;
+  --bg-tint-2: #05040e;
+  --bg-tint-3: #0c0a1e;
+}
