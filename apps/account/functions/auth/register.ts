@@ -49,9 +49,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   });
 
   if (error) {
-    // Supabase returns a generic error for duplicate emails to prevent enumeration;
-    // surface it as-is so the user knows to sign in instead.
+    const msg = error.message.toLowerCase();
+    if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("email address is already")) {
+      return Response.json({ error: "A user already exists with this email address." }, { status: 400 });
+    }
     return Response.json({ error: error.message }, { status: 400 });
+  }
+
+  // When Supabase email enumeration protection is on, duplicate signUps return a
+  // fake success with an empty identities array instead of an error.
+  if (data.user && (data.user.identities?.length ?? 0) === 0) {
+    return Response.json({ error: "A user already exists with this email address." }, { status: 400 });
   }
 
   if (!data.session) {
