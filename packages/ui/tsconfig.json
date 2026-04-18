@@ -1,0 +1,7 @@
+{
+  "extends": "@gokkehub/config/tsconfig",
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
