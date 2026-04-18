@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lobby — Bingo Party Game</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bingo-container lobby-container">
+  <header class="header">
+    <h1>🎮 Bingo Party Game</h1>
+    <p id="lobbyStatusText">Waiting for players to join...</p>
+  </header>
+
+  <!-- Lobby code + share -->
+  <div class="lobby-code-panel">
+    <div class="lobby-code-label">Lobby Code</div>
+    <div class="lobby-code" id="lobbyCodeDisplay">——</div>
+    <button class="control-btn" id="copyLinkBtn">📋 Copy Join Link</button>
+  </div>
+
+  <!-- Host-only settings panel -->
+  <div class="lobby-settings-panel" id="hostSettingsPanel" style="display:none;">
+    <h2>Game Settings</h2>
+
+    <div class="lobby-settings-row">
+      <div class="lobby-setting-field">
+        <label>Challenge Pool</label>
+        <div class="pool-toggle" id="poolToggle">
+          <button type="button" class="pool-option active" data-pool="standard">Standard only</button>
+          <button type="button" class="pool-option" data-pool="standard+custom">Standard + Custom</button>
+          <button type="button" class="pool-option" data-pool="custom">Custom only</button>
+        </div>
+      </div>
+      <div class="lobby-setting-field">
+        <label for="teamCountSelect">Number of teams</label>
+        <select id="teamCountSelect">
+          <option value="2" selected>2 teams (Blue, Red)</option>
+          <option value="3">3 teams (Blue, Red, Green)</option>
+          <option value="4">4 teams (Blue, Red, Green, Yellow)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="lobby-settings-row" id="gamesRow">
+      <div class="lobby-setting-field full-width">
+        <label>Games to include</label>
+        <div class="games-grid" id="lobbyGamesGrid"></div>
+      </div>
+    </div>
+
+    <div class="lobby-settings-row">
+      <div class="lobby-setting-field full-width">
+        <label>Challenge types</label>
+        <div class="types-grid">
+          <label class="type-checkbox">
+            <input type="checkbox" class="type-select" value="single" checked>
+            <span class="type-icon">👤</span><span class="type-label">Single</span>
+          </label>
+          <label class="type-checkbox">
+            <input type="checkbox" class="type-select" value="group" checked>
+            <span class="type-icon">👥</span><span class="type-label">Group</span>
+          </label>
+          <label class="type-checkbox">
+            <input type="checkbox" class="type-select" value="versus" checked>
+            <span class="type-icon">👤–👤</span><span class="type-label">Versus</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="lobby-settings-row">
+      <div class="lobby-setting-field">
+        <label for="lobbyBoardSize">Board size (N×N)</label>
+        <input type="number" id="lobbyBoardSize" min="3" max="9" value="5">
+      </div>
+      <div class="lobby-setting-field" id="versusCountField">
+        <label for="lobbyVersusCount">Versus challenges on board</label>
+        <input type="number" id="lobbyVersusCount" min="0" value="5">
+      </div>
+      <div class="lobby-setting-field" id="versusIntervalField">
+        <label for="lobbyVersusInterval">Versus interval (min)</label>
+        <input type="number" id="lobbyVersusInterval" min="1" max="60" value="5">
+      </div>
+      <div class="lobby-setting-field">
+        <label>Free center space</label>
+        <button type="button" class="control-btn" id="lobbyFreeSpaceBtn" aria-pressed="false">Free space OFF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom challenge toggle button (shown to all players when pool allows) -->
+  <div id="customChallengeToggleBar" style="display:none; text-align:center; margin-bottom:16px;">
+    <button class="control-btn" id="toggleCustomFormBtn">➕ Add Custom Challenge</button>
+  </div>
+
+  <!-- Custom challenge submission form (collapsible) -->
+  <div class="custom-challenge-panel" id="customChallengePanel" style="display:none;">
+    <h2>Submit a Custom Challenge</h2>
+    <div class="custom-challenge-form">
+      <input type="text" id="customText" placeholder="Challenge description..." maxlength="120">
+      <select id="customType">
+        <option value="single">👤 Single</option>
+        <option value="group">👥 Group</option>
+        <option value="versus">👤–👤 Versus</option>
+      </select>
+      <input type="text" id="customGame" placeholder="Game name..." maxlength="40">
+      <button type="button" class="control-btn" id="submitCustomBtn">Add Challenge</button>
+    </div>
+    <div class="custom-challenge-list" id="customChallengeList"></div>
+  </div>
+
+  <!-- Player list -->
+  <div class="lobby-players-panel">
+    <h2>Players <span id="playerCount">(0)</span></h2>
+    <div class="lobby-player-list" id="lobbyPlayerList">
+      <p class="waiting-text">No players yet...</p>
+    </div>
+  </div>
+
+  <!-- Host start button -->
+  <div id="startGamePanel" style="display:none; text-align:center; margin: 20px 0;">
+    <button class="generate-btn" id="startGameBtn">🎮 Start Game</button>
+    <p id="startGameError" style="color:#ff6b6b; margin-top:8px; display:none;"></p>
+  </div>
+
+  <!-- Player waiting message -->
+  <div id="playerWaitingPanel" style="display:none; text-align:center; margin: 20px 0;">
+    <p class="waiting-text">⏳ Waiting for the host to start the game...</p>
+  </div>
+
+  <footer class="footer">
+    <p id="lobbyRoleText"></p>
+    <p class="version-tag" id="versionTag"></p>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="supabase-client.js"></script>
+<script src="shared.js"></script>
+<script src="lobby.js"></script>
+</body>
+</html>

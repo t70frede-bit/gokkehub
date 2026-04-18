@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Board — Bingo Party Game</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bingo-container">
+  <!-- Header -->
+  <header class="header">
+    <h1>🎮 Bingo Party Game</h1>
+    <p>Complete the challenges and claim your squares!</p>
+    <div id="matchModeInfo" class="match-mode-display">👤 Solo mode</div>
+  </header>
+
+  <!-- Board Controls -->
+  <div class="board-controls">
+    <button class="control-btn" id="backBtn">← Back</button>
+    <button class="control-btn" id="shareBtn">📋 Share Board</button>
+    <button class="control-btn" id="resetBtn">🔄 Reset Board</button>
+    <button class="control-btn" id="fullscreenBtn">⛶ Fullscreen</button>
+    <button class="control-btn" id="muteBtn" title="Toggle sound">🔔 Sound ON</button>
+    <button class="control-btn" id="claimLogBtn">📋 Claim Log</button>
+  </div>
+
+  <!-- Lobby player list (lobby mode only) -->
+  <div class="lobby-player-list-bar" id="lobbyPlayerBar" style="display:none;">
+    <span class="player-bar-label">Players:</span>
+    <div id="playerBarItems"></div>
+  </div>
+
+  <!-- Bingo Grid -->
+  <div class="game-board">
+    <div class="bingo-grid" id="bingoGrid"></div>
+  </div>
+
+  <!-- Board Info / Scores -->
+  <div class="board-info">
+    <div class="team-score" id="teamScoreContainer">
+      <!-- populated dynamically; solo mode gets blue/red hardcoded -->
+      <div class="team blue">
+        <span class="team-icon">🔵</span>
+        <span class="team-label">Blue Team</span>
+        <span class="team-count" id="blueCount">0</span>
+      </div>
+      <div class="team red">
+        <span class="team-icon">🔴</span>
+        <span class="team-label">Red Team</span>
+        <span class="team-count" id="redCount">0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer" id="boardFooter">
+    <p>📘 Left-click to claim for blue team | 🖱️ Right-click to claim for red team</p>
+    <p class="version-tag" id="versionTag"></p>
+  </footer>
+</div>
+
+<!-- Toast notification container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Claim log sidebar -->
+<div class="claim-log-sidebar" id="claimLogSidebar" style="display:none;">
+  <div class="claim-log-header">
+    <span>📋 Claim Log</span>
+    <button id="closeClaimLog">✕</button>
+  </div>
+  <div class="claim-log-entries" id="claimLogEntries">
+    <p class="waiting-text">No claims yet.</p>
+  </div>
+</div>
+
+<!-- Bingo victory modal -->
+<div class="bingo-victory-modal" id="bingoVictoryModal" style="display:none;">
+  <div class="bingo-victory-content">
+    <div class="bingo-victory-emoji" id="bingoVictoryEmoji">🏆</div>
+    <h2 id="bingoVictoryTitle">BINGO!</h2>
+    <p id="bingoVictoryTeam">Blue Team wins!</p>
+    <button class="control-btn" id="dismissVictoryBtn">Continue Playing</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="supabase-client.js"></script>
+<script src="shared.js"></script>
+<script src="board.js"></script>
+</body>
+</html>

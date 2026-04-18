@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join Lobby — Bingo Party Game</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bingo-container join-container">
+  <header class="header">
+    <h1>🎮 Bingo Party Game</h1>
+    <p>Join a lobby and play with your friends!</p>
+  </header>
+
+  <div class="join-card">
+    <div id="joinError" class="join-error" style="display:none;"></div>
+
+    <div class="join-field">
+      <label for="playerName">Your name</label>
+      <input type="text" id="playerName" maxlength="20" placeholder="Enter your name..." autocomplete="off">
+    </div>
+
+    <div class="join-field">
+      <label>Pick your team</label>
+      <div class="team-picker" id="teamPicker">
+        <!-- populated by join.js based on lobby settings -->
+      </div>
+    </div>
+
+    <button class="generate-btn" id="joinBtn" disabled>Joining...</button>
+  </div>
+
+  <footer class="footer">
+    <p>You're joining lobby: <strong id="lobbyCodeDisplay">—</strong></p>
+    <p class="version-tag" id="versionTag"></p>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="supabase-client.js"></script>
+<script src="shared.js"></script>
+<script src="join.js"></script>
+</body>
+</html>

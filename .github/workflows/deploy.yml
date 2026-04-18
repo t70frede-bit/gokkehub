@@ -1,0 +1,162 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ── Build ────────────────────────────────────────────────────────────────────
+  build:
+    name: Build all apps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all apps
+        run: npm run build
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: apps/*/dist
+          retention-days: 1
+
+  # ── Deploy gridchallenge (partybingo.gokkehub.com) ───────────────────────────
+  deploy-gridchallenge:
+    name: Deploy gridchallenge
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/gridchallenge/dist --project-name=gridchallenge
+
+  # ── Deploy web (gokkehub.com) ─────────────────────────────────────────────────
+  deploy-web:
+    name: Deploy web
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/web/dist --project-name=web
+
+  # ── Deploy account (account.gokkehub.com) ────────────────────────────────────
+  deploy-account:
+    name: Deploy account
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/account/dist --project-name=account
+
+  # ── Deploy trackguess (musicquiz.gokkehub.com) ────────────────────────────────
+  deploy-trackguess:
+    name: Deploy trackguess
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/trackguess/dist --project-name=trackguess
+
+  # ── Deploy timelinedrop (hitster.gokkehub.com) ────────────────────────────────
+  deploy-timelinedrop:
+    name: Deploy timelinedrop
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/timelinedrop/dist --project-name=timelinedrop
+
+  # ── Deploy beatrank (bezzerwizzer.gokkehub.com) ───────────────────────────────
+  deploy-beatrank:
+    name: Deploy beatrank
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: apps
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/beatrank/dist --project-name=beatrank
