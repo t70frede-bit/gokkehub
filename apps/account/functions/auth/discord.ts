@@ -1,4 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
+import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -22,4 +23,18 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     `https://discord.com/oauth2/authorize?${params.toString()}`,
     302
   );
+};
+
+// DELETE /auth/discord — disconnect Discord from account
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
+  const { session, response } = await requireAuth(
+    env.SESSIONS,
+    request as unknown as Request
+  );
+  if (response) return response;
+
+  const sessionId = getSessionId(request as unknown as Request)!;
+  await updateSession(env.SESSIONS, sessionId, { discord: undefined });
+
+  return new Response(null, { status: 204 });
 };

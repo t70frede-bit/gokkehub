@@ -1,10 +1,7 @@
 import React, { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { PublicSessionData } from "@gokkehub/auth/types";
-import { Button } from "@gokkehub/ui";
-import { Panel } from "@gokkehub/ui";
-import { Badge } from "@gokkehub/ui";
-import { useToast } from "@gokkehub/ui";
+import { Button, Panel, Modal, useToast } from "@gokkehub/ui";
 
 interface Props {
   session: PublicSessionData;
@@ -17,19 +14,40 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(session.avatarUrl);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [removingAvatar, setRemovingAvatar] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Display name editing
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(session.displayName ?? "");
+  const [savingName, setSavingName] = useState(false);
+
+  // Email editing
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailValue, setEmailValue] = useState(session.email ?? "");
+  const [savingEmail, setSavingEmail] = useState(false);
+
+  // Password reset
+  const [sendingReset, setSendingReset] = useState(false);
+
+  // Disconnect states
+  const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
+
+  // Delete account
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  /* ── Avatar ── */
 
   const handleAvatarClick = () => fileInputRef.current?.click();
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (file.size > 2 * 1024 * 1024) {
       addToast("Image must be under 2 MB", "error");
       return;
     }
-
     setUploadingAvatar(true);
     try {
       const res = await fetch("/profile/avatar", {
@@ -39,11 +57,11 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         credentials: "include",
       });
       if (!res.ok) {
-        const { error } = await res.json() as { error: string };
+        const { error } = (await res.json()) as { error: string };
         addToast(error ?? "Upload failed", "error");
         return;
       }
-      const { avatarUrl: newUrl } = await res.json() as { avatarUrl: string };
+      const { avatarUrl: newUrl } = (await res.json()) as { avatarUrl: string };
       setAvatarUrl(newUrl);
       onSessionRefresh();
       addToast("Avatar updated", "success");
@@ -54,6 +72,129 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
       e.target.value = "";
     }
   };
+
+  const handleRemoveAvatar = async () => {
+    setRemovingAvatar(true);
+    try {
+      const res = await fetch("/profile/avatar", { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        addToast("Failed to remove avatar", "error");
+        return;
+      }
+      setAvatarUrl(null);
+      onSessionRefresh();
+      addToast("Avatar removed", "success");
+    } catch {
+      addToast("Failed to remove avatar", "error");
+    } finally {
+      setRemovingAvatar(false);
+    }
+  };
+
+  /* ── Display name ── */
+
+  const handleSaveName = async () => {
+    const trimmed = nameValue.trim();
+    if (!trimmed || trimmed.length > 32) {
+      addToast("Display name must be 1–32 characters", "error");
+      return;
+    }
+    setSavingName(true);
+    try {
+      const res = await fetch("/profile/update", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ displayName: trimmed }),
+      });
+      if (!res.ok) {
+        const { error } = (await res.json()) as { error: string };
+        addToast(error ?? "Failed to save name", "error");
+        return;
+      }
+      onSessionRefresh();
+      setEditingName(false);
+      addToast("Display name updated", "success");
+    } catch {
+      addToast("Failed to save name", "error");
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  /* ── Email ── */
+
+  const handleSaveEmail = async () => {
+    const trimmed = emailValue.trim().toLowerCase();
+    if (!trimmed.includes("@")) {
+      addToast("Enter a valid email address", "error");
+      return;
+    }
+    setSavingEmail(true);
+    try {
+      const res = await fetch("/profile/update", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        addToast(data.error ?? "Failed to update email", "error");
+        return;
+      }
+      setEditingEmail(false);
+      addToast(data.message ?? "Confirmation email sent to new address", "success");
+    } catch {
+      addToast("Failed to update email", "error");
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  /* ── Password reset ── */
+
+  const handlePasswordReset = async () => {
+    if (!session.email) {
+      addToast("No email on this account", "error");
+      return;
+    }
+    setSendingReset(true);
+    try {
+      const res = await fetch("/profile/password-reset", { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        const { error } = (await res.json()) as { error: string };
+        addToast(error ?? "Failed to send reset email", "error");
+        return;
+      }
+      addToast("Password reset email sent — check your inbox", "success");
+    } catch {
+      addToast("Failed to send reset email", "error");
+    } finally {
+      setSendingReset(false);
+    }
+  };
+
+  /* ── Linked accounts ── */
+
+  const handleDisconnect = async (provider: "discord" | "spotify" | "steam") => {
+    setDisconnecting(provider);
+    try {
+      const res = await fetch(`/auth/${provider}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        addToast(`Failed to disconnect ${provider}`, "error");
+        return;
+      }
+      onSessionRefresh();
+      addToast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} disconnected`, "success");
+    } catch {
+      addToast(`Failed to disconnect ${provider}`, "error");
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
+  /* ── Logout ── */
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -66,30 +207,48 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     }
   };
 
-  const handleLinkDiscord = () => {
-    window.location.href = "/auth/discord";
-  };
+  /* ── Delete account ── */
 
-  const handleLinkSpotify = () => {
-    window.location.href = "/auth/spotify";
-  };
-
-  const handleLinkSteam = () => {
-    window.location.href = "/auth/steam";
+  const handleDeleteAccount = async () => {
+    setDeletingAccount(true);
+    try {
+      const res = await fetch("/profile/delete", { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const { error } = (await res.json()) as { error: string };
+        addToast(error ?? "Failed to delete account", "error");
+        setDeletingAccount(false);
+        return;
+      }
+      navigate("/login", { replace: true });
+    } catch {
+      addToast("Failed to delete account", "error");
+      setDeletingAccount(false);
+    }
   };
 
   return (
     <div className="min-h-screen p-4 sm:p-8">
       <div className="max-w-lg mx-auto space-y-6">
-        {/* Header */}
+
+        {/* Navigation header */}
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-content-primary">My Account</h1>
+          <a
+            href="https://gokkehub.com"
+            className="flex items-center gap-2 text-content-muted hover:text-content-primary transition-colors text-sm font-medium"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            Back to GokkeHub
+          </a>
           <Button variant="ghost" size="sm" onClick={handleLogout} loading={loggingOut}>
             Sign out
           </Button>
         </div>
 
-        {/* Profile card */}
+        <h1 className="text-2xl font-bold text-content-primary">My Account</h1>
+
+        {/* Avatar + identity */}
         <Panel>
           <div className="flex items-center gap-4">
             <input
@@ -105,21 +264,120 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
               className="relative flex-shrink-0 group focus:outline-none"
               title="Change avatar"
             >
-              <Avatar url={avatarUrl} name={session.displayName ?? "Player"} loading={uploadingAvatar} />
+              <AvatarCircle url={avatarUrl} name={session.displayName ?? "Player"} loading={uploadingAvatar} />
               <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                 <span className="text-white text-xs font-medium">
                   {uploadingAvatar ? "…" : "Edit"}
                 </span>
               </div>
             </button>
-            <div className="min-w-0">
+            <div className="flex-1 min-w-0">
               <p className="text-content-primary font-semibold text-lg truncate">
-                {session.displayName}
+                {session.displayName ?? "—"}
               </p>
-              <p className="text-content-muted text-sm truncate">{session.email}</p>
+              <p className="text-content-muted text-sm truncate">{session.email ?? "No email"}</p>
             </div>
+            {avatarUrl && (
+              <Button variant="ghost" size="sm" onClick={handleRemoveAvatar} loading={removingAvatar}>
+                Remove photo
+              </Button>
+            )}
           </div>
         </Panel>
+
+        {/* Profile settings */}
+        <div className="space-y-3">
+          <h2 className="text-content-secondary text-sm font-medium uppercase tracking-widest px-1">
+            Profile
+          </h2>
+
+          {/* Display name */}
+          <Panel variant="bare">
+            <div className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-content-muted text-sm">Display name</span>
+                {!editingName && (
+                  <Button variant="ghost" size="sm" onClick={() => setEditingName(true)}>
+                    Edit
+                  </Button>
+                )}
+              </div>
+              {editingName ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={nameValue}
+                    onChange={(e) => setNameValue(e.target.value)}
+                    maxLength={32}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveName();
+                      if (e.key === "Escape") { setEditingName(false); setNameValue(session.displayName ?? ""); }
+                    }}
+                    className="input flex-1"
+                    placeholder="Your display name"
+                  />
+                  <Button size="sm" onClick={handleSaveName} loading={savingName}>Save</Button>
+                  <Button variant="ghost" size="sm" onClick={() => { setEditingName(false); setNameValue(session.displayName ?? ""); }}>Cancel</Button>
+                </div>
+              ) : (
+                <p className="text-content-primary font-medium">{session.displayName ?? "—"}</p>
+              )}
+            </div>
+          </Panel>
+
+          {/* Email */}
+          <Panel variant="bare">
+            <div className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-content-muted text-sm">Email address</span>
+                {!editingEmail && (
+                  <Button variant="ghost" size="sm" onClick={() => setEditingEmail(true)}>
+                    Edit
+                  </Button>
+                )}
+              </div>
+              {editingEmail ? (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      value={emailValue}
+                      onChange={(e) => setEmailValue(e.target.value)}
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveEmail();
+                        if (e.key === "Escape") { setEditingEmail(false); setEmailValue(session.email ?? ""); }
+                      }}
+                      className="input flex-1"
+                      placeholder="New email address"
+                    />
+                    <Button size="sm" onClick={handleSaveEmail} loading={savingEmail}>Save</Button>
+                    <Button variant="ghost" size="sm" onClick={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}>Cancel</Button>
+                  </div>
+                  <p className="text-content-muted text-xs">A confirmation link will be sent to the new address.</p>
+                </div>
+              ) : (
+                <p className="text-content-primary font-medium">{session.email ?? "—"}</p>
+              )}
+            </div>
+          </Panel>
+
+          {/* Password reset */}
+          {session.email && (
+            <Panel variant="bare">
+              <div className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-content-primary font-medium">Password</p>
+                  <p className="text-content-muted text-sm">Send a reset link to your email</p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={handlePasswordReset} loading={sendingReset}>
+                  Reset password
+                </Button>
+              </div>
+            </Panel>
+          )}
+        </div>
 
         {/* Linked accounts */}
         <div className="space-y-3">
@@ -127,36 +385,80 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
             Linked accounts
           </h2>
 
-          <LinkedAccount
+          <LinkedAccountRow
             name="Discord"
             icon={<DiscordIcon />}
             linked={session.linked.discord}
-            onLink={handleLinkDiscord}
+            disconnecting={disconnecting === "discord"}
+            onLink={() => { window.location.href = "/auth/discord"; }}
+            onDisconnect={() => handleDisconnect("discord")}
             color="var(--color-discord, #5865f2)"
           />
-          <LinkedAccount
+          <LinkedAccountRow
             name="Spotify"
             icon={<SpotifyIcon />}
             linked={session.linked.spotify}
-            onLink={handleLinkSpotify}
+            disconnecting={disconnecting === "spotify"}
+            onLink={() => { window.location.href = "/auth/spotify"; }}
+            onDisconnect={() => handleDisconnect("spotify")}
             color="var(--color-spotify, #1db954)"
           />
-          <LinkedAccount
+          <LinkedAccountRow
             name="Steam"
             icon={<SteamIcon />}
             linked={session.linked.steam}
-            onLink={handleLinkSteam}
+            disconnecting={disconnecting === "steam"}
+            onLink={() => { window.location.href = "/auth/steam"; }}
+            onDisconnect={() => handleDisconnect("steam")}
             color="var(--color-steam, #1b2838)"
           />
         </div>
+
+        {/* Danger zone */}
+        <div className="space-y-3">
+          <h2 className="text-content-secondary text-sm font-medium uppercase tracking-widest px-1">
+            Danger zone
+          </h2>
+          <Panel variant="bare">
+            <div className="flex items-center justify-between p-4">
+              <div>
+                <p className="text-content-primary font-medium">Delete account</p>
+                <p className="text-content-muted text-sm">Permanently removes all your data</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={() => setShowDeleteModal(true)}>
+                Delete account
+              </Button>
+            </div>
+          </Panel>
+        </div>
+
       </div>
+
+      {/* Delete confirmation modal */}
+      <Modal open={showDeleteModal} onClose={() => !deletingAccount && setShowDeleteModal(false)}>
+        <div className="space-y-4 p-2">
+            <h2 className="text-xl font-bold text-content-primary">Delete your account?</h2>
+            <p className="text-content-secondary text-sm leading-relaxed">
+              This will permanently delete your GokkeHub account and all associated data.
+              This action <strong className="text-content-primary">cannot be undone</strong>.
+            </p>
+            <div className="flex gap-3 justify-end pt-2">
+              <Button variant="ghost" onClick={() => setShowDeleteModal(false)} disabled={deletingAccount}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={handleDeleteAccount} loading={deletingAccount}>
+                Yes, delete my account
+              </Button>
+            </div>
+          </div>
+      </Modal>
     </div>
   );
 }
 
 /* ── Sub-components ── */
 
-function Avatar({ url, name, loading }: { url?: string | null; name: string; loading?: boolean }) {
+function AvatarCircle({ url, name, loading }: { url?: string | null; name: string; loading?: boolean }) {
   const base = "w-14 h-14 rounded-full flex-shrink-0";
   if (loading) {
     return (
@@ -192,15 +494,17 @@ function Avatar({ url, name, loading }: { url?: string | null; name: string; loa
   );
 }
 
-interface LinkedAccountProps {
+interface LinkedAccountRowProps {
   name: string;
   icon: React.ReactNode;
   linked: boolean;
+  disconnecting: boolean;
   onLink: () => void;
+  onDisconnect: () => void;
   color: string;
 }
 
-function LinkedAccount({ name, icon, linked, onLink, color }: LinkedAccountProps) {
+function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color }: LinkedAccountRowProps) {
   return (
     <Panel variant="bare">
       <div className="flex items-center gap-4 p-4">
@@ -217,7 +521,9 @@ function LinkedAccount({ name, icon, linked, onLink, color }: LinkedAccountProps
           </p>
         </div>
         {linked ? (
-          <Badge variant="primary">Linked</Badge>
+          <Button variant="ghost" size="sm" onClick={onDisconnect} loading={disconnecting}>
+            Disconnect
+          </Button>
         ) : (
           <Button variant="ghost" size="sm" onClick={onLink}>
             Connect
