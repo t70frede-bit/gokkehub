@@ -1,0 +1,15 @@
+name = "trackguess"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gokkehub-db"
+database_id = "9048a034-49ea-41ba-8743-c01737b9a96d"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "5c6e3465296c41e986c086727c8459e7"
+
+[vars]
+COOKIE_DOMAIN = ".gokkehub.com"

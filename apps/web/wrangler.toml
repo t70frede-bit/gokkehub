@@ -1,0 +1,6 @@
+name = "web"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+COOKIE_DOMAIN = ".gokkehub.com"
