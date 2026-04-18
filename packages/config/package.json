@@ -1,0 +1,14 @@
+{
+  "name": "@gokkehub/config",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    "./tailwind": "./src/tailwind.config.ts",
+    "./tsconfig": "./tsconfig.base.json",
+    "./themes/*": "./src/themes/*"
+  },
+  "files": [
+    "src",
+    "tsconfig.base.json"
+  ]
+}

@@ -1,0 +1,91 @@
+/**
+ * GokkeHub Design Tokens
+ * ======================
+ * Single source of truth for every visual value in the platform.
+ *
+ * HOW TO CHANGE THINGS:
+ *   - Global change (all games):  edit the :root block below
+ *   - Per-game change:            edit the matching file in ./games/
+ *
+ * HOW IT WORKS:
+ *   Each game imports this file first, then its own game theme file which
+ *   overrides only --color-primary-rgb, --color-secondary-rgb, and the
+ *   background tint. Everything else stays identical.
+ */
+
+:root {
+  /* ── Brand colours (overridden per game) ────────────────────────────────── */
+  /* Using RGB triplets so we can do: rgba(var(--color-primary-rgb), 0.4)     */
+  --color-primary-rgb:       138, 43, 226;   /* #8a2be2  blueviolet           */
+  --color-primary-light-rgb: 180, 100, 255;  /* lighter tint for hover states */
+  --color-primary-dark-rgb:  90,  20, 160;   /* darker shade for pressed      */
+  --color-secondary-rgb:     255, 20, 147;   /* #ff1493  deep pink            */
+
+  /* Background tint (overridden per game) */
+  --bg-tint-1: #1b0024;   /* gradient start */
+  --bg-tint-2: #0b0010;   /* gradient mid   */
+  --bg-tint-3: #1a0033;   /* gradient end   */
+
+  /* ── Team colours — NEVER change these, they must be consistent ─────────── */
+  --team-blue-rgb:     31,  79, 216;   /* #1f4fd8 */
+  --team-blue-dark:    #163a9e;
+  --team-red-rgb:      193, 18,  31;   /* #c1121f */
+  --team-red-dark:     #780000;
+  --team-green-rgb:    26, 122,  46;   /* #1a7a2e */
+  --team-green-dark:   #0e5020;
+  --team-yellow-rgb:   160, 120,   0;  /* #a07800 */
+  --team-yellow-dark:  #7a5a00;
+  --team-spectator-rgb:80,  80,  80;   /* neutral gray */
+
+  /* ── Surfaces ────────────────────────────────────────────────────────────── */
+  --surface-base-rgb:    20,  10,  30;   /* darkest — page background panels  */
+  --surface-raised-rgb:  30,  30,  50;   /* cards, modals                     */
+  --surface-overlay-rgb: 50,  20,  60;   /* hover state, elevated panels      */
+  --surface-input-rgb:   15,  10,  30;   /* form inputs                       */
+
+  /* ── Text ───────────────────────────────────────────────────────────────── */
+  --text-primary-rgb:    255, 255, 255;  /* #ffffff */
+  --text-secondary-rgb:  224, 192, 255;  /* #e0c0ff — purple-tinted white     */
+  --text-muted-rgb:      176, 160, 208;  /* #b0a0d0 — dimmer label text       */
+  --text-input-rgb:      112,  96, 160;  /* #7060a0 — placeholder text        */
+
+  /* ── Status colours ─────────────────────────────────────────────────────── */
+  --color-success-rgb:   40, 180,  60;   /* green  */
+  --color-warning-rgb:  255, 215,   0;   /* gold   */
+  --color-danger-rgb:   220,  60,  60;   /* red    */
+
+  /* ── Border ─────────────────────────────────────────────────────────────── */
+  --border-opacity: 0.4;
+  --border-width: 2px;
+
+  /* ── Radii ───────────────────────────────────────────────────────────────── */
+  --radius-sm:   8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-xl:  24px;
+  --radius-2xl: 32px;
+  --radius-pill: 9999px;
+
+  /* ── Spacing scale ───────────────────────────────────────────────────────── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Typography ──────────────────────────────────────────────────────────── */
+  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "Fira Code", monospace;
+
+  /* ── Effects ─────────────────────────────────────────────────────────────── */
+  --blur-panel: 10px;
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 28px rgba(var(--color-primary-rgb), 0.6);
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.2s ease;
+  --transition-slow: 0.35s ease;
+}
