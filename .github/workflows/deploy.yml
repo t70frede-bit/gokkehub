@@ -33,12 +33,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          # Upload the full app directory so wrangler can find functions/ next to dist/
           path: |
             apps/web/dist
-            apps/account/dist
-            apps/account/functions
-            apps/account/wrangler.toml
             apps/gridchallenge/dist
           retention-days: 1
 
@@ -62,17 +58,30 @@ jobs:
           command: pages deploy apps/web/dist --project-name=web --branch=main
 
   # ── Deploy account (account.gokkehub.com) ────────────────────────────────────
-  # Runs wrangler from apps/account/ so it picks up functions/ alongside dist/
+  # account has Pages Functions that import workspace packages (@gokkehub/auth, @gokkehub/db)
+  # wrangler must bundle the functions, which requires node_modules to be present.
+  # So we checkout + install the full repo here instead of using the build artifact.
   deploy-account:
     name: Deploy account
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download build artefacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          name: build-output
-          path: apps
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build account app
+        run: npm run build --workspace=apps/account
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
