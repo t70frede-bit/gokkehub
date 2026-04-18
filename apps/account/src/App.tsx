@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.tsx";
 import ProfilePage from "./pages/ProfilePage.tsx";
+import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import { useSession } from "./hooks/useSession.ts";
 import { useToast } from "@gokkehub/ui";
 
@@ -9,9 +10,6 @@ export default function App() {
   const { session, loading, refresh } = useSession();
   const { addToast } = useToast();
 
-  // Handle Supabase email confirmation redirect:
-  // After clicking the link in the signup email the user lands on
-  // /profile#access_token=...&type=signup — exchange it for a real session.
   useEffect(() => {
     const hash = window.location.hash;
     if (!hash) return;
@@ -19,27 +17,36 @@ export default function App() {
     const params = new URLSearchParams(hash.slice(1));
     const accessToken = params.get("access_token");
     const type = params.get("type");
+    if (!accessToken) return;
 
-    if (!accessToken || type !== "signup") return;
-
-    // Clear the hash so it doesn't re-trigger on back/forward navigation
+    // Clear hash immediately so back/forward doesn't re-trigger
     window.history.replaceState(null, "", window.location.pathname);
 
-    fetch("/auth/confirm", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken }),
-    }).then((res) => {
-      if (res.ok) {
-        addToast("Account confirmed — welcome to GokkeHub!", "success");
-        refresh();
-      } else {
-        addToast("Confirmation failed — the link may have expired", "error");
-      }
-    }).catch(() => {
-      addToast("Network error during confirmation", "error");
-    });
+    if (type === "signup") {
+      // Email confirmation after registration
+      fetch("/auth/confirm", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken }),
+      }).then((res) => {
+        if (res.ok) {
+          addToast("Account confirmed — welcome to GokkeHub!", "success");
+          refresh();
+        } else {
+          addToast("Confirmation failed — the link may have expired", "error");
+        }
+      }).catch(() => addToast("Network error during confirmation", "error"));
+    }
+
+    if (type === "recovery") {
+      // Password reset link — navigate to the reset page with the token in router state
+      window.location.replace(
+        `/reset-password?_=${Date.now()}` // force fresh load so session is re-read
+      );
+      // Store token in sessionStorage so the page can read it after reload
+      sessionStorage.setItem("recoveryToken", accessToken);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -70,6 +77,8 @@ export default function App() {
                 : <Navigate to="/login" replace />
             }
           />
+          {/* Reset password — accessible without a session */}
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="*" element={<Navigate to={session ? "/profile" : "/login"} replace />} />
         </Routes>
       </main>
@@ -82,13 +91,15 @@ export default function App() {
 import type { PublicSessionData } from "@gokkehub/auth/types";
 
 function AppHeader({ session }: { session: PublicSessionData | null }) {
-  const navigate = useNavigate();
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
+    setLoggingOut(true);
     try {
       await fetch("/auth/logout", { method: "DELETE", credentials: "include" });
     } finally {
-      navigate("/login", { replace: true });
+      // Hard reload clears React session state and forces a fresh /auth/me check
+      window.location.replace("/login");
     }
   };
 
@@ -102,7 +113,6 @@ function AppHeader({ session }: { session: PublicSessionData | null }) {
         WebkitBackdropFilter: "blur(12px)",
       }}
     >
-      {/* Logo */}
       <a
         href="https://gokkehub.com"
         className="font-bold text-lg leading-none tracking-tight"
@@ -111,7 +121,6 @@ function AppHeader({ session }: { session: PublicSessionData | null }) {
         Gokke<span className="text-gradient">Hub</span>
       </a>
 
-      {/* Right side — only show when logged in */}
       {session && (
         <div className="flex items-center gap-3">
           <span className="text-sm hidden sm:block" style={{ color: "rgb(var(--text-muted-rgb))" }}>
@@ -119,19 +128,27 @@ function AppHeader({ session }: { session: PublicSessionData | null }) {
           </span>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-1.5 transition-all"
+            disabled={loggingOut}
+            className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-3 py-1.5 transition-all disabled:opacity-60"
             style={{
               color: "rgb(var(--text-secondary-rgb))",
               background: "rgba(var(--surface-raised-rgb), 0.5)",
               border: "1px solid rgba(255,255,255,0.08)",
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            Sign out
+            {loggingOut ? (
+              <svg style={{ width: "14px", height: "14px", animation: "spin 0.75s linear infinite" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            )}
+            {loggingOut ? "Signing out…" : "Sign out"}
           </button>
         </div>
       )}

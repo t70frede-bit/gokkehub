@@ -1,5 +1,4 @@
 import React, { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type { PublicSessionData } from "@gokkehub/auth/types";
 import { Button, Panel, Modal, useToast } from "@gokkehub/ui";
 
@@ -9,7 +8,6 @@ interface Props {
 }
 
 export default function ProfilePage({ session, onSessionRefresh }: Props) {
-  const navigate = useNavigate();
   const { addToast } = useToast();
   const [avatarUrl, setAvatarUrl] = useState(session.avatarUrl);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -24,7 +22,12 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [emailValue, setEmailValue] = useState(session.email ?? "");
   const [savingEmail, setSavingEmail] = useState(false);
 
-  const [sendingReset, setSendingReset] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordErrors, setPasswordErrors] = useState<{ new?: string; confirm?: string }>({});
+
   const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -85,24 +88,37 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ email: trimmed }),
       });
-      const data = (await res.json()) as { message?: string; error?: string };
-      if (!res.ok) { addToast(data.error ?? "Failed to update email", "error"); return; }
-      setEditingEmail(false); addToast(data.message ?? "Confirmation email sent", "success");
+      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to update email", "error"); return; }
+      onSessionRefresh(); setEditingEmail(false); addToast("Email updated", "success");
     } catch { addToast("Failed to update email", "error"); }
     finally { setSavingEmail(false); }
   };
 
-  /* ── Password reset ── */
+  /* ── Password change ── */
 
-  const handlePasswordReset = async () => {
-    if (!session.email) { addToast("No email on this account", "error"); return; }
-    setSendingReset(true);
+  const handleSavePassword = async () => {
+    const errs: typeof passwordErrors = {};
+    if (!newPassword) errs.new = "Password is required";
+    else if (newPassword.length < 8) errs.new = "At least 8 characters";
+    if (newPassword !== confirmPassword) errs.confirm = "Passwords don't match";
+    setPasswordErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    setSavingPassword(true);
     try {
-      const res = await fetch("/profile/password-reset", { method: "POST", credentials: "include" });
-      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to send", "error"); return; }
-      addToast("Reset email sent — check your inbox", "success");
-    } catch { addToast("Failed to send reset email", "error"); }
-    finally { setSendingReset(false); }
+      const res = await fetch("/profile/change-password", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to update", "error"); return; }
+      setEditingPassword(false);
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordErrors({});
+      addToast("Password updated", "success");
+    } catch { addToast("Failed to update password", "error"); }
+    finally { setSavingPassword(false); }
   };
 
   /* ── Linked accounts ── */
@@ -125,7 +141,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     try {
       const res = await fetch("/profile/delete", { method: "DELETE", credentials: "include" });
       if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to delete account", "error"); setDeletingAccount(false); return; }
-      navigate("/login", { replace: true });
+      window.location.replace("/login");
     } catch { addToast("Failed to delete account", "error"); setDeletingAccount(false); }
   };
 
@@ -213,44 +229,69 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onEdit={() => { setEditingEmail(true); setEmailValue(session.email ?? ""); }}
           onCancel={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}
         >
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={emailValue}
-                onChange={(e) => setEmailValue(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSaveEmail();
-                  if (e.key === "Escape") { setEditingEmail(false); setEmailValue(session.email ?? ""); }
-                }}
-                className="input flex-1"
-                placeholder="New email address"
-              />
-              <Button size="sm" onClick={handleSaveEmail} loading={savingEmail}>Save</Button>
-              <ChipButton onClick={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}>Cancel</ChipButton>
-            </div>
-            <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              A confirmation link will be sent to the new address.
-            </p>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={emailValue}
+              onChange={(e) => setEmailValue(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveEmail();
+                if (e.key === "Escape") { setEditingEmail(false); setEmailValue(session.email ?? ""); }
+              }}
+              className="input flex-1"
+              placeholder="New email address"
+            />
+            <Button size="sm" onClick={handleSaveEmail} loading={savingEmail}>Save</Button>
+            <ChipButton onClick={() => { setEditingEmail(false); setEmailValue(session.email ?? ""); }}>Cancel</ChipButton>
           </div>
         </SettingRow>
 
-        {/* Password reset */}
+        {/* Inline password change */}
         {session.email && (
-          <Panel variant="bare">
-            <div className="flex items-center justify-between p-4">
+          <SettingRow
+            label="Password"
+            value="••••••••"
+            editing={editingPassword}
+            onEdit={() => { setEditingPassword(true); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}
+            onCancel={() => { setEditingPassword(false); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}
+          >
+            <div className="space-y-2">
               <div>
-                <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>Password</p>
-                <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                  Send a reset link to {session.email}
-                </p>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoFocus
+                  autoComplete="new-password"
+                  className="input w-full"
+                  placeholder="New password (min. 8 characters)"
+                  onKeyDown={(e) => { if (e.key === "Escape") { setEditingPassword(false); } }}
+                />
+                {passwordErrors.new && (
+                  <p className="text-xs mt-1" style={{ color: "rgb(220,38,38)" }}>{passwordErrors.new}</p>
+                )}
               </div>
-              <ChipButton onClick={handlePasswordReset} loading={sendingReset}>
-                Send reset email
-              </ChipButton>
+              <div>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  className="input w-full"
+                  placeholder="Confirm new password"
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSavePassword(); if (e.key === "Escape") { setEditingPassword(false); } }}
+                />
+                {passwordErrors.confirm && (
+                  <p className="text-xs mt-1" style={{ color: "rgb(220,38,38)" }}>{passwordErrors.confirm}</p>
+                )}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={handleSavePassword} loading={savingPassword}>Save password</Button>
+                <ChipButton onClick={() => { setEditingPassword(false); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}>Cancel</ChipButton>
+              </div>
             </div>
-          </Panel>
+          </SettingRow>
         )}
 
         {/* Linked accounts */}
@@ -264,6 +305,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/discord"; }}
           onDisconnect={() => handleDisconnect("discord")}
           color="#5865f2"
+          description="Give GokkeHub access to view your game activity"
         />
         <LinkedAccountRow
           name="Spotify"
@@ -273,6 +315,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/spotify"; }}
           onDisconnect={() => handleDisconnect("spotify")}
           color="#1db954"
+          description="Give GokkeHub access to your music taste"
         />
         <LinkedAccountRow
           name="Steam"
@@ -282,6 +325,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/steam"; }}
           onDisconnect={() => handleDisconnect("steam")}
           color="#66c0f4"
+          description="Give GokkeHub access to view your game library"
         />
 
         {/* Danger zone */}
@@ -440,9 +484,10 @@ interface LinkedAccountRowProps {
   onLink: () => void;
   onDisconnect: () => void;
   color: string;
+  description: string;
 }
 
-function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color }: LinkedAccountRowProps) {
+function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color, description }: LinkedAccountRowProps) {
   return (
     <Panel variant="bare">
       <div className="flex items-center gap-4 p-4">
@@ -454,8 +499,8 @@ function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconn
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>{name}</p>
-          <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            {linked ? "Connected" : "Not connected"}
+          <p className="text-sm" style={{ color: linked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
+            {linked ? "Connected" : description}
           </p>
         </div>
         {linked ? (

@@ -35,9 +35,11 @@ export default function Modal({
         className="w-full rounded-2xl p-8 animate-fade-in"
         style={{
           maxWidth,
-          background: "linear-gradient(135deg, rgba(var(--surface-overlay-rgb), 0.98), rgba(var(--surface-base-rgb), 0.98))",
-          border: "2px solid rgba(var(--color-primary-rgb), 0.6)",
-          boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
+          background: "linear-gradient(135deg, rgba(var(--surface-raised-rgb, 30 30 50), 0.96), rgba(var(--surface-overlay-rgb, 50 20 60), 0.96))",
+          border: "1.5px solid rgba(var(--color-primary-rgb, 130 60 200), 0.45)",
+          boxShadow: "0 8px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
         }}
       >
         {children}

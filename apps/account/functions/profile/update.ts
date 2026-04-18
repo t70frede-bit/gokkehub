@@ -4,7 +4,7 @@ import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
-// PATCH /profile/update — update display name or request email change
+// PATCH /profile/update — update display name or email (no confirmation required)
 export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const limited = await rateLimit(env.SESSIONS, request as unknown as Request, {
     max: 10,
@@ -35,27 +35,25 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     if (!displayName || displayName.length > 32) {
       return Response.json({ error: "Display name must be 1–32 characters" }, { status: 400 });
     }
-
     const { error } = await supabase.auth.admin.updateUserById(session!.userId, {
       user_metadata: { display_name: displayName },
     });
     if (error) return Response.json({ error: error.message }, { status: 500 });
-
     updates.displayName = displayName;
   }
 
   if (typeof body.email === "string") {
     const email = body.email.trim().toLowerCase();
-    if (!email.includes("@")) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return Response.json({ error: "Invalid email address" }, { status: 400 });
     }
-
-    // Supabase sends a confirmation email to the new address before changing it
-    const { error } = await supabase.auth.admin.updateUserById(session!.userId, { email });
+    // email_confirm: true — skip Supabase confirmation flow, change immediately
+    const { error } = await supabase.auth.admin.updateUserById(session!.userId, {
+      email,
+      email_confirm: true,
+    } as Parameters<typeof supabase.auth.admin.updateUserById>[1]);
     if (error) return Response.json({ error: error.message }, { status: 500 });
-
-    // Don't update session email yet — it changes after confirmation
-    return Response.json({ message: "Confirmation email sent to new address" });
+    updates.email = email;
   }
 
   if (Object.keys(updates).length > 0) {
