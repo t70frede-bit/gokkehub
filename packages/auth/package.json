@@ -1,0 +1,15 @@
+{
+  "name": "@gokkehub/auth",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    "./session":  "./src/session.ts",
+    "./cookie":   "./src/cookie.ts",
+    "./types":    "./src/types.ts"
+  },
+  "files": ["src"],
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "typescript": "^5.4.0"
+  }
+}
