@@ -2,7 +2,7 @@ import React, { useState, useRef, useLayoutEffect, useEffect, useCallback } from
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 
-type Mode = "login" | "register";
+type Mode = "login" | "register" | "forgot";
 
 // ── Animated field slot — expands/collapses with fade ────────────────────────
 
@@ -92,40 +92,44 @@ export default function LoginPage() {
 
         <div className="text-center">
           <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            {mode === "login" ? "Sign in to continue" : "Create a new account"}
+            {mode === "login" ? "Sign in to continue"
+              : mode === "register" ? "Create a new account"
+              : "Reset your password"}
           </p>
         </div>
 
-        {/* Tab switcher */}
-        <div
-          className="relative flex rounded-xl p-1"
-          style={{
-            background: "rgba(var(--surface-raised-rgb), 0.5)",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
+        {/* Tab switcher — hidden on forgot mode */}
+        {mode !== "forgot" && (
           <div
-            className="absolute top-1 bottom-1 rounded-lg"
+            className="relative flex rounded-xl p-1"
             style={{
-              left: "4px",
-              width: "calc(50% - 4px)",
-              background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-              boxShadow: "0 2px 12px rgba(var(--color-primary-rgb), 0.4)",
-              transform: mode === "login" ? "translateX(0)" : "translateX(calc(100% + 4px))",
-              transition: "transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+              background: "rgba(var(--surface-raised-rgb), 0.5)",
+              border: "1px solid rgba(255,255,255,0.06)",
             }}
-          />
-          {(["login", "register"] as Mode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => switchMode(m)}
-              className="relative z-10 flex-1 py-2 text-sm font-semibold whitespace-nowrap transition-colors duration-200"
-              style={{ color: mode === m ? "#fff" : "rgb(var(--text-muted-rgb))" }}
-            >
-              {m === "login" ? "Sign in" : "Create account"}
-            </button>
-          ))}
-        </div>
+          >
+            <div
+              className="absolute top-1 bottom-1 rounded-lg"
+              style={{
+                left: "4px",
+                width: "calc(50% - 4px)",
+                background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
+                boxShadow: "0 2px 12px rgba(var(--color-primary-rgb), 0.4)",
+                transform: mode === "login" ? "translateX(0)" : "translateX(calc(100% + 4px))",
+                transition: "transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            />
+            {(["login", "register"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => switchMode(m)}
+                className="relative z-10 flex-1 py-2 text-sm font-semibold whitespace-nowrap transition-colors duration-200"
+                style={{ color: mode === m ? "#fff" : "rgb(var(--text-muted-rgb))" }}
+              >
+                {m === "login" ? "Sign in" : "Create account"}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Panel with animated height */}
         <Panel variant="bare" style={{ overflow: "hidden" }}>
@@ -137,28 +141,29 @@ export default function LoginPage() {
               position: "relative",
             }}
           >
-            {/* Shared form (login + register fields in-place) */}
+            {/* Shared login + register form */}
             <div
               ref={formRef}
               style={{
                 padding: "28px 28px 24px",
-                position: confirmed ? "absolute" : "relative",
+                position: (confirmed || mode === "forgot") ? "absolute" : "relative",
                 top: 0, left: 0, width: "100%",
-                visibility: confirmed ? "hidden" : "visible",
-                pointerEvents: confirmed ? "none" : "auto",
+                visibility: (confirmed || mode === "forgot") ? "hidden" : "visible",
+                pointerEvents: (confirmed || mode === "forgot") ? "none" : "auto",
               }}
               onChange={onFormChange}
             >
               <UnifiedForm
-                mode={mode}
+                mode={mode === "forgot" ? "login" : mode}
                 onLoginSuccess={() => navigate("/profile", { replace: true })}
                 onConfirmNeeded={() => setConfirmed(true)}
                 onRegisterSuccess={() => navigate("/profile", { replace: true })}
+                onForgotPassword={() => switchMode("forgot")}
                 addToast={addToast}
               />
             </div>
 
-            {/* Confirmation view */}
+            {/* Email confirmation view */}
             <div
               ref={confirmRef}
               style={{
@@ -170,6 +175,22 @@ export default function LoginPage() {
               }}
             >
               <ConfirmationMessage onBackToLogin={() => switchMode("login")} />
+            </div>
+
+            {/* Forgot password view */}
+            <div
+              style={{
+                padding: "28px 28px 24px",
+                position: mode === "forgot" ? "relative" : "absolute",
+                top: 0, left: 0, width: "100%",
+                visibility: mode === "forgot" ? "visible" : "hidden",
+                pointerEvents: mode === "forgot" ? "auto" : "none",
+              }}
+            >
+              <ForgotPasswordForm
+                onBack={() => switchMode("login")}
+                addToast={addToast}
+              />
             </div>
           </div>
         </Panel>
@@ -200,12 +221,14 @@ function UnifiedForm({
   onLoginSuccess,
   onConfirmNeeded,
   onRegisterSuccess,
+  onForgotPassword,
   addToast,
 }: {
-  mode: Mode;
+  mode: "login" | "register";
   onLoginSuccess: () => void;
   onConfirmNeeded: () => void;
   onRegisterSuccess: () => void;
+  onForgotPassword: () => void;
   addToast: (msg: string, v?: "info" | "success" | "error") => void;
 }) {
   const isRegister = mode === "register";
@@ -339,9 +362,120 @@ function UnifiedForm({
         </FieldSlot>
       </ExpandField>
 
+      {/* Forgot password — only in login mode */}
+      {!isRegister && (
+        <div className="flex justify-end" style={{ marginTop: "-4px", marginBottom: "8px" }}>
+          <button
+            type="button"
+            onClick={onForgotPassword}
+            className="text-xs"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Forgot password?
+          </button>
+        </div>
+      )}
+
       <div className="pt-2">
         <Button type="submit" variant="primary" fullWidth loading={loading}>
           {isRegister ? "Create account" : "Sign in"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/* ── Forgot password form ── */
+function ForgotPasswordForm({
+  onBack,
+  addToast,
+}: {
+  onBack: () => void;
+  addToast: (msg: string, v?: "info" | "success" | "error") => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    if (!email.trim()) { setError("Email is required"); return; }
+    setLoading(true);
+    setError(undefined);
+    try {
+      await fetch("/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      // Always show success — don't leak whether the email exists
+      setSent(true);
+    } catch {
+      addToast("Network error — please try again", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="text-center space-y-4 py-4">
+        <div className="text-4xl">📬</div>
+        <div>
+          <p className="font-semibold" style={{ color: "rgb(var(--text-primary-rgb))" }}>
+            Check your inbox
+          </p>
+          <p className="text-sm mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            If an account exists for <strong>{email}</strong>, we've sent a reset link.
+            It may take a minute to arrive.
+          </p>
+        </div>
+        <button
+          onClick={onBack}
+          className="text-sm font-medium"
+          style={{ color: "rgb(var(--color-primary-rgb))" }}
+        >
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-xs mb-5 flex items-center gap-1"
+        style={{ color: "rgb(var(--text-muted-rgb))" }}
+      >
+        ← Back to sign in
+      </button>
+
+      <p className="font-semibold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>
+        Reset your password
+      </p>
+      <p className="text-sm mb-5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+        Enter your email and we'll send a reset link.
+      </p>
+
+      <FieldSlot error={error}>
+        <Input
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => { setEmail(e.target.value); setError(undefined); }}
+          placeholder="you@example.com"
+          error={error}
+          autoComplete="email"
+          autoFocus
+        />
+      </FieldSlot>
+
+      <div className="pt-2">
+        <Button type="submit" variant="primary" fullWidth loading={loading}>
+          Send reset email
         </Button>
       </div>
     </form>
