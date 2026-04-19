@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* GridChallenge — game-specific styles that supplement the shared design system */
 
 /* ── Page shell ─────────────────────────────────────────────────────────────── */
