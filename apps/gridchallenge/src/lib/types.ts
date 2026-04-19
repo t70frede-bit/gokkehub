@@ -138,6 +138,7 @@ export interface GokkeHubSession {
   email:       string | null;
   displayName: string | null;
   avatarUrl:   string | null;
+  steamId?:    string | null;
   linked: {
     spotify: boolean;
     discord: boolean;

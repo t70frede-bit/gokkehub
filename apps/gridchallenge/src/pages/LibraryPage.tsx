@@ -236,13 +236,15 @@ function SteamImportModal({
   onClose,
   existingKeys,
   onImport,
+  savedSteamId,
 }: {
-  open:         boolean;
-  onClose:      () => void;
-  existingKeys: Set<string>;
-  onImport:     (games: Array<{ name: string; steamAppId: number }>) => Promise<number>;
+  open:          boolean;
+  onClose:       () => void;
+  existingKeys:  Set<string>;
+  onImport:      (games: Array<{ name: string; steamAppId: number }>) => Promise<number>;
+  savedSteamId?: string | null;
 }) {
-  const [input, setInput]         = useState("");
+  const [input, setInput]         = useState(savedSteamId ?? "");
   const [fetching, setFetching]   = useState(false);
   const [error, setError]         = useState<string | null>(null);
   const [results, setResults]     = useState<SteamGameResult[]>([]);
@@ -813,6 +815,7 @@ export default function LibraryPage() {
         onClose={() => setSteamModalOpen(false)}
         existingKeys={existingKeys}
         onImport={bulkImport}
+        savedSteamId={session?.steamId}
       />
 
       {/* ── Game detail modal ── */}

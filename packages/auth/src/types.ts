@@ -12,6 +12,7 @@ export interface SessionData {
   email:       string | null;
   displayName: string | null;
   avatarUrl:   string | null;
+  steamId?:    string | null; // manually-entered Steam ID for library import
 
   // Linked third-party accounts (populated after OAuth)
   spotify?: {
@@ -47,6 +48,7 @@ export interface PublicSessionData {
   email:       string | null;
   displayName: string | null;
   avatarUrl:   string | null;
+  steamId?:    string | null;
   linked: {
     spotify: boolean;
     discord: boolean;

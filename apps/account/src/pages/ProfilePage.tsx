@@ -26,6 +26,10 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
 
   const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
 
+  const [editingSteamId, setEditingSteamId] = useState(false);
+  const [steamIdValue, setSteamIdValue] = useState(session.steamId ?? "");
+  const [savingSteamId, setSavingSteamId] = useState(false);
+
   /* ── Avatar ── */
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +100,24 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
       addToast("Password updated", "success");
     } catch { addToast("Failed to update password", "error"); }
     finally { setSavingPassword(false); }
+  };
+
+  /* ── Steam ID ── */
+
+  const handleSaveSteamId = async () => {
+    setSavingSteamId(true);
+    try {
+      const res = await fetch("/profile/steam-id", {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ steamId: steamIdValue.trim() || null }),
+      });
+      if (!res.ok) { addToast("Failed to save Steam ID", "error"); return; }
+      onSessionRefresh();
+      setEditingSteamId(false);
+      addToast(steamIdValue.trim() ? "Steam ID saved" : "Steam ID removed", "success");
+    } catch { addToast("Failed to save Steam ID", "error"); }
+    finally { setSavingSteamId(false); }
   };
 
   /* ── Linked accounts ── */
@@ -246,6 +268,50 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
             </div>
           </SettingRow>
         )}
+
+        {/* Steam ID */}
+        <SectionLabel>Steam</SectionLabel>
+
+        <SettingRow
+          label="Steam ID"
+          value={session.steamId ? session.steamId : "Not set"}
+          editing={editingSteamId}
+          onEdit={() => { setEditingSteamId(true); setSteamIdValue(session.steamId ?? ""); }}
+          onCancel={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}
+        >
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={steamIdValue}
+                onChange={(e) => setSteamIdValue(e.target.value)}
+                autoFocus
+                className="input flex-1"
+                placeholder="e.g. 76561198012345678 or your vanity name"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveSteamId();
+                  if (e.key === "Escape") { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }
+                }}
+              />
+              <Button size="sm" onClick={handleSaveSteamId} loading={savingSteamId}>Save</Button>
+              <ChipButton onClick={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}>Cancel</ChipButton>
+            </div>
+            <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Find your Steam ID at{" "}
+              <a
+                href="https://store.steampowered.com/account/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+                style={{ color: "rgb(var(--color-primary-rgb))" }}
+              >
+                store.steampowered.com/account
+              </a>
+              {" "}— or enter your vanity username or full profile URL.
+              Your Steam profile must be set to <strong>Public</strong>.
+            </p>
+          </div>
+        </SettingRow>
 
         {/* Linked accounts */}
         <SectionLabel>Linked accounts</SectionLabel>
