@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { Button, Panel, Input, Modal, TeamCircle, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
 import { supabase } from "../lib/supabase";
@@ -504,9 +504,9 @@ export default function HomePage() {
       {/* Account link */}
       <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
         {session ? (
-          <a href="https://account.gokkehub.com/profile" className="underline">
-            Manage account & challenges
-          </a>
+          <Link to="/library" className="underline">
+            🎮 My game library &amp; challenges
+          </Link>
         ) : (
           <a href="https://account.gokkehub.com" className="underline">
             Sign in with GokkeHub for more features

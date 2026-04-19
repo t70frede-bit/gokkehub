@@ -4,6 +4,7 @@ import HomePage from "./pages/HomePage";
 import JoinPage from "./pages/JoinPage";
 import LobbyPage from "./pages/LobbyPage";
 import BoardPage from "./pages/BoardPage";
+import LibraryPage from "./pages/LibraryPage";
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
@@ -55,24 +56,37 @@ function GameHeader() {
       {/* Right: account */}
       <div className="flex items-center gap-3">
         {session ? (
-          <a
-            href="https://account.gokkehub.com/profile"
-            className="flex items-center gap-2 text-sm font-medium rounded-lg px-3 py-1.5 transition-all"
-            style={{
-              color: "rgb(var(--text-secondary-rgb))",
-              background: "rgba(var(--surface-raised-rgb), 0.5)",
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            {session.avatarUrl && (
-              <img
-                src={session.avatarUrl}
-                alt=""
-                className="w-5 h-5 rounded-full object-cover"
-              />
-            )}
-            <span className="hidden sm:block">{session.displayName ?? session.email}</span>
-          </a>
+          <>
+            <Link
+              to="/library"
+              className="text-sm font-medium px-3 py-1.5 rounded-lg transition-all"
+              style={{
+                color: "rgb(var(--text-muted-rgb))",
+                background: "rgba(var(--surface-raised-rgb), 0.3)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              🎮 Library
+            </Link>
+            <a
+              href="https://account.gokkehub.com/profile"
+              className="flex items-center gap-2 text-sm font-medium rounded-lg px-3 py-1.5 transition-all"
+              style={{
+                color: "rgb(var(--text-secondary-rgb))",
+                background: "rgba(var(--surface-raised-rgb), 0.5)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              {session.avatarUrl && (
+                <img
+                  src={session.avatarUrl}
+                  alt=""
+                  className="w-5 h-5 rounded-full object-cover"
+                />
+              )}
+              <span className="hidden sm:block">{session.displayName ?? session.email}</span>
+            </a>
+          </>
         ) : (
           <a
             href="https://account.gokkehub.com"
@@ -101,6 +115,7 @@ export default function App() {
           <Route path="/board/:lobbyId" element={<BoardPage />} />
           {/* solo board: no lobbyId */}
           <Route path="/board"          element={<BoardPage />} />
+          <Route path="/library"        element={<LibraryPage />} />
           <Route path="*"               element={<Navigate to="/" replace />} />
         </Routes>
       </main>
