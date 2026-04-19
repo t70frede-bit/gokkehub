@@ -218,14 +218,17 @@ export default function BoardPage() {
 
   async function initLobbyMode() {
     const pid = sessionStorage.getItem("playerId");
+    console.log("[board] initLobbyMode — pid:", pid, "lobbyId:", lobbyId);
     if (!pid) { navigate(`/join?lobby=${lobbyId}`); return; }
     setMyPlayerId(pid);
 
     // Load lobby
-    let { data: lobbyData } = await supabase.from("lobbies").select("*").eq("id", lobbyId!).single();
+    let { data: lobbyData, error: lobbyError } = await supabase.from("lobbies").select("*").eq("id", lobbyId!).single();
+    console.log("[board] lobby fetch — data:", lobbyData, "error:", lobbyError);
     if (!lobbyData) { addToast("Lobby not found.", "error"); navigate("/"); return; }
 
     const lobby = lobbyData as Lobby;
+    console.log("[board] board_challenge_ids:", lobby.board_challenge_ids);
     const s: LobbySettings = { ...DEFAULT_SETTINGS, ...(lobby.settings ?? {}) };
     applySettings(s);
 
@@ -267,7 +270,9 @@ export default function BoardPage() {
     }
 
     const csv = getCsvChallenges();
+    console.log("[board] boardIds:", boardIds, "csv.length:", csv.length);
     const map = buildChallengeMapFromCsv(boardIds, csv, [...customMap.values()]);
+    console.log("[board] challengeMap size:", map.size, "first boardId lookup:", boardIds[0], "→", map.get(boardIds[0]));
     setChallengeMap(map);
     setChallengeIds(boardIds);
 
