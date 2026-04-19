@@ -1,4 +1,3 @@
-// @ts-expect-error — @types/papaparse not yet installed in workspace
 import Papa from "papaparse";
 import { normalizeGameKey } from "./gameKeys";
 import type { Challenge, ChallengeRef, ChallengeSource, ChallengeType, LobbySettings } from "./types";
