@@ -57,7 +57,10 @@ function FieldSlot({ error, children }: { error?: string; children: React.ReactN
 
 export default function LoginPage() {
   const { addToast } = useToast();
-  const [mode, setMode] = useState<Mode>("login");
+
+  // Open forgot-password form directly when redirected from an expired link
+  const initialMode: Mode = window.location.hash === "#forgot" ? "forgot" : "login";
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [confirmed, setConfirmed] = useState(false);
 
   const formRef    = useRef<HTMLDivElement>(null);

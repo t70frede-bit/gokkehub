@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Button, Input, Panel, useToast } from "@gokkehub/ui";
+import { Button, Input, Panel, Modal, useToast } from "@gokkehub/ui";
 
 export default function ResetPasswordPage() {
   const { addToast } = useToast();
@@ -14,6 +14,7 @@ export default function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [expired, setExpired] = useState(false);
   const [errors, setErrors] = useState<{ password?: string; confirm?: string }>({});
 
   if (!recoveryToken) {
@@ -49,7 +50,11 @@ export default function ResetPasswordPage() {
         setTimeout(() => window.location.replace("/profile"), 1200);
       } else {
         const data = (await res.json()) as { error?: string };
-        addToast(data.error ?? "Failed to reset password", "error");
+        if (res.status === 401) {
+          setExpired(true);
+        } else {
+          addToast(data.error ?? "Failed to reset password", "error");
+        }
       }
     } catch {
       addToast("Network error — please try again", "error");
@@ -121,6 +126,31 @@ export default function ResetPasswordPage() {
         </Panel>
 
       </div>
+
+      {/* Expired token modal */}
+      <Modal open={expired} onClose={() => setExpired(false)}>
+        <div className="flex flex-col items-center gap-4 text-center py-2">
+          <div className="text-4xl">⏳</div>
+          <div>
+            <h2 className="font-bold text-xl mb-1">Link expired</h2>
+            <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              This password reset link has expired. Request a new one and try again.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 w-full">
+            <Button
+              variant="primary"
+              fullWidth
+              onClick={() => window.location.replace("/login#forgot")}
+            >
+              Request a new link
+            </Button>
+            <Button variant="ghost" fullWidth onClick={() => setExpired(false)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
