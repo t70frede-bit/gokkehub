@@ -6,6 +6,7 @@ body {
   background: rgb(var(--color-bg-rgb));
   color: rgb(var(--color-text-rgb));
   min-height: 100dvh;
+  padding: 0; /* override base.css which adds padding for the old vanilla layout */
 }
 
 /* ── Bingo grid ──────────────────────────────────────────────────────────────── */

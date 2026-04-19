@@ -53,6 +53,8 @@ export interface Player {
   is_host:      boolean;
   is_spectator: boolean;
   kicked:       boolean;
+  user_id:      string | null;          // GokkeHub userId if signed in
+  avatar_url:   string | null;          // GokkeHub avatar URL
   created_at:   string;
 }
 
@@ -86,7 +88,7 @@ export interface VersusState {
 // ── Insert types (omit auto-generated fields) ─────────────────────────────────
 
 export type LobbyInsert = Omit<Lobby, "created_at"> & { created_at?: string };
-export type PlayerInsert = Omit<Player, "created_at"> & { created_at?: string };
+export type PlayerInsert = Omit<Player, "created_at" | "user_id" | "avatar_url"> & { created_at?: string; user_id?: string | null; avatar_url?: string | null };
 export type CustomChallengeInsert = Omit<CustomChallenge, "id">;
 export type ClaimInsert = Omit<Claim, "claimed_at"> & { claimed_at?: string };
 
