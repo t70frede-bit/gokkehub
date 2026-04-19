@@ -1,11 +1,10 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Button, Input, Modal, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
 import { usePlayerGames } from "../hooks/usePlayerGames";
 import { usePlayerChallenges } from "../hooks/usePlayerChallenges";
-import { loadCsvChallenges, getCsvChallenges } from "../lib/challenges";
-import { getGameDisplayName, normalizeGameKey } from "../lib/gameKeys";
+import { normalizeGameKey } from "../lib/gameKeys";
 import type { ChallengeType, PlayerGame } from "../lib/types";
 
 // ── Steam game (from /steam/games API) ────────────────────────────────────────
@@ -241,7 +240,7 @@ function SteamImportModal({
   open:         boolean;
   onClose:      () => void;
   existingKeys: Set<string>;
-  onImport:     (games: Array<{ name: string; steamAppId: number }>) => Promise<void>;
+  onImport:     (games: Array<{ name: string; steamAppId: number }>) => Promise<number>;
 }) {
   const [input, setInput]         = useState("");
   const [fetching, setFetching]   = useState(false);
