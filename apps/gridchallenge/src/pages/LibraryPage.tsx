@@ -1,19 +1,17 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Button, Input, Modal, Toggle, useToast } from "@gokkehub/ui";
+import { Button, Modal, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
 import { usePlayerGames } from "../hooks/usePlayerGames";
 import { usePlayerChallenges } from "../hooks/usePlayerChallenges";
 import { normalizeGameKey } from "../lib/gameKeys";
 import type { ChallengeType, PlayerGame } from "../lib/types";
 
-// ── Steam game (from /steam/games API) ────────────────────────────────────────
+// ── Steam search result ───────────────────────────────────────────────────────
 
-interface SteamGameResult {
-  appid:          number;
-  name:           string;
-  playtime_hours: number;
-  last_played:    number;
+interface SteamSearchResult {
+  appid: number;
+  name:  string;
 }
 
 // ── Cover image with fallback chain ──────────────────────────────────────────
@@ -57,9 +55,7 @@ function CoverImage({
       alt={name}
       loading="lazy"
       className={`w-full h-full object-cover ${className}`}
-      onError={() =>
-        setStage((s) => (s === "portrait" ? "header" : "none"))
-      }
+      onError={() => setStage((s) => (s === "portrait" ? "header" : "none"))}
     />
   );
 }
@@ -85,17 +81,14 @@ function GameCard({
       onClick={onClick}
       title={game.display_name}
     >
-      {/* Art */}
       <div
         className="relative rounded-xl overflow-hidden flex-shrink-0"
         style={{ aspectRatio: "2/3" }}
       >
         <CoverImage steamAppId={game.steam_app_id} name={game.display_name} />
 
-        {/* Hover overlay */}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-150" />
 
-        {/* Top-right controls (always show favorite if active) */}
         <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
           <button
             onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
@@ -118,20 +111,15 @@ function GameCard({
           </button>
         </div>
 
-        {/* Challenge count badge */}
         {challengeCount > 0 && (
           <div
             className="absolute bottom-1.5 left-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full"
-            style={{
-              background: "rgba(var(--color-primary-rgb),0.9)",
-              color: "white",
-            }}
+            style={{ background: "rgba(var(--color-primary-rgb),0.9)", color: "white" }}
           >
             {challengeCount}
           </div>
         )}
 
-        {/* Source badge */}
         {game.source === "steam" && (
           <div
             className="absolute bottom-1.5 right-1.5 text-xs font-bold px-1.5 py-0.5 rounded"
@@ -142,7 +130,6 @@ function GameCard({
         )}
       </div>
 
-      {/* Name */}
       <p
         className="mt-1.5 text-xs font-semibold leading-tight line-clamp-2"
         style={{ color: "rgb(var(--text-primary-rgb))" }}
@@ -153,284 +140,177 @@ function GameCard({
   );
 }
 
-// ── Steam import card (used inside modal) ─────────────────────────────────────
+// ── Steam search box + results ────────────────────────────────────────────────
 
-function SteamImportCard({
-  game,
-  selected,
-  alreadyOwned,
-  onToggle,
+function SteamSearchAdd({
+  existingKeys,
+  onAdd,
 }: {
-  game:         SteamGameResult;
-  selected:     boolean;
-  alreadyOwned: boolean;
-  onToggle:     () => void;
+  existingKeys: Set<string>;
+  onAdd:        (name: string, appid: number) => Promise<void>;
 }) {
+  const [query, setQuery]       = useState("");
+  const [results, setResults]   = useState<SteamSearchResult[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [open, setOpen]         = useState(false);
+  const [adding, setAdding]     = useState<number | null>(null);
+  const debounceRef             = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef            = useRef<HTMLDivElement>(null);
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); setOpen(false); return; }
+
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/steam/search?q=${encodeURIComponent(q)}`);
+        const data = (await res.json()) as { items?: SteamSearchResult[]; error?: string };
+        setResults(data.items ?? []);
+        setOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 320);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  async function handleAdd(item: SteamSearchResult) {
+    setAdding(item.appid);
+    await onAdd(item.name, item.appid);
+    setAdding(null);
+    setQuery("");
+    setResults([]);
+    setOpen(false);
+  }
+
+  const alreadyOwned = (item: SteamSearchResult) =>
+    existingKeys.has(normalizeGameKey(item.name));
+
   return (
-    <div
-      className={`group relative flex flex-col cursor-pointer select-none ${alreadyOwned ? "opacity-40" : ""}`}
-      onClick={alreadyOwned ? undefined : onToggle}
-      title={alreadyOwned ? `${game.name} (already in library)` : game.name}
-    >
-      <div
-        className="relative rounded-xl overflow-hidden"
-        style={{ aspectRatio: "2/3" }}
-      >
-        <CoverImage steamAppId={game.appid} name={game.name} />
+    <div ref={containerRef} className="relative flex-1">
+      <div className="relative">
+        {/* Search icon */}
+        <svg
+          className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+          width="15" height="15" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ color: "rgba(26,159,255,0.7)" }}
+        >
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
 
-        {/* Selection overlay */}
-        {!alreadyOwned && (
-          <div
-            className={`absolute inset-0 transition-all duration-150 flex items-center justify-center
-              ${selected ? "bg-blue-600/40" : "bg-black/0 group-hover:bg-black/30"}`}
-          >
-            <div
-              className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all
-                ${selected
-                  ? "bg-blue-500 border-blue-400"
-                  : "border-white/50 bg-black/50 opacity-0 group-hover:opacity-100"
-                }`}
-            >
-              {selected && (
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </div>
-          </div>
-        )}
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Search Steam for a game to add…"
+          className="w-full pl-9 pr-4 py-3 rounded-md font-sans text-base outline-none transition-all duration-200 placeholder:opacity-60"
+          style={{
+            background: "rgba(var(--surface-input-rgb), 0.9)",
+            border: "1px solid rgba(26,159,255,0.5)",
+            color: "rgb(var(--text-primary-rgb))",
+          }}
+        />
 
-        {/* Already-owned badge */}
-        {alreadyOwned && (
-          <div
-            className="absolute inset-0 flex items-end justify-center pb-2"
-            style={{ background: "rgba(0,0,0,0.5)" }}
+        {/* Loading spinner */}
+        {loading && (
+          <svg
+            className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin"
+            width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2.5"
+            style={{ color: "rgba(26,159,255,0.6)" }}
           >
-            <span className="text-xs font-bold text-white bg-black/60 px-2 py-0.5 rounded">
-              In library
-            </span>
-          </div>
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          </svg>
         )}
       </div>
 
-      {/* Name + playtime */}
-      <p
-        className="mt-1.5 text-xs font-semibold leading-tight line-clamp-2"
-        style={{ color: "rgb(var(--text-primary-rgb))" }}
-      >
-        {game.name}
-      </p>
-      {game.playtime_hours > 0 && (
-        <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          {game.playtime_hours}h
-        </p>
+      {/* Dropdown */}
+      {open && results.length > 0 && (
+        <div
+          className="absolute z-50 left-0 right-0 mt-1 rounded-xl overflow-hidden"
+          style={{
+            background: "rgba(var(--surface-raised-rgb), 0.98)",
+            border: "1.5px solid rgba(26,159,255,0.25)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          {results.map((item) => {
+            const owned = alreadyOwned(item);
+            const isAdding = adding === item.appid;
+            return (
+              <div
+                key={item.appid}
+                className="flex items-center gap-3 px-3 py-2 transition-colors"
+                style={{
+                  cursor: owned ? "default" : "pointer",
+                  background: "transparent",
+                  opacity: owned ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!owned) e.currentTarget.style.background = "rgba(26,159,255,0.08)";
+                }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                onClick={() => !owned && !isAdding && handleAdd(item)}
+              >
+                {/* Mini cover */}
+                <div
+                  className="flex-shrink-0 rounded-md overflow-hidden"
+                  style={{ width: 32, height: 48 }}
+                >
+                  <CoverImage steamAppId={item.appid} name={item.name} />
+                </div>
+
+                <span
+                  className="flex-1 text-sm font-medium truncate"
+                  style={{ color: "rgb(var(--text-primary-rgb))" }}
+                >
+                  {item.name}
+                </span>
+
+                {owned ? (
+                  <span className="text-xs flex-shrink-0" style={{ color: "rgba(34,197,94,0.7)" }}>
+                    In library
+                  </span>
+                ) : isAdding ? (
+                  <svg className="animate-spin flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ color: "rgba(26,159,255,0.8)" }}>
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                  </svg>
+                ) : (
+                  <span className="text-xs flex-shrink-0 font-semibold" style={{ color: "rgba(26,159,255,0.8)" }}>
+                    + Add
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 }
 
-// ── Steam import modal ────────────────────────────────────────────────────────
-
-function SteamImportModal({
-  open,
-  onClose,
-  existingKeys,
-  onImport,
-  savedSteamId,
-}: {
-  open:          boolean;
-  onClose:       () => void;
-  existingKeys:  Set<string>;
-  onImport:      (games: Array<{ name: string; steamAppId: number }>) => Promise<number>;
-  savedSteamId?: string | null;
-}) {
-  const [input, setInput]         = useState(savedSteamId ?? "");
-  const [fetching, setFetching]   = useState(false);
-  const [error, setError]         = useState<string | null>(null);
-  const [results, setResults]     = useState<SteamGameResult[]>([]);
-  const [selected, setSelected]   = useState<Set<number>>(new Set());
-  const [filter, setFilter]       = useState<"all" | "played" | "unplayed">("played");
-  const [importing, setImporting] = useState(false);
-  const { addToast } = useToast();
-
-  const filtered = useMemo(() => {
-    switch (filter) {
-      case "played":   return results.filter((g) => g.playtime_hours > 0);
-      case "unplayed": return results.filter((g) => g.playtime_hours === 0);
-      default:         return results;
-    }
-  }, [results, filter]);
-
-  async function fetchLibrary() {
-    if (!input.trim()) return;
-    setFetching(true);
-    setError(null);
-    setResults([]);
-    setSelected(new Set());
-    try {
-      const res = await fetch(`/steam/games?input=${encodeURIComponent(input.trim())}`);
-      const data = (await res.json()) as { games?: SteamGameResult[]; error?: string };
-      if (!res.ok || data.error) {
-        setError(data.error ?? "Failed to fetch library.");
-      } else {
-        setResults(data.games ?? []);
-        // Pre-select all played games not already in library
-        setSelected(
-          new Set(
-            (data.games ?? [])
-              .filter(
-                (g) =>
-                  g.playtime_hours > 0 &&
-                  !existingKeys.has(normalizeGameKey(g.name)),
-              )
-              .map((g) => g.appid),
-          ),
-        );
-      }
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setFetching(false);
-    }
-  }
-
-  function toggleGame(appid: number) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(appid) ? next.delete(appid) : next.add(appid);
-      return next;
-    });
-  }
-
-  function selectAll() {
-    setSelected(
-      new Set(
-        filtered
-          .filter((g) => !existingKeys.has(normalizeGameKey(g.name)))
-          .map((g) => g.appid),
-      ),
-    );
-  }
-
-  function selectNone() {
-    setSelected(new Set());
-  }
-
-  async function handleImport() {
-    const toImport = results.filter((g) => selected.has(g.appid));
-    if (toImport.length === 0) return;
-    setImporting(true);
-    await onImport(toImport.map((g) => ({ name: g.name, steamAppId: g.appid })));
-    addToast(`Imported ${toImport.length} game${toImport.length !== 1 ? "s" : ""} from Steam!`, "success");
-    setImporting(false);
-    onClose();
-  }
-
-  const selectedCount = Array.from(selected).filter(
-    (id) => !existingKeys.has(normalizeGameKey(results.find((g) => g.appid === id)?.name ?? "")),
-  ).length;
-
-  return (
-    <Modal open={open} onClose={onClose}>
-      <div className="flex flex-col gap-4 w-full" style={{ maxWidth: "min(90vw, 900px)", maxHeight: "85vh" }}>
-        <div>
-          <h2 className="font-bold text-xl">Import from Steam</h2>
-          <p className="text-sm mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            Enter your Steam ID, vanity username, or profile URL. Your Steam profile must be set to <strong>Public</strong>.
-          </p>
-        </div>
-
-        {/* Input row */}
-        <div className="flex gap-2">
-          <Input
-            placeholder="e.g. 76561198012345678 · gaben · steamcommunity.com/id/gaben"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && fetchLibrary()}
-          />
-          <Button variant="primary" loading={fetching} onClick={fetchLibrary}>
-            Fetch
-          </Button>
-        </div>
-
-        {error && (
-          <p className="text-sm" style={{ color: "rgba(255,100,100,0.9)" }}>
-            ⚠️ {error}
-          </p>
-        )}
-
-        {/* Results */}
-        {results.length > 0 && (
-          <div className="flex flex-col gap-3 overflow-hidden">
-            {/* Controls */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <Toggle
-                options={[
-                  { value: "played",   label: `Played (${results.filter((g) => g.playtime_hours > 0).length})` },
-                  { value: "unplayed", label: `Not played (${results.filter((g) => g.playtime_hours === 0).length})` },
-                  { value: "all",      label: `All (${results.length})` },
-                ]}
-                value={filter}
-                onChange={(v) => setFilter(v as typeof filter)}
-              />
-              <div className="flex items-center gap-3">
-                <button
-                  className="text-xs font-semibold"
-                  style={{ color: "rgb(var(--color-primary-rgb))" }}
-                  onClick={selectAll}
-                >
-                  Select all
-                </button>
-                <button
-                  className="text-xs"
-                  style={{ color: "rgb(var(--text-muted-rgb))" }}
-                  onClick={selectNone}
-                >
-                  None
-                </button>
-              </div>
-            </div>
-
-            {/* Grid */}
-            <div
-              className="overflow-y-auto pr-1"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))",
-                gap: "10px",
-                maxHeight: "45vh",
-              }}
-            >
-              {filtered.map((g) => (
-                <SteamImportCard
-                  key={g.appid}
-                  game={g}
-                  selected={selected.has(g.appid)}
-                  alreadyOwned={existingKeys.has(normalizeGameKey(g.name))}
-                  onToggle={() => toggleGame(g.appid)}
-                />
-              ))}
-            </div>
-
-            {/* Import button */}
-            <Button
-              variant="primary"
-              fullWidth
-              loading={importing}
-              onClick={handleImport}
-            >
-              {selectedCount > 0
-                ? `Import ${selectedCount} selected game${selectedCount !== 1 ? "s" : ""}`
-                : "Select games to import"}
-            </Button>
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-// ── Add challenge form (modal content) ────────────────────────────────────────
+// ── Add challenge form ────────────────────────────────────────────────────────
 
 function AddChallengeForm({
   game,
@@ -474,27 +354,25 @@ function AddChallengeForm({
         onChange={(v) => setType(v as ChallengeType)}
       />
 
-      <Input
-        label="Challenge"
+      <input
+        className="input w-full"
         placeholder="e.g. Win a match without dying"
         value={text}
         onChange={(e) => { setText(e.target.value); setError(null); }}
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        error={error ?? undefined}
         autoFocus
       />
+      {error && <p className="text-sm -mt-2" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
 
       <div className="flex gap-2">
         <Button variant="ghost" fullWidth onClick={onClose}>Cancel</Button>
-        <Button variant="primary" fullWidth loading={loading} onClick={handleSubmit}>
-          Add
-        </Button>
+        <Button variant="primary" fullWidth loading={loading} onClick={handleSubmit}>Add</Button>
       </div>
     </div>
   );
 }
 
-// ── Game detail panel (slide-in or modal) ─────────────────────────────────────
+// ── Game detail modal ─────────────────────────────────────────────────────────
 
 function GameDetailModal({
   game,
@@ -509,19 +387,13 @@ function GameDetailModal({
   onRemoveChallenge: (id: string) => void;
   onClose:           () => void;
 }) {
-  const TYPE_ICONS: Record<string, string> = {
-    single: "👤", group: "👥", versus: "⚔️",
-  };
+  const TYPE_ICONS: Record<string, string> = { single: "👤", group: "👥", versus: "⚔️" };
 
   return (
     <Modal open onClose={onClose}>
       <div className="flex flex-col gap-4" style={{ minWidth: "min(80vw, 420px)" }}>
-        {/* Header */}
         <div className="flex gap-4 items-start">
-          <div
-            className="rounded-xl overflow-hidden flex-shrink-0"
-            style={{ width: 72, aspectRatio: "2/3" }}
-          >
+          <div className="rounded-xl overflow-hidden flex-shrink-0" style={{ width: 72, aspectRatio: "2/3" }}>
             <CoverImage steamAppId={game.steam_app_id} name={game.display_name} />
           </div>
           <div className="flex-1 min-w-0">
@@ -537,16 +409,12 @@ function GameDetailModal({
           </div>
         </div>
 
-        {/* Challenges */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="font-semibold text-sm">
-              Challenges{" "}
-              <span style={{ color: "rgb(var(--text-muted-rgb))" }}>({challenges.length})</span>
+              Challenges <span style={{ color: "rgb(var(--text-muted-rgb))" }}>({challenges.length})</span>
             </p>
-            <Button size="sm" variant="ghost" onClick={onAddChallenge}>
-              + Add
-            </Button>
+            <Button size="sm" variant="ghost" onClick={onAddChallenge}>+ Add</Button>
           </div>
 
           {challenges.length === 0 ? (
@@ -584,28 +452,19 @@ function GameDetailModal({
 
 export default function LibraryPage() {
   const { session, loading: sessionLoading } = useSession();
-  const { games, loading: gamesLoading, addGame, removeGame, toggleFavorite, bulkImport } =
+  const { games, loading: gamesLoading, addGame, removeGame, toggleFavorite } =
     usePlayerGames(session);
   const { challenges, loading: challengesLoading, addChallenge, removeChallenge } =
     usePlayerChallenges(session);
   const { addToast } = useToast();
 
-  // Search + filter
-  const [search, setSearch]         = useState("");
+  const [search, setSearch]               = useState("");
   const [libraryFilter, setLibraryFilter] = useState<"all" | "favorites" | "steam" | "manual">("all");
-
-  // Modals
-  const [steamModalOpen, setSteamModalOpen]     = useState(false);
-  const [detailGame, setDetailGame]             = useState<PlayerGame | null>(null);
+  const [detailGame, setDetailGame]       = useState<PlayerGame | null>(null);
   const [addChallengeGame, setAddChallengeGame] = useState<PlayerGame | null>(null);
-
-  // Manual add
-  const [addName, setAddName]       = useState("");
-  const [addLoading, setAddLoading] = useState(false);
 
   const loading = sessionLoading || gamesLoading || challengesLoading;
 
-  // Filtered games for the grid
   const displayedGames = useMemo(() => {
     let list = games;
     if (libraryFilter === "favorites") list = list.filter((g) => g.is_favorite);
@@ -623,18 +482,12 @@ export default function LibraryPage() {
     [games],
   );
 
-  // Handle manual add
-  async function handleAddGame() {
-    const name = addName.trim();
-    if (!name) return;
-    setAddLoading(true);
-    const error = await addGame(name, "manual");
-    setAddLoading(false);
+  async function handleAddSteamGame(name: string, appid: number) {
+    const error = await addGame(name, "steam", appid);
     if (error) {
       addToast("Failed to add game: " + error.message, "error");
     } else {
-      setAddName("");
-      addToast(`Added "${name}".`, "success");
+      addToast(`Added "${name}" to your library.`, "success");
     }
   }
 
@@ -676,49 +529,46 @@ export default function LibraryPage() {
     <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col gap-6">
 
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link
-            to="/"
-            className="text-sm flex items-center gap-1 mb-2"
-            style={{ color: "rgb(var(--text-muted-rgb))" }}
-          >
-            ← Back
-          </Link>
-          <h1 className="font-extrabold text-2xl tracking-tight">Game Library</h1>
-          <p className="text-sm mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            {games.length} game{games.length !== 1 ? "s" : ""} saved
-            {favoriteCount > 0 && ` · ${favoriteCount} favourite${favoriteCount !== 1 ? "s" : ""}`}
-          </p>
-        </div>
-        <Button
-          variant="primary"
-          onClick={() => setSteamModalOpen(true)}
-        >
-          <span style={{ opacity: 0.85, fontSize: "0.9em" }}>🎮</span> Import from Steam
-        </Button>
+      <div>
+        <Link to="/" className="text-sm flex items-center gap-1 mb-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          ← Back
+        </Link>
+        <h1 className="font-extrabold text-2xl tracking-tight">Game Library</h1>
+        <p className="text-sm mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          {games.length} game{games.length !== 1 ? "s" : ""} saved
+          {favoriteCount > 0 && ` · ${favoriteCount} favourite${favoriteCount !== 1 ? "s" : ""}`}
+        </p>
       </div>
 
-      {/* ── Search + filters + manual add ── */}
-      <div className="flex flex-col gap-3">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Search your library…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <Input
-            placeholder="Add game by name…"
-            value={addName}
-            onChange={(e) => setAddName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAddGame()}
-          />
-          <Button variant="ghost" loading={addLoading} onClick={handleAddGame}>
-            + Add
-          </Button>
-        </div>
+      {/* ── Add from Steam search ── */}
+      <div
+        className="rounded-xl p-4 flex flex-col gap-3"
+        style={{
+          background: "rgba(26,159,255,0.06)",
+          border: "1.5px solid rgba(26,159,255,0.2)",
+        }}
+      >
+        <p className="text-sm font-semibold" style={{ color: "rgba(26,159,255,0.9)" }}>
+          🎮 Add games from Steam
+        </p>
+        <SteamSearchAdd existingKeys={existingKeys} onAdd={handleAddSteamGame} />
+      </div>
 
-        {/* Filter tabs */}
+      {/* ── Library search + filters ── */}
+      <div className="flex flex-col gap-3">
+        <input
+          type="text"
+          placeholder="Search your library…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full px-4 py-3 rounded-md font-sans text-base outline-none transition-all duration-200 placeholder:opacity-60"
+          style={{
+            background: "rgba(var(--surface-input-rgb), 0.9)",
+            border: "1px solid rgba(var(--color-primary-rgb), 0.7)",
+            color: "rgb(var(--text-primary-rgb))",
+          }}
+        />
+
         <div className="flex gap-2 flex-wrap">
           {(
             [
@@ -733,18 +583,9 @@ export default function LibraryPage() {
               onClick={() => setLibraryFilter(key)}
               className="text-sm font-medium px-3 py-1.5 rounded-full border transition-all"
               style={{
-                borderColor:
-                  libraryFilter === key
-                    ? "rgba(var(--color-primary-rgb),0.7)"
-                    : "rgba(255,255,255,0.1)",
-                background:
-                  libraryFilter === key
-                    ? "rgba(var(--color-primary-rgb),0.15)"
-                    : "transparent",
-                color:
-                  libraryFilter === key
-                    ? "rgb(var(--color-primary-rgb))"
-                    : "rgb(var(--text-muted-rgb))",
+                borderColor: libraryFilter === key ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.1)",
+                background:  libraryFilter === key ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                color:       libraryFilter === key ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))",
               }}
             >
               {label}
@@ -755,9 +596,7 @@ export default function LibraryPage() {
 
       {/* ── Games grid ── */}
       {loading ? (
-        <p className="text-sm text-center py-16" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          Loading…
-        </p>
+        <p className="text-sm text-center py-16" style={{ color: "rgb(var(--text-muted-rgb))" }}>Loading…</p>
       ) : displayedGames.length === 0 ? (
         <div
           className="rounded-2xl flex flex-col items-center justify-center py-16 gap-4 text-center"
@@ -766,21 +605,14 @@ export default function LibraryPage() {
           <p className="text-2xl">🎮</p>
           <div>
             <p className="font-semibold">
-              {games.length === 0
-                ? "Your library is empty"
-                : "No games match your search"}
+              {games.length === 0 ? "Your library is empty" : "No games match your search"}
             </p>
             <p className="text-sm mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
               {games.length === 0
-                ? "Import from Steam or add games manually above."
-                : "Try a different search or filter."}
+                ? "Search for a game above to add it to your library."
+                : "Try a different search term or filter."}
             </p>
           </div>
-          {games.length === 0 && (
-            <Button variant="primary" onClick={() => setSteamModalOpen(true)}>
-              Import from Steam
-            </Button>
-          )}
         </div>
       ) : (
         <div
@@ -798,10 +630,7 @@ export default function LibraryPage() {
                 game={game}
                 challengeCount={gameChallenges.length}
                 onToggleFavorite={() => toggleFavorite(game.id)}
-                onRemove={() => {
-                  removeGame(game.id);
-                  addToast(`Removed "${game.display_name}".`, "info");
-                }}
+                onRemove={() => { removeGame(game.id); addToast(`Removed "${game.display_name}".`, "info"); }}
                 onClick={() => setDetailGame(game)}
               />
             );
@@ -809,24 +638,12 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* ── Steam import modal ── */}
-      <SteamImportModal
-        open={steamModalOpen}
-        onClose={() => setSteamModalOpen(false)}
-        existingKeys={existingKeys}
-        onImport={bulkImport}
-        savedSteamId={session?.steamId}
-      />
-
       {/* ── Game detail modal ── */}
       {detailGame && (
         <GameDetailModal
           game={detailGame}
           challenges={challenges.filter((c) => c.game === detailGame.normalized_key)}
-          onAddChallenge={() => {
-            setAddChallengeGame(detailGame);
-            setDetailGame(null);
-          }}
+          onAddChallenge={() => { setAddChallengeGame(detailGame); setDetailGame(null); }}
           onRemoveChallenge={removeChallenge}
           onClose={() => setDetailGame(null)}
         />
