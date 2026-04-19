@@ -7,8 +7,8 @@
 /* ── Page shell ─────────────────────────────────────────────────────────────── */
 
 body {
-  background: rgb(var(--color-bg-rgb));
-  color: rgb(var(--color-text-rgb));
+  background: linear-gradient(135deg, var(--bg-tint-1) 0%, var(--bg-tint-2) 50%, var(--bg-tint-3) 100%);
+  color: rgb(var(--text-primary-rgb));
   min-height: 100dvh;
   padding: 0; /* override base.css which adds padding for the old vanilla layout */
 }

@@ -1,5 +1,4 @@
 import React, { useState, useRef, useLayoutEffect, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 
 type Mode = "login" | "register" | "forgot";
@@ -57,7 +56,6 @@ function FieldSlot({ error, children }: { error?: string; children: React.ReactN
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
-  const navigate = useNavigate();
   const { addToast } = useToast();
   const [mode, setMode] = useState<Mode>("login");
   const [confirmed, setConfirmed] = useState(false);
@@ -155,9 +153,9 @@ export default function LoginPage() {
             >
               <UnifiedForm
                 mode={mode === "forgot" ? "login" : mode}
-                onLoginSuccess={() => navigate("/profile", { replace: true })}
+                onLoginSuccess={() => window.location.replace("/profile")}
                 onConfirmNeeded={() => setConfirmed(true)}
-                onRegisterSuccess={() => navigate("/profile", { replace: true })}
+                onRegisterSuccess={() => window.location.replace("/profile")}
                 onForgotPassword={() => switchMode("forgot")}
                 addToast={addToast}
               />
