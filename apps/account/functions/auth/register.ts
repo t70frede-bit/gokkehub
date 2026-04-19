@@ -44,7 +44,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       data: {
         display_name: displayName || email.split("@")[0],
       },
-      emailRedirectTo: "https://account.gokkehub.com/profile",
+      emailRedirectTo: "https://account.gokkehub.com/login",
     },
   });
 

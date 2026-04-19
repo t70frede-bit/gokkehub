@@ -49,8 +49,8 @@ export default function App() {
         body: JSON.stringify({ accessToken }),
       }).then((res) => {
         if (res.ok) {
-          addToast("Account confirmed — welcome to GokkeHub!", "success");
-          refresh();
+          // Hard reload so the new KV session cookie is picked up and session state is fresh
+          window.location.replace("/profile");
         } else {
           addToast("Confirmation failed — the link may have expired", "error");
         }
