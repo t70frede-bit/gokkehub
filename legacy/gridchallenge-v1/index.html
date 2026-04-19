@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Party Game</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="bingo-container">
+  <header class="header">
+    <h1>🎮 Bingo Party Game</h1>
+    <p>Choose how you want to play</p>
+  </header>
+
+  <!-- Main menu cards -->
+  <div class="menu-cards" id="menuCards">
+    <button class="menu-card" id="menuJoinBtn">
+      <span class="menu-card-icon">🌐</span>
+      <span class="menu-card-title">Join Lobby</span>
+      <span class="menu-card-desc">Enter a lobby code to join a friend's game</span>
+    </button>
+    <button class="menu-card" id="menuSoloBtn">
+      <span class="menu-card-icon">🎮</span>
+      <span class="menu-card-title">Solo Game</span>
+      <span class="menu-card-desc">Play locally on one device</span>
+    </button>
+    <button class="menu-card" id="menuHostBtn">
+      <span class="menu-card-icon">🏠</span>
+      <span class="menu-card-title">Host Online Game</span>
+      <span class="menu-card-desc">Create a lobby and invite friends</span>
+    </button>
+  </div>
+
+  <!-- Join Lobby panel -->
+  <div class="sub-panel" id="joinPanel" style="display:none;">
+    <button class="back-link" id="joinBackBtn">← Back</button>
+    <h2>🌐 Join a Lobby</h2>
+    <div class="join-field">
+      <label for="lobbyCodeInput">Lobby Code</label>
+      <input type="text" id="lobbyCodeInput" maxlength="8" placeholder="e.g. abc123" autocomplete="off" style="text-transform:uppercase;">
+    </div>
+    <button class="generate-btn" id="goJoinBtn">Join Lobby →</button>
+  </div>
+
+  <!-- Solo Game panel -->
+  <div class="sub-panel" id="soloPanel" style="display:none;">
+    <button class="back-link" id="soloBackBtn">← Back</button>
+    <h2>🎮 Solo Game Setup</h2>
+
+    <div class="game-selection-panel">
+      <h3>Select Games</h3>
+      <div class="games-grid" id="gamesGrid"></div>
+
+      <h3 style="margin-top:20px;">Challenge Types</h3>
+      <div class="types-grid">
+        <label class="type-checkbox">
+          <input type="checkbox" class="type-select" value="single" checked>
+          <span class="type-icon">👤</span>
+          <span class="type-label">Single Player</span>
+        </label>
+        <label class="type-checkbox">
+          <input type="checkbox" class="type-select" value="group" checked>
+          <span class="type-icon">👥</span>
+          <span class="type-label">Group</span>
+        </label>
+        <label class="type-checkbox">
+          <input type="checkbox" class="type-select" value="versus" checked>
+          <span class="type-icon">👤–👤</span>
+          <span class="type-label">Versus</span>
+        </label>
+      </div>
+
+      <div class="versus-settings" id="versusSettings">
+        <div class="versus-row">
+          <div class="versus-field">
+            <label for="versusInterval">Versus interval (minutes)</label>
+            <input type="number" id="versusInterval" min="1" max="60" value="5">
+          </div>
+          <div class="versus-field">
+            <label for="versusCount">Versus challenges on board</label>
+            <input type="number" id="versusCount" min="0" value="5" step="1">
+          </div>
+        </div>
+        <label for="boardSize">Board size (N×N)</label>
+        <input type="number" id="boardSize" min="3" max="9" value="5" step="1">
+        <small>3–9</small>
+        <button type="button" class="control-btn" id="freeSpaceBtn" aria-pressed="false">Free space OFF</button>
+        <input type="checkbox" id="freeSpace" hidden>
+      </div>
+
+      <button class="generate-btn" id="generateBtn" disabled style="margin-top:20px;">🎮 Start Solo Game</button>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p class="version-tag" id="versionTag"></p>
+  </footer>
+</div>
+
+<!-- Host setup modal -->
+<div class="host-setup-overlay" id="hostSetupOverlay" style="display:none;">
+  <div class="host-setup-modal">
+    <h2>🏠 Set Up Your Lobby</h2>
+
+    <div class="join-field">
+      <label for="hostName">Your name</label>
+      <input type="text" id="hostName" maxlength="20" placeholder="Enter your name..." autocomplete="off">
+    </div>
+
+    <div class="join-field">
+      <label>Your role</label>
+      <div class="pool-toggle" id="hostRoleToggle">
+        <button type="button" class="pool-option active" data-role="player">🎮 Play in a team</button>
+        <button type="button" class="pool-option" data-role="gm">🎙️ Game Master (no team)</button>
+      </div>
+    </div>
+
+    <div class="join-field" id="hostTeamPickerField">
+      <label>Pick your team</label>
+      <div class="team-picker" id="hostTeamPicker">
+        <button type="button" class="team-circle team-blue selected" data-team="blue">🔵<span>Blue</span></button>
+        <button type="button" class="team-circle team-red" data-team="red">🔴<span>Red</span></button>
+        <button type="button" class="team-circle team-green" data-team="green">🟢<span>Green</span></button>
+        <button type="button" class="team-circle team-yellow" data-team="yellow">🟡<span>Yellow</span></button>
+      </div>
+    </div>
+
+    <button class="generate-btn" id="confirmHostBtn" style="margin-top:10px;">Create Lobby</button>
+    <button class="control-btn" id="cancelHostBtn" style="margin-top:10px; width:100%;">Cancel</button>
+  </div>
+</div>
+
+<script type="module" src="index.js"></script>
+</body>
+</html>

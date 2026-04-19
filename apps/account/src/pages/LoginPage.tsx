@@ -1,8 +1,60 @@
-import React, { useState, useRef, useLayoutEffect } from "react";
+import React, { useState, useRef, useLayoutEffect, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 
 type Mode = "login" | "register";
+
+// ── Animated field slot — expands/collapses with fade ────────────────────────
+
+function ExpandField({
+  show,
+  children,
+  delay = 0,
+}: {
+  show: boolean;
+  children: React.ReactNode;
+  delay?: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateRows: show ? "1fr" : "0fr",
+        opacity: show ? 1 : 0,
+        transform: show ? "translateY(0)" : "translateY(-6px)",
+        transition: `grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1) ${delay}ms, opacity 0.25s ease ${delay}ms, transform 0.25s ease ${delay}ms`,
+        // marginBottom only when visible to keep spacing consistent
+        marginBottom: show ? "0" : "0",
+      }}
+    >
+      {/* Inner wrapper required for grid-rows trick */}
+      <div style={{ overflow: "hidden" }}>
+        <div style={{ paddingBottom: show ? "4px" : "0" }}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reserve space for error message so layout doesn't jump ────────────────────
+
+function FieldSlot({ error, children }: { error?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      {children}
+      <div style={{ height: "18px", marginBottom: "4px" }}>
+        {error && (
+          <p className="text-xs" style={{ color: "rgb(220, 80, 80)", marginTop: "3px" }}>
+            {error}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -10,27 +62,24 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("login");
   const [confirmed, setConfirmed] = useState(false);
 
-  const loginRef   = useRef<HTMLDivElement>(null);
-  const registerRef = useRef<HTMLDivElement>(null);
-  const confirmRef  = useRef<HTMLDivElement>(null);
-  const [panelHeight, setPanelHeight] = useState(0);
+  const formRef    = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState<number | undefined>(undefined);
 
-  const remeasure = (m: Mode, conf: boolean) => {
-    const el = conf
-      ? confirmRef.current
-      : m === "login"
-        ? loginRef.current
-        : registerRef.current;
-    if (el) setPanelHeight(el.scrollHeight);
+  // Measure height after each render to drive the animated panel
+  const remeasure = () => {
+    requestAnimationFrame(() => {
+      const el = confirmed ? confirmRef.current : formRef.current;
+      if (el) setPanelHeight(el.scrollHeight);
+    });
   };
 
   useLayoutEffect(() => {
-    if (loginRef.current) setPanelHeight(loginRef.current.scrollHeight);
-  }, []);
-
-  useLayoutEffect(() => {
-    remeasure(mode, confirmed);
+    remeasure();
   }, [mode, confirmed]);
+
+  // Also remeasure when inputs change (errors appear / disappear)
+  const onFormChange = () => remeasure();
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -47,7 +96,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Tab switcher — sliding pill */}
+        {/* Tab switcher */}
         <div
           className="relative flex rounded-xl p-1"
           style={{
@@ -78,64 +127,49 @@ export default function LoginPage() {
           ))}
         </div>
 
-        {/* Panel with animated height — bare so padding lives on the slide divs,
-             not on the clip boundary */}
+        {/* Panel with animated height */}
         <Panel variant="bare" style={{ overflow: "hidden" }}>
           <div
             style={{
-              height: panelHeight > 0 ? panelHeight : "auto",
+              height: panelHeight !== undefined ? panelHeight : "auto",
               transition: "height 0.32s cubic-bezier(0.4, 0, 0.2, 1)",
               overflow: "hidden",
+              position: "relative",
             }}
           >
-            {/* Sliding form track */}
+            {/* Shared form (login + register fields in-place) */}
             <div
+              ref={formRef}
               style={{
-                display: "flex",
-                width: "200%",
-                transform: confirmed || mode === "register"
-                  ? "translateX(-50%)"
-                  : "translateX(0)",
-                transition: "transform 0.32s cubic-bezier(0.4, 0, 0.2, 1)",
+                padding: "28px 28px 24px",
+                position: confirmed ? "absolute" : "relative",
+                top: 0, left: 0, width: "100%",
+                visibility: confirmed ? "hidden" : "visible",
+                pointerEvents: confirmed ? "none" : "auto",
+              }}
+              onChange={onFormChange}
+            >
+              <UnifiedForm
+                mode={mode}
+                onLoginSuccess={() => navigate("/profile", { replace: true })}
+                onConfirmNeeded={() => setConfirmed(true)}
+                onRegisterSuccess={() => navigate("/profile", { replace: true })}
+                addToast={addToast}
+              />
+            </div>
+
+            {/* Confirmation view */}
+            <div
+              ref={confirmRef}
+              style={{
+                padding: "28px 28px 24px",
+                position: confirmed ? "relative" : "absolute",
+                top: 0, left: 0, width: "100%",
+                visibility: confirmed ? "visible" : "hidden",
+                pointerEvents: confirmed ? "auto" : "none",
               }}
             >
-              {/* Login form — left half, padding lives here */}
-              <div ref={loginRef} style={{ width: "50%", flexShrink: 0, padding: "28px 28px 24px" }}>
-                <LoginForm
-                  onSuccess={() => navigate("/profile", { replace: true })}
-                  addToast={addToast}
-                />
-              </div>
-
-              {/* Register / confirmation — right half, same padding */}
-              <div style={{ width: "50%", flexShrink: 0, position: "relative" }}>
-                <div
-                  ref={registerRef}
-                  style={{
-                    padding: "28px 28px 24px",
-                    position: confirmed ? "absolute" : "relative",
-                    top: 0, left: 0, width: "100%",
-                    visibility: confirmed ? "hidden" : "visible",
-                  }}
-                >
-                  <RegisterForm
-                    onConfirmNeeded={() => setConfirmed(true)}
-                    onSuccess={() => navigate("/profile", { replace: true })}
-                    addToast={addToast}
-                  />
-                </div>
-                <div
-                  ref={confirmRef}
-                  style={{
-                    padding: "28px 28px 24px",
-                    position: confirmed ? "relative" : "absolute",
-                    top: 0, left: 0, width: "100%",
-                    visibility: confirmed ? "visible" : "hidden",
-                  }}
-                >
-                  <ConfirmationMessage onBackToLogin={() => switchMode("login")} />
-                </div>
-              </div>
+              <ConfirmationMessage onBackToLogin={() => switchMode("login")} />
             </div>
           </div>
         </Panel>
@@ -147,7 +181,6 @@ export default function LoginPage() {
           <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
         </div>
 
-        {/* Discord button — icon and text in a proper flex row */}
         <Button variant="ghost" fullWidth onClick={() => { window.location.href = "/auth/discord"; }}>
           <span className="flex items-center justify-center gap-2 w-full">
             <DiscordIcon />
@@ -160,34 +193,51 @@ export default function LoginPage() {
   );
 }
 
-/* ── Field wrapper — reserves space for the error line so form height stays stable ── */
-function FieldSlot({ error, children }: { error?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ minHeight: error ? undefined : "calc(100% + 0px)" }}>
-      {children}
-      {!error && <div aria-hidden style={{ height: "18px" }} />}
-    </div>
-  );
-}
+// ── Unified form — shared email/password fields, extra fields animate in ──────
 
-/* ── Sign-in form ── */
-function LoginForm({
-  onSuccess,
+function UnifiedForm({
+  mode,
+  onLoginSuccess,
+  onConfirmNeeded,
+  onRegisterSuccess,
   addToast,
 }: {
-  onSuccess: () => void;
+  mode: Mode;
+  onLoginSuccess: () => void;
+  onConfirmNeeded: () => void;
+  onRegisterSuccess: () => void;
   addToast: (msg: string, v?: "info" | "success" | "error") => void;
 }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const isRegister = mode === "register";
+
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail]             = useState("");
+  const [password, setPassword]       = useState("");
+  const [confirm, setConfirm]         = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [errors, setErrors]           = useState<{
+    displayName?: string;
+    email?: string;
+    password?: string;
+    confirm?: string;
+  }>({});
+
+  // Clear errors that belong to hidden fields when switching modes
+  useEffect(() => {
+    setErrors({});
+  }, [mode]);
 
   const validate = () => {
     const e: typeof errors = {};
+    if (isRegister) {
+      if (!displayName.trim()) e.displayName = "Display name is required";
+      else if (displayName.trim().length > 32) e.displayName = "Max 32 characters";
+    }
     if (!email.trim()) e.email = "Email is required";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Enter a valid email";
     if (!password) e.password = "Password is required";
+    else if (isRegister && password.length < 8) e.password = "At least 8 characters";
+    if (isRegister && password !== confirm) e.confirm = "Passwords don't match";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -196,17 +246,31 @@ function LoginForm({
     ev.preventDefault();
     if (!validate()) return;
     setLoading(true);
+
     try {
-      const res = await fetch("/auth/login", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      if (res.ok) {
-        onSuccess();
+      if (!isRegister) {
+        // Login
+        const res = await fetch("/auth/login", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (res.ok) { onLoginSuccess(); }
+        else {
+          const data = (await res.json()) as { error?: string };
+          addToast(data.error ?? "Invalid email or password", "error");
+        }
       } else {
-        const data = (await res.json()) as { error?: string };
-        addToast(data.error ?? "Invalid email or password", "error");
+        // Register
+        const res = await fetch("/auth/register", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, displayName: displayName.trim() }),
+        });
+        if (res.status === 204) { onRegisterSuccess(); return; }
+        const data = (await res.json()) as { confirm?: boolean; message?: string; error?: string };
+        if (res.ok && data.confirm) { onConfirmNeeded(); return; }
+        addToast(data.error ?? "Registration failed", "error");
       }
     } catch {
       addToast("Network error — please try again", "error");
@@ -216,110 +280,68 @@ function LoginForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-1">
+    <form onSubmit={handleSubmit}>
+
+      {/* Display name — slides in from above email when switching to register */}
+      <ExpandField show={isRegister} delay={0}>
+        <FieldSlot error={errors.displayName}>
+          <Input
+            label="Display name"
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="How others will see you"
+            error={errors.displayName}
+            autoComplete="nickname"
+            maxLength={32}
+          />
+        </FieldSlot>
+      </ExpandField>
+
+      {/* Email — always visible */}
       <FieldSlot error={errors.email}>
-        <Input label="Email" type="email" value={email}
+        <Input
+          label="Email"
+          type="email"
+          value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com" error={errors.email}
-          autoComplete="email" />
+          placeholder="you@example.com"
+          error={errors.email}
+          autoComplete="email"
+        />
       </FieldSlot>
+
+      {/* Password — always visible */}
       <FieldSlot error={errors.password}>
-        <Input label="Password" type="password" value={password}
+        <Input
+          label="Password"
+          type="password"
+          value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="••••••••" error={errors.password}
-          autoComplete="current-password" />
+          placeholder={isRegister ? "Min. 8 characters" : "••••••••"}
+          error={errors.password}
+          autoComplete={isRegister ? "new-password" : "current-password"}
+        />
       </FieldSlot>
+
+      {/* Confirm password — fades in below password for register */}
+      <ExpandField show={isRegister} delay={40}>
+        <FieldSlot error={errors.confirm}>
+          <Input
+            label="Confirm password"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            placeholder="••••••••"
+            error={errors.confirm}
+            autoComplete="new-password"
+          />
+        </FieldSlot>
+      </ExpandField>
+
       <div className="pt-2">
         <Button type="submit" variant="primary" fullWidth loading={loading}>
-          Sign in
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-/* ── Create account form ── */
-function RegisterForm({
-  onConfirmNeeded,
-  onSuccess,
-  addToast,
-}: {
-  onConfirmNeeded: () => void;
-  onSuccess: () => void;
-  addToast: (msg: string, v?: "info" | "success" | "error") => void;
-}) {
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<{
-    displayName?: string; email?: string; password?: string; confirm?: string;
-  }>({});
-
-  const validate = () => {
-    const e: typeof errors = {};
-    if (!displayName.trim()) e.displayName = "Display name is required";
-    else if (displayName.trim().length > 32) e.displayName = "Max 32 characters";
-    if (!email.trim()) e.email = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Enter a valid email";
-    if (!password) e.password = "Password is required";
-    else if (password.length < 8) e.password = "At least 8 characters";
-    if (password !== confirm) e.confirm = "Passwords don't match";
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  };
-
-  const handleSubmit = async (ev: React.FormEvent) => {
-    ev.preventDefault();
-    if (!validate()) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/auth/register", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, displayName: displayName.trim() }),
-      });
-      if (res.status === 204) { onSuccess(); return; }
-      const data = (await res.json()) as { confirm?: boolean; message?: string; error?: string };
-      if (res.ok && data.confirm) { onConfirmNeeded(); return; }
-      addToast(data.error ?? "Registration failed", "error");
-    } catch {
-      addToast("Network error — please try again", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-1">
-      <FieldSlot error={errors.displayName}>
-        <Input label="Display name" type="text" value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="How others will see you" error={errors.displayName}
-          autoComplete="nickname" maxLength={32} />
-      </FieldSlot>
-      <FieldSlot error={errors.email}>
-        <Input label="Email" type="email" value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com" error={errors.email}
-          autoComplete="email" />
-      </FieldSlot>
-      <FieldSlot error={errors.password}>
-        <Input label="Password" type="password" value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Min. 8 characters" error={errors.password}
-          autoComplete="new-password" />
-      </FieldSlot>
-      <FieldSlot error={errors.confirm}>
-        <Input label="Confirm password" type="password" value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          placeholder="••••••••" error={errors.confirm}
-          autoComplete="new-password" />
-      </FieldSlot>
-      <div className="pt-2">
-        <Button type="submit" variant="primary" fullWidth loading={loading}>
-          Create account
+          {isRegister ? "Create account" : "Sign in"}
         </Button>
       </div>
     </form>

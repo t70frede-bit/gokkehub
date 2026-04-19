@@ -1,0 +1,36 @@
+node_modules/
+
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env.production
+.env.staging
+.dev.vars
+*.env
+
+# Static-mode local config (contains real Supabase credentials)
+env.js
+
+# Build output
+dist/
+build/
+.output/
+.cache/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+npm-debug.log*
+

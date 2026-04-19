@@ -1,0 +1,276 @@
+/* GridChallenge — game-specific styles that supplement the shared design system */
+
+/* ── Page shell ─────────────────────────────────────────────────────────────── */
+
+body {
+  background: rgb(var(--color-bg-rgb));
+  color: rgb(var(--color-text-rgb));
+  min-height: 100dvh;
+}
+
+/* ── Bingo grid ──────────────────────────────────────────────────────────────── */
+
+.bingo-grid {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+/* ── Bingo cell ──────────────────────────────────────────────────────────────── */
+
+.bingo-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(var(--color-primary-rgb), 0.2);
+  background: rgba(var(--surface-base-rgb), 0.6);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.15s ease;
+  aspect-ratio: 1;
+  overflow: hidden;
+  text-align: center;
+}
+
+.bingo-cell:hover:not(.free-space):not(.unavailable) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(var(--color-primary-rgb), 0.25);
+  border-color: rgba(var(--color-primary-rgb), 0.5);
+}
+
+.bingo-cell.free-space {
+  background: rgba(var(--color-primary-rgb), 0.12);
+  border-color: rgba(var(--color-primary-rgb), 0.4);
+  cursor: default;
+}
+
+/* Type indicator */
+.bingo-cell.type-versus {
+  border-color: rgba(255, 160, 40, 0.35);
+}
+
+.bingo-cell.type-group {
+  border-color: rgba(100, 200, 100, 0.3);
+}
+
+/* Unavailable versus cell (locked) */
+.bingo-cell.unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Claimed states */
+.bingo-cell.claimed-blue {
+  background: rgba(31, 79, 216, 0.28);
+  border-color: rgba(31, 79, 216, 0.7);
+  box-shadow: 0 0 12px rgba(31, 79, 216, 0.35);
+}
+.bingo-cell.claimed-red {
+  background: rgba(193, 18, 31, 0.28);
+  border-color: rgba(193, 18, 31, 0.7);
+  box-shadow: 0 0 12px rgba(193, 18, 31, 0.35);
+}
+.bingo-cell.claimed-green {
+  background: rgba(26, 122, 46, 0.28);
+  border-color: rgba(26, 122, 46, 0.7);
+  box-shadow: 0 0 12px rgba(26, 122, 46, 0.35);
+}
+.bingo-cell.claimed-yellow {
+  background: rgba(160, 120, 0, 0.28);
+  border-color: rgba(160, 120, 0, 0.7);
+  box-shadow: 0 0 12px rgba(160, 120, 0, 0.35);
+}
+
+/* Winning line flash */
+@keyframes bingo-winner-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.bingo-cell.bingo-winner {
+  animation: bingo-winner-pulse 0.8s ease-in-out infinite;
+  border-width: 2.5px;
+}
+.bingo-cell.bingo-winner.claimed-blue   { border-color: rgb(31, 79, 216);   box-shadow: 0 0 24px rgba(31, 79, 216, 0.7); }
+.bingo-cell.bingo-winner.claimed-red    { border-color: rgb(193, 18, 31);   box-shadow: 0 0 24px rgba(193, 18, 31, 0.7); }
+.bingo-cell.bingo-winner.claimed-green  { border-color: rgb(26, 122, 46);   box-shadow: 0 0 24px rgba(26, 122, 46, 0.7); }
+.bingo-cell.bingo-winner.claimed-yellow { border-color: rgb(160, 120, 0);   box-shadow: 0 0 24px rgba(160, 120, 0, 0.7); }
+
+/* Next-up versus highlight */
+@keyframes versus-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 160, 40, 0.3); }
+  50%       { box-shadow: 0 0 22px rgba(255, 160, 40, 0.7); }
+}
+.bingo-cell.next-up-versus {
+  border-color: rgba(255, 160, 40, 0.8);
+  animation: versus-pulse 1.6s ease-in-out infinite;
+}
+
+/* Active versus cell */
+@keyframes active-versus-glow {
+  0%, 100% { box-shadow: 0 0 14px rgba(255, 100, 0, 0.5); }
+  50%       { box-shadow: 0 0 32px rgba(255, 100, 0, 0.9); }
+}
+.bingo-cell.active-versus {
+  border-color: rgb(255, 100, 0);
+  animation: active-versus-glow 1s ease-in-out infinite;
+}
+
+/* ── Cell internals ──────────────────────────────────────────────────────────── */
+
+.bingo-cell-icon {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.bingo-cell-text {
+  font-size: clamp(0.55rem, 1.6vw, 0.85rem);
+  font-weight: 600;
+  line-height: 1.25;
+  color: rgb(var(--color-text-rgb));
+}
+
+.bingo-cell-game {
+  font-size: clamp(0.45rem, 1.2vw, 0.65rem);
+  color: rgb(var(--text-muted-rgb));
+  font-weight: 500;
+}
+
+.bingo-cell-claimer {
+  font-size: clamp(0.45rem, 1.1vw, 0.6rem);
+  opacity: 0.75;
+  font-weight: 500;
+}
+
+.bingo-cell-timer {
+  font-size: clamp(0.5rem, 1.3vw, 0.7rem);
+  font-weight: 700;
+  color: rgb(255, 160, 40);
+}
+
+/* ── Player bar ──────────────────────────────────────────────────────────────── */
+
+.player-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.player-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(var(--surface-raised-rgb), 0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.player-bar-item.team-blue   { border-color: rgba(31,79,216,0.5);   background: rgba(31,79,216,0.18); }
+.player-bar-item.team-red    { border-color: rgba(193,18,31,0.5);   background: rgba(193,18,31,0.18); }
+.player-bar-item.team-green  { border-color: rgba(26,122,46,0.5);   background: rgba(26,122,46,0.18); }
+.player-bar-item.team-yellow { border-color: rgba(160,120,0,0.5);   background: rgba(160,120,0,0.18); }
+.player-bar-item.spectator   { opacity: 0.6; }
+
+/* ── Claim log sidebar ───────────────────────────────────────────────────────── */
+
+.claim-log-entry {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.8rem;
+}
+
+.claim-log-time {
+  color: rgb(var(--text-muted-rgb));
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+/* ── Score bar ───────────────────────────────────────────────────────────────── */
+
+.score-bar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.score-team {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  border: 1.5px solid transparent;
+}
+
+.score-team.team-blue   { background: rgba(31,79,216,0.2);   border-color: rgba(31,79,216,0.5); }
+.score-team.team-red    { background: rgba(193,18,31,0.2);   border-color: rgba(193,18,31,0.5); }
+.score-team.team-green  { background: rgba(26,122,46,0.2);   border-color: rgba(26,122,46,0.5); }
+.score-team.team-yellow { background: rgba(160,120,0,0.2);   border-color: rgba(160,120,0,0.5); }
+
+/* ── Game checkboxes grid ────────────────────────────────────────────────────── */
+
+.game-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+.game-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(var(--color-primary-rgb), 0.2);
+  background: rgba(var(--surface-raised-rgb), 0.4);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.game-checkbox-label:has(input:checked) {
+  border-color: rgba(var(--color-primary-rgb), 0.7);
+  background: rgba(var(--color-primary-rgb), 0.15);
+}
+
+.game-checkbox-label input {
+  display: none;
+}
+
+/* ── Fullscreen mode ─────────────────────────────────────────────────────────── */
+
+.fullscreen-board .bingo-cell-text {
+  font-size: clamp(0.6rem, 1.8vw, 1rem);
+}
+
+/* ── Victory modal animation ─────────────────────────────────────────────────── */
+
+@keyframes bingo-pulse {
+  0%   { transform: scale(1);    text-shadow: 0 0 20px rgba(255,215,0,0.4); }
+  50%  { transform: scale(1.08); text-shadow: 0 0 50px rgba(255,215,0,0.9); }
+  100% { transform: scale(1);    text-shadow: 0 0 20px rgba(255,215,0,0.4); }
+}
+
+.bingo-heading {
+  animation: bingo-pulse 1.4s ease-in-out infinite;
+  background: linear-gradient(135deg, #ffd700, #ffaa00, #ff6b00);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
