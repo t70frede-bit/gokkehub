@@ -115,6 +115,7 @@ export interface PlayerGame {
   normalized_key: string;
   source:         GameSource;
   steam_app_id:   number | null;
+  is_favorite:    boolean;
 }
 
 // ── Player challenge (user-created, saved to account) ───────────────────────
