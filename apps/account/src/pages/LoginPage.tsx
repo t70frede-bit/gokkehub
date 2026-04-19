@@ -1,4 +1,4 @@
-import React, { useState, useRef, useLayoutEffect, useEffect } from "react";
+import React, { useState, useRef, useLayoutEffect, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 
@@ -66,20 +66,20 @@ export default function LoginPage() {
   const confirmRef = useRef<HTMLDivElement>(null);
   const [panelHeight, setPanelHeight] = useState<number | undefined>(undefined);
 
-  // Measure height after each render to drive the animated panel
-  const remeasure = () => {
-    requestAnimationFrame(() => {
-      const el = confirmed ? confirmRef.current : formRef.current;
-      if (el) setPanelHeight(el.scrollHeight);
-    });
-  };
+  // Measure synchronously before the browser paints so we capture the
+  // final layout height BEFORE CSS transitions start. Using rAF here would
+  // fire mid-transition and read a partially-animated (wrong) height.
+  const measure = useCallback(() => {
+    const el = confirmed ? confirmRef.current : formRef.current;
+    if (el) setPanelHeight(el.scrollHeight);
+  }, [confirmed]);
 
   useLayoutEffect(() => {
-    remeasure();
-  }, [mode, confirmed]);
+    measure();
+  }, [mode, confirmed, measure]);
 
-  // Also remeasure when inputs change (errors appear / disappear)
-  const onFormChange = () => remeasure();
+  // Remeasure after errors appear/disappear (state change → next render → rAF)
+  const onFormChange = () => requestAnimationFrame(() => measure());
 
   const switchMode = (m: Mode) => {
     setMode(m);
