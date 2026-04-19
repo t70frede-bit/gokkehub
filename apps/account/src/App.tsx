@@ -1,71 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.tsx";
 import ProfilePage from "./pages/ProfilePage.tsx";
-import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import { useSession } from "./hooks/useSession.ts";
-import { useToast, Modal, Button } from "@gokkehub/ui";
 
 export default function App() {
   const { session, loading, refresh } = useSession();
-  const { addToast } = useToast();
-
-  // "expired" | "invalid" | <raw error description> | null
-  const [linkError, setLinkError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash) return;
-
-    const params = new URLSearchParams(hash.slice(1));
-
-    // Clear hash immediately so back/forward doesn't re-trigger
-    window.history.replaceState(null, "", window.location.pathname);
-
-    // Supabase puts error info in the hash when a link is expired or invalid
-    // e.g. #error=access_denied&error_code=otp_expired&error_description=...
-    const error = params.get("error");
-    if (error) {
-      const code = params.get("error_code") ?? "";
-      const isExpired = code === "otp_expired" || error === "access_denied";
-      setLinkError(
-        isExpired
-          ? "expired"
-          : params.get("error_description")?.replace(/\+/g, " ") ?? "invalid"
-      );
-      return;
-    }
-
-    const accessToken = params.get("access_token");
-    const type = params.get("type");
-    if (!accessToken) return;
-
-    if (type === "signup") {
-      // Email confirmation after registration
-      fetch("/auth/confirm", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken }),
-      }).then((res) => {
-        if (res.ok) {
-          // Hard reload so the new KV session cookie is picked up and session state is fresh
-          window.location.replace("/profile");
-        } else {
-          addToast("Confirmation failed — the link may have expired", "error");
-        }
-      }).catch(() => addToast("Network error during confirmation", "error"));
-    }
-
-    if (type === "recovery") {
-      // Password reset link — navigate to the reset page with the token in router state
-      sessionStorage.setItem("recoveryToken", accessToken);
-      window.location.replace(
-        `/reset-password?_=${Date.now()}` // force fresh load so session is re-read
-      );
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   if (loading) {
     return (
@@ -94,43 +34,9 @@ export default function App() {
                 : <Navigate to="/login" replace />
             }
           />
-          {/* Reset password — accessible without a session */}
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="*" element={<Navigate to={session ? "/profile" : "/login"} replace />} />
         </Routes>
       </main>
-
-      {/* Expired / invalid link modal */}
-      <Modal open={!!linkError} onClose={() => setLinkError(null)}>
-        <div className="flex flex-col items-center gap-4 text-center py-2">
-          <div className="text-4xl">⏳</div>
-          <div>
-            <h2 className="font-bold text-xl mb-1">
-              {linkError === "expired" ? "Link expired" : "Invalid link"}
-            </h2>
-            <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              {linkError === "expired"
-                ? "This password reset link has expired. Reset links are only valid for a short time — request a new one and try again."
-                : "This link is no longer valid. It may have already been used or the URL was incomplete."}
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 w-full">
-            <Button
-              variant="primary"
-              fullWidth
-              onClick={() => {
-                setLinkError(null);
-                window.location.replace("/login#forgot");
-              }}
-            >
-              Request a new link
-            </Button>
-            <Button variant="ghost" fullWidth onClick={() => setLinkError(null)}>
-              Dismiss
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

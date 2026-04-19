@@ -18,17 +18,11 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [nameValue, setNameValue] = useState(session.displayName ?? "");
   const [savingName, setSavingName] = useState(false);
 
-  const [editingPassword, setEditingPassword] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
-  const [passwordErrors, setPasswordErrors] = useState<{ new?: string; confirm?: string }>({});
-
-  const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
-
   const [editingSteamId, setEditingSteamId] = useState(false);
   const [steamIdValue, setSteamIdValue] = useState(session.steamId ?? "");
   const [savingSteamId, setSavingSteamId] = useState(false);
+
+  const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
 
   /* ── Avatar ── */
 
@@ -75,33 +69,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     finally { setSavingName(false); }
   };
 
-  /* ── Password change ── */
-
-  const handleSavePassword = async () => {
-    const errs: typeof passwordErrors = {};
-    if (!newPassword) errs.new = "Password is required";
-    else if (newPassword.length < 8) errs.new = "At least 8 characters";
-    if (newPassword !== confirmPassword) errs.confirm = "Passwords don't match";
-    setPasswordErrors(errs);
-    if (Object.keys(errs).length > 0) return;
-
-    setSavingPassword(true);
-    try {
-      const res = await fetch("/profile/change-password", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: newPassword }),
-      });
-      if (!res.ok) { addToast(((await res.json()) as { error: string }).error ?? "Failed to update", "error"); return; }
-      setEditingPassword(false);
-      setNewPassword("");
-      setConfirmPassword("");
-      setPasswordErrors({});
-      addToast("Password updated", "success");
-    } catch { addToast("Failed to update password", "error"); }
-    finally { setSavingPassword(false); }
-  };
-
   /* ── Steam ID ── */
 
   const handleSaveSteamId = async () => {
@@ -121,7 +88,6 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   };
 
   /* ── Linked accounts ── */
-
 
   const handleDisconnect = async (provider: "discord" | "spotify" | "steam") => {
     setDisconnecting(provider);
@@ -169,11 +135,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
             </div>
 
             {avatarUrl && (
-              <ChipButton
-                onClick={handleRemoveAvatar}
-                loading={removingAvatar}
-                danger
-              >
+              <ChipButton onClick={handleRemoveAvatar} loading={removingAvatar} danger>
                 Remove photo
               </ChipButton>
             )}
@@ -210,66 +172,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           </div>
         </SettingRow>
 
-        {/* Email — read-only display */}
-        <Panel variant="bare">
-          <div className="p-4 space-y-1">
-            <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              Email address
-            </span>
-            <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>
-              {session.email ?? "—"}
-            </p>
-          </div>
-        </Panel>
-
-        {/* Inline password change */}
-        {session.email && (
-          <SettingRow
-            label="Password"
-            value="••••••••"
-            editing={editingPassword}
-            onEdit={() => { setEditingPassword(true); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}
-            onCancel={() => { setEditingPassword(false); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}
-          >
-            <div className="space-y-2">
-              <div>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  autoFocus
-                  autoComplete="new-password"
-                  className="input w-full"
-                  placeholder="New password (min. 8 characters)"
-                  onKeyDown={(e) => { if (e.key === "Escape") { setEditingPassword(false); } }}
-                />
-                {passwordErrors.new && (
-                  <p className="text-xs mt-1" style={{ color: "rgb(220,38,38)" }}>{passwordErrors.new}</p>
-                )}
-              </div>
-              <div>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  autoComplete="new-password"
-                  className="input w-full"
-                  placeholder="Confirm new password"
-                  onKeyDown={(e) => { if (e.key === "Enter") handleSavePassword(); if (e.key === "Escape") { setEditingPassword(false); } }}
-                />
-                {passwordErrors.confirm && (
-                  <p className="text-xs mt-1" style={{ color: "rgb(220,38,38)" }}>{passwordErrors.confirm}</p>
-                )}
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" onClick={handleSavePassword} loading={savingPassword}>Save password</Button>
-                <ChipButton onClick={() => { setEditingPassword(false); setNewPassword(""); setConfirmPassword(""); setPasswordErrors({}); }}>Cancel</ChipButton>
-              </div>
-            </div>
-          </SettingRow>
-        )}
-
-        {/* Steam ID */}
+        {/* Steam */}
         <SectionLabel>Steam</SectionLabel>
 
         <SettingRow
@@ -324,7 +227,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/discord"; }}
           onDisconnect={() => handleDisconnect("discord")}
           color="#5865f2"
-          description="Give GokkeHub access to view your game activity"
+          description="Sign in and view your game activity"
         />
         <LinkedAccountRow
           name="Spotify"
@@ -344,7 +247,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/steam"; }}
           onDisconnect={() => handleDisconnect("steam")}
           color="#66c0f4"
-          description="Give GokkeHub access to view your game library"
+          description="View your game library"
         />
 
       </div>

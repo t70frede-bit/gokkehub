@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS player_games (
   normalized_key TEXT NOT NULL,                -- e.g. "cs2"
   source         TEXT NOT NULL DEFAULT 'manual', -- steam | discord | manual
   steam_app_id   INTEGER,
+  is_favorite    BOOLEAN NOT NULL DEFAULT false,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (user_id, normalized_key)             -- one entry per game per user
 );
@@ -213,6 +214,9 @@ SELECT cron.schedule(
 -- Add new columns to players (if not already present)
 ALTER TABLE players ADD COLUMN IF NOT EXISTS user_id    TEXT;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+-- Add is_favorite column to player_games (if not already present)
+ALTER TABLE player_games ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT false;
 
 -- Create the new account tables (IF NOT EXISTS = safe to re-run)
 -- (Already defined above — no need to repeat)
