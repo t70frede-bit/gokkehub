@@ -31,17 +31,22 @@ function generatePlayerId(): string {
 // ── Default settings ───────────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS: LobbySettings = {
-  boardWidth:     5,
-  boardHeight:    5,
-  winLength:      5,
-  teamCount:      2,
-  teamMode:       "manual",
-  versusCount:    5,
-  versusInterval: 5,
-  freeSpace:      false,
-  games:          [],
-  types:          ["single", "group", "versus"],
-  poolMode:       "standard",
+  boardWidth:       5,
+  boardHeight:      5,
+  winLength:        5,
+  teamCount:        2,
+  teamMode:         "manual",
+  versusCount:      5,
+  versusInterval:   5,
+  freeSpace:        false,
+  games:            [],
+  types:            ["single", "group", "versus"],
+  poolMode:         "standard",
+  showClaimantName: false,
+  streamerMode:     false,
+  hideSpectators:   false,
+  lateJoinMode:     "open",
+  teamSwapEnabled:  false,
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────

@@ -27,19 +27,25 @@ export const TEAM_EMOJIS: Record<TeamColor, string> = {
 
 export type PoolMode = "standard" | "standard+custom" | "custom";
 export type TeamMode = "manual" | "random";
+export type LateJoinMode = "open" | "spectator-only" | "closed";
 
 export interface LobbySettings {
-  boardWidth:      number;         // 3–9
-  boardHeight:     number;         // 3–9
-  winLength:       number;         // tiles in a row needed to win
-  teamCount:       number;         // 2–4
-  teamMode:        TeamMode;
-  versusCount:     number;
-  versusInterval:  number;         // minutes
-  freeSpace:       boolean;
-  games:           string[];       // normalized game keys
-  types:           ChallengeType[];
-  poolMode:        PoolMode;
+  boardWidth:       number;         // 3–9
+  boardHeight:      number;         // 3–9
+  winLength:        number;         // tiles in a row needed to win
+  teamCount:        number;         // 2–4
+  teamMode:         TeamMode;
+  versusCount:      number;
+  versusInterval:   number;         // minutes
+  freeSpace:        boolean;
+  games:            string[];       // normalized game keys
+  types:            ChallengeType[];
+  poolMode:         PoolMode;
+  showClaimantName: boolean;
+  streamerMode:     boolean;
+  hideSpectators:   boolean;
+  lateJoinMode:     LateJoinMode;
+  teamSwapEnabled:  boolean;        // host can cycle player teams mid-game
 }
 
 export interface ChallengeRef {
@@ -90,6 +96,7 @@ export interface VersusState {
   next_challenge_id:      string | null;
   next_versus_timestamp:  number | null;
   unlocked_challenge_ids: string[];
+  skip_votes:             string[];  // player IDs who voted to skip countdown
 }
 
 // ── Custom challenges ────────────────────────────────────────────────────────

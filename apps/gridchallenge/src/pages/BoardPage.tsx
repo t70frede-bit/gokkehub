@@ -56,17 +56,22 @@ function fmtCountdown(ms: number) {
 // ── Default settings ──────────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS: LobbySettings = {
-  boardWidth:     5,
-  boardHeight:    5,
-  winLength:      5,
-  teamCount:      2,
-  teamMode:       "manual",
-  versusCount:    5,
-  versusInterval: 5,
-  freeSpace:      false,
-  games:          [],
-  types:          ["single", "group", "versus"],
-  poolMode:       "standard",
+  boardWidth:       5,
+  boardHeight:      5,
+  winLength:        5,
+  teamCount:        2,
+  teamMode:         "manual",
+  versusCount:      5,
+  versusInterval:   5,
+  freeSpace:        false,
+  games:            [],
+  types:            ["single", "group", "versus"],
+  poolMode:         "standard",
+  showClaimantName: false,
+  streamerMode:     false,
+  hideSpectators:   false,
+  lateJoinMode:     "open",
+  teamSwapEnabled:  false,
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -81,7 +86,6 @@ export default function BoardPage() {
 
   // ── State ────────────────────────────────────────────────────────────────────
 
-  // Board
   const [challengeIds, setChallengeIds]   = useState<string[]>([]);
   const [challengeMap, setChallengeMap]   = useState<Map<string, Challenge>>(new Map());
   const [settings, setSettings]           = useState<LobbySettings>(DEFAULT_SETTINGS);
@@ -100,6 +104,12 @@ export default function BoardPage() {
     setBoardState(next);
   }
 
+  // Optimistic claims (Feature 6)
+  const [pendingClaims, setPendingClaims] = useState<Map<string, { team: TeamColor; playerName: string }>>(new Map());
+
+  // Unclaim confirmation (Feature 7)
+  const [unclaimConfirmId, setUnclaimConfirmId] = useState<string | null>(null);
+
   // Versus
   const [activeVersusId, setActiveVersusId]   = useState<string | null>(null);
   const [nextVersusId, setNextVersusId]       = useState<string | null>(null);
@@ -110,12 +120,17 @@ export default function BoardPage() {
   const nextVersusTimeRef = useRef<number | null>(null);
   const unlockedVersusRef = useRef<Set<string>>(new Set());
 
+  // Versus skip/vote (Feature 3)
+  const [skipVotes, setSkipVotes]             = useState<string[]>([]);
+  const [skipConfirmId, setSkipConfirmId]     = useState<string | null>(null);
+
   // Lobby
   const [myPlayerId, setMyPlayerId]     = useState<string | null>(null);
   const [myTeam, setMyTeam]             = useState<TeamColor | null>(null);
   const [isHost, setIsHost]             = useState(false);
   const [isSpectator, setIsSpectator]   = useState(false);
   const [lobbyPlayers, setLobbyPlayers] = useState<Player[]>([]);
+  const lobbyPlayersRef = useRef<Player[]>([]);
 
   // Claim log
   const [claimLog, setClaimLog]         = useState<Claim[]>([]);
@@ -127,15 +142,44 @@ export default function BoardPage() {
   const [bingoShown, setBingoShown]       = useState(false);
   const bingoShownRef = useRef(false);
 
-  // Timer ticker
-  const [, setTick]               = useState(0); // force re-render for countdown
+  const [, setTick]               = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [fullscreen, setFullscreen]     = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [tileSize, setTileSize] = useState(130);
 
   const versusTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Sync refs with state (for use inside closures) ──────────────────────────
+  // Keep lobbyPlayersRef in sync
+  useEffect(() => { lobbyPlayersRef.current = lobbyPlayers; }, [lobbyPlayers]);
+
+  // ── Dynamic tile size for fullscreen ─────────────────────────────────────────
+  useEffect(() => {
+    if (!fullscreen || !settings) { setTileSize(130); return; }
+    const cols = settings.boardWidth;
+    const rows = settings.boardHeight;
+    const GAP = 6;
+    const STRIP = 40;
+    const PAD = 16;
+    const calc = () => {
+      const availW = window.innerWidth  - PAD * 2 - GAP * (cols - 1);
+      const availH = window.innerHeight - STRIP - PAD * 2 - GAP * (rows - 1);
+      setTileSize(Math.floor(Math.min(availW / cols, availH / rows)));
+    };
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, [fullscreen, settings]);
+
+  // Close unclaim confirm when clicking elsewhere
+  useEffect(() => {
+    if (!unclaimConfirmId) return;
+    const handler = () => setUnclaimConfirmId(null);
+    document.addEventListener("click", handler, { capture: true, once: true });
+    return () => document.removeEventListener("click", handler, { capture: true });
+  }, [unclaimConfirmId]);
+
+  // ── Sync refs ────────────────────────────────────────────────────────────────
 
   useEffect(() => { activeVersusRef.current = activeVersusId; }, [activeVersusId]);
   useEffect(() => { nextVersusRef.current = nextVersusId; }, [nextVersusId]);
@@ -187,14 +231,12 @@ export default function BoardPage() {
     setChallengeMap(map);
     setChallengeIds(ids);
 
-    // Restore board state
     let savedState: SoloBoardState = {};
     try {
       savedState = JSON.parse(localStorage.getItem("solo_board_state") ?? "{}");
     } catch { savedState = {}; }
     updateBoardState(savedState);
 
-    // Restore versus state
     try {
       const vs = JSON.parse(localStorage.getItem("solo_versus_state") ?? "{}");
       const now = Date.now();
@@ -218,21 +260,16 @@ export default function BoardPage() {
 
   async function initLobbyMode() {
     const pid = sessionStorage.getItem("playerId");
-    console.log("[board] initLobbyMode — pid:", pid, "lobbyId:", lobbyId);
     if (!pid) { navigate(`/join?lobby=${lobbyId}`); return; }
     setMyPlayerId(pid);
 
-    // Load lobby
-    let { data: lobbyData, error: lobbyError } = await supabase.from("lobbies").select("*").eq("id", lobbyId!).single();
-    console.log("[board] lobby fetch — data:", lobbyData, "error:", lobbyError);
+    let { data: lobbyData } = await supabase.from("lobbies").select("*").eq("id", lobbyId!).single();
     if (!lobbyData) { addToast("Lobby not found.", "error"); navigate("/"); return; }
 
     const lobby = lobbyData as Lobby;
-    console.log("[board] board_challenge_ids:", lobby.board_challenge_ids);
     const s: LobbySettings = { ...DEFAULT_SETTINGS, ...(lobby.settings ?? {}) };
     applySettings(s);
 
-    // Load player info (retry once for propagation lag)
     let playerData: Player | null = null;
     for (let i = 0; i < 2; i++) {
       const { data } = await supabase.from("players").select("*").eq("id", pid).single();
@@ -245,18 +282,17 @@ export default function BoardPage() {
     setIsHost(playerData.is_host);
     setIsSpectator(playerData.is_spectator);
 
-    // Load players
     const { data: playersData } = await supabase.from("players").select("*").eq("lobby_id", lobbyId!).eq("kicked", false);
-    setLobbyPlayers((playersData ?? []) as Player[]);
+    const players = (playersData ?? []) as Player[];
+    setLobbyPlayers(players);
+    lobbyPlayersRef.current = players;
 
-    // Load custom challenges
     const boardIds = (lobby.board_challenge_ids ?? []).map((r) => r.id);
 
     let customMap: Map<string, Challenge> = new Map();
     const customRefIds = (lobby.board_challenge_ids ?? [])
       .filter((r) => r.source === "custom")
       .map((r) => {
-        // custom_123 → numeric id
         const num = r.id.startsWith("custom_") ? r.id.slice(7) : r.id;
         return Number(num);
       });
@@ -270,13 +306,10 @@ export default function BoardPage() {
     }
 
     const csv = getCsvChallenges();
-    console.log("[board] boardIds:", boardIds, "csv.length:", csv.length);
     const map = buildChallengeMapFromCsv(boardIds, csv, [...customMap.values()]);
-    console.log("[board] challengeMap size:", map.size, "first boardId lookup:", boardIds[0], "→", map.get(boardIds[0]));
     setChallengeMap(map);
     setChallengeIds(boardIds);
 
-    // Load claims
     const { data: claimsData } = await supabase.from("claims").select("*").eq("lobby_id", lobbyId!);
     const claims = (claimsData ?? []) as Claim[];
 
@@ -287,7 +320,6 @@ export default function BoardPage() {
     updateBoardState(state);
     setClaimLog(claims.sort((a, b) => new Date(a.claimed_at).getTime() - new Date(b.claimed_at).getTime()));
 
-    // Load versus state
     const { data: vsData } = await supabase.from("versus_state").select("*").eq("lobby_id", lobbyId!).single();
     if (vsData) {
       const vs = vsData as VersusState;
@@ -297,6 +329,7 @@ export default function BoardPage() {
       setNextVersusId(vs.next_challenge_id ?? null);      nextVersusRef.current   = vs.next_challenge_id ?? null;
       const unlocked = new Set<string>((vs.unlocked_challenge_ids ?? []).map(String));
       setUnlockedVersus(unlocked);       unlockedVersusRef.current = unlocked;
+      setSkipVotes(vs.skip_votes ?? []);
     }
 
     setLoaded(true);
@@ -326,6 +359,13 @@ export default function BoardPage() {
       .channel(`board-${lobbyId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "claims", filter: `lobby_id=eq.${lobbyId}` }, (payload) => {
         const claim = payload.new as Claim;
+        // Remove from pending if this is our own confirmed claim
+        setPendingClaims((prev) => {
+          if (!prev.has(claim.challenge_id)) return prev;
+          const next = new Map(prev);
+          next.delete(claim.challenge_id);
+          return next;
+        });
         setBoardState((prev) => {
           const next = { ...prev, [claim.challenge_id]: { team: claim.team, playerName: claim.player_name, playerId: claim.player_id } } as LobbyBoardState;
           boardStateRef.current = next;
@@ -349,18 +389,50 @@ export default function BoardPage() {
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: `lobby_id=eq.${lobbyId}` }, () => {
         supabase.from("players").select("*").eq("lobby_id", lobbyId!).eq("kicked", false).then(({ data }) => {
-          setLobbyPlayers((data ?? []) as Player[]);
+          const players = (data ?? []) as Player[];
+          setLobbyPlayers(players);
+          lobbyPlayersRef.current = players;
+          const me = players.find((p) => p.id === pid);
+          if (me) setMyTeam(me.team);
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "versus_state", filter: `lobby_id=eq.${lobbyId}` }, (payload) => {
-        if (host) return; // Host drives; non-host syncs
         const vs = payload.new as VersusState;
-        setActiveVersusId(vs.active_challenge_id ?? null);  activeVersusRef.current = vs.active_challenge_id ?? null;
-        setNextVersusId(vs.next_challenge_id ?? null);      nextVersusRef.current   = vs.next_challenge_id ?? null;
-        const nxt = vs.next_versus_timestamp ?? null;
-        setNextVersusTime(nxt);                             nextVersusTimeRef.current = nxt;
-        const unlocked = new Set<string>((vs.unlocked_challenge_ids ?? []).map(String));
-        setUnlockedVersus(unlocked);                        unlockedVersusRef.current = unlocked;
+        const votes = vs.skip_votes ?? [];
+        setSkipVotes(votes);
+
+        if (!host) {
+          setActiveVersusId(vs.active_challenge_id ?? null);  activeVersusRef.current = vs.active_challenge_id ?? null;
+          setNextVersusId(vs.next_challenge_id ?? null);      nextVersusRef.current   = vs.next_challenge_id ?? null;
+          const nxt = vs.next_versus_timestamp ?? null;
+          setNextVersusTime(nxt);                             nextVersusTimeRef.current = nxt;
+          const unlocked = new Set<string>((vs.unlocked_challenge_ids ?? []).map(String));
+          setUnlockedVersus(unlocked);                        unlockedVersusRef.current = unlocked;
+        } else {
+          // Host: check if skip vote threshold is met
+          if (votes.length > 0 && vs.next_challenge_id) {
+            const nonSpectators = lobbyPlayersRef.current.filter((p) => !p.is_spectator);
+            const threshold = Math.max(1, Math.floor(nonSpectators.length / 2));
+            if (votes.length >= threshold) {
+              supabase.from("versus_state").upsert({
+                lobby_id:   lobbyId,
+                skip_votes: [],
+              }).then(() => {});
+              activateNextVersus(ids, map, true);
+            }
+          }
+        }
+      })
+      .subscribe();
+
+    // Settings changes from host
+    supabase
+      .channel(`lobby-settings-${lobbyId}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "lobbies", filter: `id=eq.${lobbyId}` }, (payload) => {
+        const updated = payload.new as Lobby;
+        if (!host) {
+          applySettings({ ...DEFAULT_SETTINGS, ...(updated.settings ?? {}) });
+        }
       })
       .subscribe();
 
@@ -387,20 +459,19 @@ export default function BoardPage() {
   ) {
     if (versusTimerRef.current) clearInterval(versusTimerRef.current);
 
-    // Ensure a next-versus is chosen
     if (!nextVersusRef.current) {
       pickNextVersus(ids, map, initialState);
     }
 
     versusTimerRef.current = setInterval(() => {
-      setTick((t) => t + 1); // force re-render for countdown display
+      setTick((t) => t + 1);
 
       const active = activeVersusRef.current;
       const nextTime = nextVersusTimeRef.current;
 
-      if (active) return; // waiting for that to be claimed
+      if (active) return;
 
-      if (isLobbyMode && !host) return; // non-host: display only
+      if (isLobbyMode && !host) return;
 
       if (nextTime && Date.now() >= nextTime) {
         activateNextVersus(ids, map, host);
@@ -437,6 +508,7 @@ export default function BoardPage() {
     setActiveVersusId(next);   activeVersusRef.current = next;
     setNextVersusId(null);     nextVersusRef.current = null;
     setUnlockedVersus((prev) => { const s = new Set(prev); s.add(String(next)); unlockedVersusRef.current = s; return s; });
+    setSkipConfirmId(null);
 
     if (isLobbyMode && host) {
       supabase.from("versus_state").upsert({
@@ -445,6 +517,7 @@ export default function BoardPage() {
         next_challenge_id:      null,
         next_versus_timestamp:  nextVersusTimeRef.current,
         unlocked_challenge_ids: [...unlockedVersusRef.current],
+        skip_votes:             [],
       }).then(() => {});
     } else if (!isLobbyMode) {
       saveSoloVersusState();
@@ -478,6 +551,7 @@ export default function BoardPage() {
           next_challenge_id:      nextVersusRef.current,
           next_versus_timestamp:  nxt,
           unlocked_challenge_ids: [...unlockedVersusRef.current],
+          skip_votes:             [],
         }).then(() => {});
       } else if (!isLobbyMode) {
         saveSoloVersusState();
@@ -535,23 +609,30 @@ export default function BoardPage() {
     const ch = challengeMap.get(challengeId);
     if (!ch) return;
 
+    // Close any open unclaim confirm when clicking elsewhere
+    if (unclaimConfirmId && unclaimConfirmId !== challengeId) {
+      setUnclaimConfirmId(null);
+      return;
+    }
+
     if (ch.type === "versus") {
       const active = activeVersusRef.current;
       const unlocked = unlockedVersusRef.current;
       const isActive = String(active) === String(challengeId);
       const isUnlocked = unlocked.has(String(challengeId));
       const isClaimed = isCellClaimed(challengeId);
-      if (!isActive && !isUnlocked && !isClaimed) return; // locked
+      if (!isActive && !isUnlocked && !isClaimed) return;
     }
 
     if (isLobbyMode) {
       const existing = (boardStateRef.current as LobbyBoardState)[challengeId];
-      if (existing?.team === myTeam) {
-        unclaimLobbyCell(challengeId);
+      if (existing?.playerId === myPlayerId || (isHost && existing)) {
+        // Show inline unclaim confirmation (Feature 7)
+        setUnclaimConfirmId(challengeId);
       } else if (!existing) {
         claimLobbyCell(challengeId);
       } else {
-        claimLobbyCell(challengeId); // versus: override
+        claimLobbyCell(challengeId); // versus override
       }
     } else {
       const state = boardStateRef.current as SoloBoardState;
@@ -576,7 +657,9 @@ export default function BoardPage() {
 
     if (isLobbyMode) {
       const existing = (boardStateRef.current as LobbyBoardState)[challengeId];
-      if (existing?.team === myTeam) unclaimLobbyCell(challengeId);
+      if (existing?.playerId === myPlayerId || (isHost && existing)) {
+        setUnclaimConfirmId(challengeId);
+      }
     } else {
       const state = boardStateRef.current as SoloBoardState;
       const next = { ...state };
@@ -604,39 +687,81 @@ export default function BoardPage() {
     saveSoloVersusState();
   }
 
+  // Feature 6: Optimistic tile claiming
   async function claimLobbyCell(challengeId: string) {
+    if (!myTeam) return;
     const playerName = sessionStorage.getItem("playerName") ?? "Player";
-    await supabase.from("claims").upsert({
+
+    // Optimistic update
+    setPendingClaims((prev) => {
+      const next = new Map(prev);
+      next.set(challengeId, { team: myTeam!, playerName });
+      return next;
+    });
+
+    const { error } = await supabase.from("claims").upsert({
       lobby_id:     lobbyId,
       challenge_id: String(challengeId),
       player_id:    myPlayerId,
       player_name:  playerName,
       team:         myTeam,
     });
+
+    if (error) {
+      // Revert optimistic update
+      setPendingClaims((prev) => {
+        const next = new Map(prev);
+        next.delete(challengeId);
+        return next;
+      });
+      addToast("Failed to claim tile.", "error");
+    }
+    // On success: subscription will confirm and remove from pending
   }
 
   async function unclaimLobbyCell(challengeId: string) {
+    setUnclaimConfirmId(null);
     await supabase.from("claims").delete().eq("lobby_id", lobbyId!).eq("challenge_id", String(challengeId));
   }
 
-  // ── Timer cell click (host manual advance) ────────────────────────────────────
+  // ── Timer cell click (host manual advance / skip) ─────────────────────────────
 
-  function handleTimerClick(challengeId: string) {
-    if (isLobbyMode && !isHost) return;
+  function handleTimerClick(challengeId: string, e: React.MouseEvent) {
+    e.stopPropagation();
     const active = activeVersusRef.current;
     const next   = nextVersusRef.current;
 
     if (String(active) === String(challengeId)) {
-      // Demote active → back to next-up
+      // Demote active → back to next-up (non-host solo or host)
+      if (isLobbyMode && !isHost) return;
       setActiveVersusId(null); activeVersusRef.current = null;
       setNextVersusId(challengeId); nextVersusRef.current = challengeId;
       const nxt = Date.now() + settings.versusInterval * 60 * 1000;
       setNextVersusTime(nxt); nextVersusTimeRef.current = nxt;
       if (isLobbyMode) writeVersusStateToDb();
     } else if (String(next) === String(challengeId)) {
-      // Skip timer → activate now
-      activateNextVersus(challengeIds, challengeMap, isHost);
+      if (isLobbyMode && !isHost) return;
+      // Host: show skip confirmation (Feature 3)
+      if (isLobbyMode && isHost) {
+        setSkipConfirmId(challengeId);
+      } else {
+        activateNextVersus(challengeIds, challengeMap, isHost);
+      }
     }
+  }
+
+  // Feature 3: Player vote to skip countdown
+  async function voteToSkip(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!myPlayerId || !isLobbyMode || isHost) return;
+    if (skipVotes.includes(myPlayerId)) return; // already voted
+
+    const newVotes = [...skipVotes, myPlayerId];
+
+    await supabase.from("versus_state").upsert({
+      lobby_id:   lobbyId,
+      skip_votes: newVotes,
+    });
   }
 
   async function writeVersusStateToDb() {
@@ -646,7 +771,20 @@ export default function BoardPage() {
       next_challenge_id:      nextVersusRef.current,
       next_versus_timestamp:  nextVersusTimeRef.current,
       unlocked_challenge_ids: [...unlockedVersusRef.current],
+      skip_votes:             [],
     });
+  }
+
+  // ── In-game team swap (host only, gated by teamSwapEnabled setting) ──────────
+
+  async function assignTeamInGame(playerId: string, team: TeamColor) {
+    await supabase.from("players").update({ team }).eq("id", playerId);
+  }
+
+  function nextTeamInGame(current: TeamColor | null): TeamColor {
+    const available = TEAM_COLORS.slice(0, settingsRef.current.teamCount);
+    const idx = current ? available.indexOf(current) : -1;
+    return available[(idx + 1) % available.length];
   }
 
   // ── Reset ─────────────────────────────────────────────────────────────────────
@@ -658,6 +796,7 @@ export default function BoardPage() {
       await supabase.from("claims").delete().eq("lobby_id", lobbyId!);
     }
     updateBoardState({});
+    setPendingClaims(new Map());
     setClaimLog([]);
     bingoShownRef.current = false;
     setBingoShown(false);
@@ -666,6 +805,7 @@ export default function BoardPage() {
     setActiveVersusId(null);  activeVersusRef.current = null;
     setNextVersusId(null);    nextVersusRef.current = null;
     setUnlockedVersus(new Set()); unlockedVersusRef.current = new Set();
+    setSkipVotes([]);
     const nxt = Date.now() + settings.versusInterval * 60 * 1000;
     setNextVersusTime(nxt);   nextVersusTimeRef.current = nxt;
     pickNextVersus(challengeIds, challengeMap, {});
@@ -681,6 +821,7 @@ export default function BoardPage() {
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   function isCellClaimed(id: string): boolean {
+    if (pendingClaims.has(id)) return true;
     const state = boardStateRef.current;
     const val = (state as any)[id];
     if (!val) return false;
@@ -688,7 +829,9 @@ export default function BoardPage() {
     return !!(val as any).team;
   }
 
+  // Feature 6: Check pending claims first
   function getCellTeam(id: string): string {
+    if (pendingClaims.has(id)) return pendingClaims.get(id)!.team;
     const state = boardState;
     const val = (state as any)[id];
     if (!val) return "";
@@ -697,6 +840,7 @@ export default function BoardPage() {
   }
 
   function getCellPlayerName(id: string): string {
+    if (pendingClaims.has(id)) return pendingClaims.get(id)!.playerName;
     const state = boardState;
     const val = (state as any)[id];
     if (typeof val === "object" && val) return val.playerName ?? "";
@@ -706,9 +850,13 @@ export default function BoardPage() {
   function getScoreCounts(): Record<string, number> {
     const counts: Record<string, number> = {};
     TEAM_COLORS.forEach((t) => { counts[t] = 0; });
+    // Count confirmed + pending
     Object.values(boardState).forEach((val) => {
       const team = typeof val === "string" ? val : (val as any)?.team;
       if (team && counts[team] !== undefined) counts[team]++;
+    });
+    pendingClaims.forEach(({ team }) => {
+      if (counts[team] !== undefined) counts[team]++;
     });
     return counts;
   }
@@ -753,95 +901,140 @@ export default function BoardPage() {
   const centerIndex = Math.floor(totalCells / 2);
   const scores      = getScoreCounts();
 
+  // Feature 3: skip vote threshold display
+  const nonSpectatorCount = lobbyPlayers.filter((p) => !p.is_spectator).length;
+  const skipThreshold = Math.max(1, Math.floor(nonSpectatorCount / 2));
+
+  function cellTextSize(text: string): string {
+    const base = fullscreen ? tileSize * 0.13 : 11;
+    const len  = text.length;
+    const scale = len > 80 ? 0.55 : len > 60 ? 0.7 : len > 40 ? 0.85 : 1;
+    return `${Math.max(Math.round(base * scale), 9)}px`;
+  }
+
+  // Feature 2: visible players in bar (hide spectators if setting on)
+  const visiblePlayers = lobbyPlayers.filter((p) =>
+    !settings.hideSpectators || !p.is_spectator
+  );
+
   return (
     <div
       ref={containerRef}
       className={`min-h-dvh flex flex-col bg-[rgb(var(--color-bg-rgb))] ${fullscreen ? "fullscreen-board" : ""}`}
     >
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => {
-            if (!isLobbyMode || confirm("Leave this game and return to home?")) navigate("/");
-          }}>
-            ← Back
-          </Button>
-          {isLobbyMode && (
-            <span className="text-sm font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              🌐 {lobbyId?.toUpperCase()}
-            </span>
-          )}
-          {!isLobbyMode && (
-            <span className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>Solo</span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Score badges */}
-          <div className="score-bar">
+      {/* Fullscreen score strip */}
+      {fullscreen && (
+        <div className="fullscreen-score-strip">
+          <div className="flex items-center gap-3">
             {TEAM_COLORS.slice(0, teamCount).map((team) => (
               <div key={team} className={`score-team team-${team}`}>
                 {TEAM_EMOJIS[team]} {scores[team] ?? 0}
               </div>
             ))}
           </div>
-
-          <Button variant="ghost" size="sm" onClick={() => setSoundEnabled((v) => !v)}>
-            {soundEnabled ? "🔔" : "🔕"}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setShowClaimLog((v) => !v)}>
-            📋
-          </Button>
-          <Button variant="ghost" size="sm" onClick={toggleFullscreen}>
-            {fullscreen ? "🗗" : "⛶"}
-          </Button>
-          {(!isLobbyMode || isHost) && (
-            <Button variant="danger" size="sm" onClick={() => setShowResetConfirm(true)}>
-              Reset
-            </Button>
-          )}
+          <button
+            onClick={toggleFullscreen}
+            className="text-lg opacity-60 hover:opacity-100 transition-opacity"
+            title="Exit fullscreen"
+          >
+            🗗
+          </button>
         </div>
-      </div>
+      )}
 
-      {/* Player bar (lobby) */}
-      {isLobbyMode && (
+      {/* Toolbar — hidden in fullscreen */}
+      {!fullscreen && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-white/10">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => {
+              if (!isLobbyMode || confirm("Leave this game and return to home?")) navigate("/");
+            }}>
+              ← Back
+            </Button>
+            {/* Feature 2: hide lobby code in streamer mode */}
+            {isLobbyMode && !settings.streamerMode && (
+              <span className="text-sm font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                🌐 {lobbyId?.toUpperCase()}
+              </span>
+            )}
+            {!isLobbyMode && (
+              <span className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>Solo</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="score-bar">
+              {TEAM_COLORS.slice(0, teamCount).map((team) => (
+                <div key={team} className={`score-team team-${team}`}>
+                  {TEAM_EMOJIS[team]} {scores[team] ?? 0}
+                </div>
+              ))}
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setSoundEnabled((v) => !v)}>
+              {soundEnabled ? "🔔" : "🔕"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowClaimLog((v) => !v)}>
+              📋
+            </Button>
+            <Button variant="ghost" size="sm" onClick={toggleFullscreen}>
+              ⛶
+            </Button>
+            {(!isLobbyMode || isHost) && (
+              <Button variant="danger" size="sm" onClick={() => setShowResetConfirm(true)}>
+                Reset
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Player bar — hidden in fullscreen */}
+      {isLobbyMode && !fullscreen && (
         <div className="px-4 py-2 border-b border-white/10">
           <div className="player-bar">
-            {lobbyPlayers.map((p) => (
-              <span
-                key={p.id}
-                className={`player-bar-item ${p.is_spectator ? "spectator" : `team-${p.team}`}`}
-              >
-                {p.is_spectator ? "👁️" : (TEAM_EMOJIS[p.team!] ?? "")} {p.name}
-                {p.id === myPlayerId && " (you)"}
-              </span>
-            ))}
+            {visiblePlayers.map((p) => {
+              const canSwap = isHost && settings.teamSwapEnabled && !p.is_spectator && !p.is_host;
+              return (
+                <span
+                  key={p.id}
+                  className={`player-bar-item ${p.is_spectator ? "spectator" : `team-${p.team}`}`}
+                  style={canSwap ? { cursor: "pointer", outline: "1px dashed rgba(255,255,255,0.25)", borderRadius: "4px" } : undefined}
+                  title={canSwap ? "Click to cycle team" : undefined}
+                  onClick={() => { if (canSwap) assignTeamInGame(p.id, nextTeamInGame(p.team)); }}
+                >
+                  {p.is_spectator ? "👁️" : (TEAM_EMOJIS[p.team!] ?? "")} {p.name}
+                  {p.id === myPlayerId && " (you)"}
+                </span>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* Main board area */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className={`flex flex-1 ${fullscreen ? "overflow-hidden items-center justify-center" : "overflow-hidden"}`}>
         {/* Board */}
-        <div className="flex-1 flex flex-col items-center justify-center p-3 overflow-auto">
+        <div className={`flex flex-col items-center justify-center ${fullscreen ? "" : "flex-1 p-3 overflow-auto"}`}>
           <div
-            className="bingo-grid w-full"
-            style={{
+            className="bingo-grid"
+            style={fullscreen ? {
+              gridTemplateColumns: `repeat(${boardW}, ${tileSize}px)`,
+              width: `${boardW * tileSize + (boardW - 1) * 6}px`,
+            } : {
               maxWidth: `${Math.min(boardW * 130, 900)}px`,
               gridTemplateColumns: `repeat(${boardW}, 1fr)`,
+              width: "100%",
             }}
           >
             {Array.from({ length: totalCells }).map((_, idx) => {
-              // Free space cell
               if (settings.freeSpace && idx === centerIndex) {
                 return (
-                  <div key="free" className="bingo-cell free-space">
+                  <div key="free" className="bingo-cell free-space" style={fullscreen ? { width: tileSize, height: tileSize } : undefined}>
                     <div className="bingo-cell-text">FREE</div>
                   </div>
                 );
               }
 
-              // Work out which challenge index this maps to
               const challengeIndex = settings.freeSpace && idx > centerIndex ? idx - 1 : idx;
               const id = challengeIds[challengeIndex];
               if (!id) return <div key={idx} className="bingo-cell free-space" />;
@@ -851,14 +1044,17 @@ export default function BoardPage() {
 
               const team       = getCellTeam(id);
               const playerName = getCellPlayerName(id);
+              const isPending  = pendingClaims.has(id);
               const isVersus   = ch.type === "versus";
               const isActive   = String(activeVersusId) === String(id);
               const isNextUp   = String(nextVersusId) === String(id);
               const isUnavail  = isVersus && !isActive && !isNextUp && !unlockedVersus.has(String(id)) && !isCellClaimed(id);
               const isWinner   = winnerIds.includes(id);
+              const hasUnclaimConfirm = unclaimConfirmId === id;
 
               let cellClass = "bingo-cell";
               if (team) cellClass += ` claimed-${team}`;
+              if (isPending) cellClass += " opacity-70";
               if (isActive) cellClass += " active-versus";
               else if (isNextUp) cellClass += " next-up-versus";
               if (isUnavail) cellClass += " unavailable";
@@ -869,26 +1065,75 @@ export default function BoardPage() {
                 <div
                   key={id}
                   className={cellClass}
+                  style={fullscreen ? { width: tileSize, height: tileSize } : undefined}
                   onClick={() => handleCellClick(id)}
                   onContextMenu={(e) => handleCellRightClick(e, id)}
                 >
-                  {/* Timer label for versus cells */}
-                  {isVersus && (isNextUp || isActive) && (
+                  {/* Feature 7: Unclaim confirmation popover */}
+                  {hasUnclaimConfirm && (
                     <div
-                      className="bingo-cell-timer"
-                      onClick={(e) => { e.stopPropagation(); handleTimerClick(id); }}
-                      title={isActive ? "Click to demote" : "Click to activate now"}
+                      className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-[9px] z-10"
+                      style={{ background: "rgba(0,0,0,0.82)" }}
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {isActive ? "ACTIVE" : `Next in ${getCountdown()}`}
+                      <p className="text-xs font-bold text-white">Unclaim?</p>
+                      <div className="flex gap-2">
+                        <button
+                          className="text-xs px-2 py-1 rounded-md font-semibold"
+                          style={{ background: "rgba(193,18,31,0.8)", color: "white" }}
+                          onClick={(e) => { e.stopPropagation(); unclaimLobbyCell(id); }}
+                        >
+                          Yes
+                        </button>
+                        <button
+                          className="text-xs px-2 py-1 rounded-md font-semibold"
+                          style={{ background: "rgba(255,255,255,0.2)", color: "white" }}
+                          onClick={(e) => { e.stopPropagation(); setUnclaimConfirmId(null); }}
+                        >
+                          No
+                        </button>
+                      </div>
                     </div>
                   )}
 
-                  <div className="bingo-cell-icon">
+                  {/* Versus timer / skip UI */}
+                  {isVersus && (isNextUp || isActive) && (
+                    <div className="flex flex-col items-center gap-1 w-full">
+                      <div
+                        className="bingo-cell-timer"
+                        onClick={(e) => handleTimerClick(id, e)}
+                        title={isActive ? "Host: click to demote" : "Host: click to skip countdown"}
+                        style={{ cursor: isHost ? "pointer" : "default" }}
+                      >
+                        {isActive ? "ACTIVE" : `Next in ${getCountdown()}`}
+                      </div>
+                      {/* Feature 3: Player vote to skip */}
+                      {isNextUp && isLobbyMode && !isHost && !isSpectator && (
+                        <button
+                          className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            background: skipVotes.includes(myPlayerId ?? "") ? "rgba(255,160,40,0.5)" : "rgba(255,160,40,0.2)",
+                            color: "rgb(255,200,60)",
+                            border: "1px solid rgba(255,160,40,0.4)",
+                          }}
+                          onClick={(e) => voteToSkip(e)}
+                          title={`Vote to skip countdown (${skipVotes.length}/${skipThreshold} needed)`}
+                        >
+                          ⚡ Skip {skipVotes.length}/{skipThreshold}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="bingo-cell-icon" style={fullscreen ? { fontSize: `${Math.round(tileSize * 0.18)}px` } : undefined}>
                     {ch.type === "single" ? "👤" : ch.type === "group" ? "👥" : "⚔️"}
                   </div>
-                  <div className="bingo-cell-text">{ch.text}</div>
-                  <div className="bingo-cell-game">{getGameDisplayName(ch.game)}</div>
-                  {playerName && (
+                  <div className="bingo-cell-text" style={{ fontSize: cellTextSize(ch.text) }}>{ch.text}</div>
+                  <div className="bingo-cell-game" style={fullscreen ? { fontSize: `${Math.round(tileSize * 0.09)}px` } : undefined}>
+                    {getGameDisplayName(ch.game)}
+                  </div>
+                  {/* Feature 8: Claimant name gated on setting */}
+                  {playerName && (isLobbyMode ? settings.showClaimantName : true) && (
                     <div className="bingo-cell-claimer">{playerName}</div>
                   )}
                 </div>
@@ -896,12 +1141,11 @@ export default function BoardPage() {
             })}
           </div>
 
-          {/* Footer hint */}
           <p className="text-xs mt-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             {isSpectator
               ? "👁️ Spectating — you cannot claim tiles"
               : isLobbyMode
-              ? `Click to claim for ${TEAM_EMOJIS[myTeam!] ?? ""} ${TEAM_LABELS[myTeam!] ?? myTeam} · Right-click to unclaim`
+              ? `Click to claim for ${TEAM_EMOJIS[myTeam!] ?? ""} ${TEAM_LABELS[myTeam!] ?? myTeam} · Right-click / click own tile to unclaim`
               : "Left-click = Blue · Right-click = Red"}
           </p>
         </div>
@@ -985,6 +1229,31 @@ export default function BoardPage() {
             <div className="flex gap-3">
               <Button variant="ghost" fullWidth onClick={() => setShowResetConfirm(false)}>Cancel</Button>
               <Button variant="danger" fullWidth onClick={resetBoard}>Reset</Button>
+            </div>
+          </Panel>
+        </div>
+      )}
+
+      {/* Feature 3: Host skip countdown confirmation */}
+      {skipConfirmId && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+        >
+          <Panel className="max-w-xs w-full p-6 text-center flex flex-col gap-4">
+            <p className="text-2xl">⚔️</p>
+            <p className="font-bold text-lg">Skip countdown?</p>
+            <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Open this versus challenge immediately.
+            </p>
+            <div className="flex gap-3">
+              <Button variant="ghost" fullWidth onClick={() => setSkipConfirmId(null)}>Cancel</Button>
+              <Button variant="primary" fullWidth onClick={() => {
+                setSkipConfirmId(null);
+                activateNextVersus(challengeIds, challengeMap, true);
+              }}>
+                Skip
+              </Button>
             </div>
           </Panel>
         </div>
