@@ -4,6 +4,7 @@ import HomePage  from "./pages/HomePage";
 import LobbyPage from "./pages/LobbyPage";
 import GamePage  from "./pages/GamePage";
 import EndPage   from "./pages/EndPage";
+import DebugPage from "./pages/DebugPage";
 
 function Header() {
   const { session } = useSession();
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="/lobby/:roomId" element={<LobbyPage />} />
           <Route path="/game/:roomId"  element={<GamePage />} />
           <Route path="/end/:roomId"   element={<EndPage />} />
+          <Route path="/debug"         element={<DebugPage />} />
           <Route path="*"              element={<Navigate to="/" replace />} />
         </Routes>
       </main>
