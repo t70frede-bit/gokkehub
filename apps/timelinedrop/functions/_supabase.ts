@@ -128,7 +128,7 @@ export async function refreshSpotifyToken(
   return res.json() as Promise<{ access_token: string; expires_in: number }>;
 }
 
-async function getClientCredentialsToken(env: Env): Promise<string> {
+export async function getClientCredentialsToken(env: Env): Promise<string> {
   const res = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: {
@@ -163,25 +163,14 @@ interface SpotifyPlaylistItem {
 
 export async function fetchPlaylistTracks(
   env: Env,
-  playlistId: string
+  playlistId: string,
+  accessToken?: string
 ): Promise<SpotifyTrack[]> {
-  const accessToken = await getClientCredentialsToken(env);
+  if (!accessToken) accessToken = await getClientCredentialsToken(env);
   const tracks: SpotifyTrack[] = [];
-  let url: string | null =
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks` +
-    `?limit=100&fields=next,items(track(id,name,uri,artists(name),album(name,release_date,images)))`;
 
-  while (url) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Spotify playlist fetch: ${res.status} — ${body}`);
-    }
-    const page = await res.json() as { next: string | null; items: SpotifyPlaylistItem[] };
-
-    for (const item of page.items) {
+  const addItems = (items: SpotifyPlaylistItem[]) => {
+    for (const item of items) {
       const t = item.track;
       if (!t || !t.id || !t.uri) continue;
       const releaseYear = parseInt(t.album.release_date.slice(0, 4), 10);
@@ -197,7 +186,35 @@ export async function fetchPlaylistTracks(
         uri:         t.uri,
       });
     }
-    url = page.next;
+  };
+
+  // Use the base playlist endpoint — the /tracks sub-endpoint requires user OAuth
+  // (Spotify API restriction since late 2023). Base endpoint works with client credentials.
+  const firstRes = await fetch(
+    `https://api.spotify.com/v1/playlists/${playlistId}` +
+    `?fields=tracks(next,items(track(id,name,uri,artists(name),album(name,release_date,images))))`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!firstRes.ok) {
+    const body = await firstRes.text().catch(() => "");
+    throw new Error(`Spotify playlist fetch: ${firstRes.status} — ${body}`);
+  }
+  const firstData = await firstRes.json() as {
+    tracks: { next: string | null; items: SpotifyPlaylistItem[] };
+  };
+
+  addItems(firstData.tracks.items);
+  let nextUrl = firstData.tracks.next;
+
+  while (nextUrl) {
+    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Spotify playlist fetch: ${res.status} — ${body}`);
+    }
+    const page = await res.json() as { next: string | null; items: SpotifyPlaylistItem[] };
+    addItems(page.items);
+    nextUrl = page.next;
   }
 
   return tracks;

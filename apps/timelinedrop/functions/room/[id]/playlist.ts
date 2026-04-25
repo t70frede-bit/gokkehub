@@ -2,7 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, updateRoom, fetchPlaylistTracks } from "../../_supabase";
+import { getRoom, updateRoom, fetchPlaylistTracks, getClientCredentialsToken } from "../../_supabase";
 import type { AddPlaylistResponse } from "../../../src/lib/types";
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -34,7 +34,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const playlistId = match?.[1] ?? (/^[A-Za-z0-9]{22}$/.test(url.trim()) ? url.trim() : null);
     if (!playlistId) return json({ error: "Invalid Spotify playlist URL" }, 400, req);
 
-    // Fetch playlist name (client credentials — no user token needed)
+    // Fetch name + first tracks page in one request using client credentials.
+    // The /tracks sub-endpoint requires user OAuth (Spotify API restriction since late 2023)
+    // so we use the base endpoint which works with client credentials.
     const clientToken = await getClientCredentialsToken(env);
     const metaRes = await fetch(
       `https://api.spotify.com/v1/playlists/${playlistId}?fields=name`,
@@ -48,8 +50,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     }
     const { name } = await metaRes.json() as { name: string };
 
-    // Fetch all tracks server-side using client credentials
-    const tracks = await fetchPlaylistTracks(env, playlistId);
+    const tracks = await fetchPlaylistTracks(env, playlistId, clientToken);
     if (tracks.length === 0) return json({ error: "No playable tracks found in playlist" }, 400, req);
 
     const existingIds = new Set((room.track_pool ?? []).map(t => t.id));
@@ -69,16 +70,3 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   }
 };
 
-async function getClientCredentialsToken(env: Env): Promise<string> {
-  const res = await fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: {
-      "Content-Type":  "application/x-www-form-urlencoded",
-      "Authorization": `Basic ${btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`)}`,
-    },
-    body: new URLSearchParams({ grant_type: "client_credentials" }),
-  });
-  if (!res.ok) throw new Error(`Spotify client credentials failed: ${res.status}`);
-  const data = await res.json() as { access_token: string };
-  return data.access_token;
-}
