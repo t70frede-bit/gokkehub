@@ -147,24 +147,28 @@ export async function getClientCredentialsToken(env: Env): Promise<string> {
 
 // ── Spotify playlist fetch ────────────────────────────────────────────────────
 
-interface SpotifyPlaylistItem {
-  track: {
-    id: string;
+interface SpotifyTrackObject {
+  id: string;
+  name: string;
+  uri: string;
+  artists: Array<{ name: string }>;
+  album: {
     name: string;
-    uri: string;
-    artists: Array<{ name: string }>;
-    album: {
-      name: string;
-      release_date: string;
-      images: Array<{ url: string; width: number }>;
-    };
-  } | null;
+    release_date: string;
+    images: Array<{ url: string; width: number }>;
+  };
+}
+
+interface SpotifyPlaylistItem {
+  // `item` is the current field; `track` is the deprecated alias — accept both
+  item:  SpotifyTrackObject | null;
+  track: SpotifyTrackObject | null;
 }
 
 function parseItems(items: SpotifyPlaylistItem[]): SpotifyTrack[] {
   const out: SpotifyTrack[] = [];
-  for (const item of items) {
-    const t = item.track;
+  for (const entry of items) {
+    const t = entry.item ?? entry.track;   // prefer new `item` field, fall back to deprecated `track`
     if (!t || !t.id || !t.uri) continue;
     const releaseYear = parseInt(t.album.release_date.slice(0, 4), 10);
     if (isNaN(releaseYear)) continue;
@@ -182,10 +186,6 @@ function parseItems(items: SpotifyPlaylistItem[]): SpotifyTrack[] {
   return out;
 }
 
-// Spotify restricts GET /v1/playlists/{id}/tracks for many apps.
-// We use the base playlist endpoint instead, which returns the same
-// track data under response.tracks, and paginate via the next URL
-// using the /items endpoint which is not affected by the restriction.
 export async function fetchPlaylistTracks(
   env: Env,
   playlistId: string,
@@ -193,9 +193,8 @@ export async function fetchPlaylistTracks(
 ): Promise<SpotifyTrack[]> {
   if (!accessToken) accessToken = await getClientCredentialsToken(env);
 
-  // Use the current /items endpoint (the old /tracks endpoint is deprecated)
   let nextUrl: string | null =
-    `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
+    `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50&additional_types=track`;
 
   const tracks: SpotifyTrack[] = [];
 
