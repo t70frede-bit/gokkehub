@@ -63,7 +63,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!metaRes.ok) {
       const status = metaRes.status;
       if (status === 404) return json({ error: "Playlist not found. Make sure the URL is correct and the playlist is public." }, 400, req);
-      if (status === 403) return json({ error: "Playlist is private or not accessible with your Spotify account." }, 400, req);
+      if (status === 403) return json({ error: "Playlist access denied. While Musix is in Spotify development mode, you can only add playlists you personally created on Spotify (not playlists owned by others)." }, 400, req);
       return json({ error: `Spotify error ${status} fetching playlist` }, 502, req);
     }
     const { name } = await metaRes.json() as { name: string };
@@ -85,6 +85,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     return json({ added: unique.length, total: merged.length, name } as AddPlaylistResponse, 200, req);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return json({ error: msg }, 500, req);
+    const friendlyMsg = msg.includes("403")
+      ? "Playlist access denied. While Musix is in Spotify development mode, you can only add playlists you personally created on Spotify."
+      : msg;
+    return json({ error: friendlyMsg }, 500, req);
   }
 };
