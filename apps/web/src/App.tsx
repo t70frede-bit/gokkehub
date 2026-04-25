@@ -142,14 +142,11 @@ export default function App() {
 
       {/* Footer */}
       <footer className="relative z-10 border-t border-white/5 py-8 px-6 text-center">
-        <p className="text-content-muted text-sm">
-          © 2026 GokkeHub ·{" "}
-          <a
-            href="https://account.gokkehub.com"
-            className="hover:text-content-secondary transition-colors"
-          >
-            Account
-          </a>
+        <p className="text-content-muted text-sm flex flex-wrap justify-center gap-x-4 gap-y-1">
+          <span>© 2026 GokkeHub</span>
+          <a href="https://account.gokkehub.com" className="hover:text-content-secondary transition-colors">Account</a>
+          <a href="/privacy" className="hover:text-content-secondary transition-colors">Privacy Policy</a>
+          <a href="/terms"   className="hover:text-content-secondary transition-colors">Terms of Service</a>
         </p>
       </footer>
     </div>

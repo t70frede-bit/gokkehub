@@ -3,34 +3,30 @@ import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
-// GET /auth/discord — redirect to Discord OAuth
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-  // 20 OAuth initiations per minute per IP
+  if (!env.DISCORD_CLIENT_ID) {
+    return new Response("DISCORD_CLIENT_ID is not configured on this server.", { status: 500 });
+  }
+
   const limited = await rateLimit(env.SESSIONS, request as unknown as Request, {
     max: 20,
     windowSeconds: 60,
     prefix: "rl:oauth",
   });
   if (limited) return limited;
+
   const params = new URLSearchParams({
-    client_id: env.DISCORD_CLIENT_ID,
-    redirect_uri: `https://account.gokkehub.com/auth/discord/callback`,
+    client_id:     env.DISCORD_CLIENT_ID,
+    redirect_uri:  "https://account.gokkehub.com/auth/discord/callback",
     response_type: "code",
-    scope: "identify email",
+    scope:         "identify email",
   });
 
-  return Response.redirect(
-    `https://discord.com/oauth2/authorize?${params.toString()}`,
-    302
-  );
+  return Response.redirect(`https://discord.com/oauth2/authorize?${params}`, 302);
 };
 
-// DELETE /auth/discord — disconnect Discord from account
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
-  const { session, response } = await requireAuth(
-    env.SESSIONS,
-    request as unknown as Request
-  );
+  const { response } = await requireAuth(env.SESSIONS, request as unknown as Request);
   if (response) return response;
 
   const sessionId = getSessionId(request as unknown as Request)!;

@@ -1,4 +1,7 @@
 // Components
+export { SiteHeader }              from "./components/SiteHeader.tsx";
+export { default as GameCover }    from "./components/GameCover.tsx";
+export type { GameCoverProps }     from "./components/GameCover.tsx";
 export { default as Button }       from "./components/Button.tsx";
 export { default as Panel }        from "./components/Panel.tsx";
 export { default as Input }        from "./components/Input.tsx";
@@ -11,6 +14,7 @@ export { default as VictoryModal } from "./components/VictoryModal.tsx";
 export { ToastProvider, useToast } from "./components/Toast.tsx";
 
 // Prop types
+export type { SiteHeaderProps, SiteHeaderTab } from "./components/SiteHeader.tsx";
 export type { ButtonProps }       from "./components/Button.tsx";
 export type { PanelProps }        from "./components/Panel.tsx";
 export type { InputProps }        from "./components/Input.tsx";

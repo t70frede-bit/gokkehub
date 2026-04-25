@@ -11,4 +11,6 @@ binding = "AVATARS"
 bucket_name = "gokkehub-avatars"
 
 [vars]
-COOKIE_DOMAIN = ".gokkehub.com"
+COOKIE_DOMAIN      = ".gokkehub.com"
+VITE_SUPABASE_URL  = "https://verbxfbfurachhxztkob.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlcmJ4ZmJmdXJhY2hoeHp0a29iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDQ5MzUsImV4cCI6MjA5MDg4MDkzNX0.F8YbpRnMZTtNG40jJ9HuyFlOS2W_XYQxcDGHH6RL1mQ"

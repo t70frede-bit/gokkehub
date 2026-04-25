@@ -9,17 +9,17 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@gokkehub/auth":   "*",
-    "@gokkehub/db":     "*",
-    "@gokkehub/ui":     "*",
-    "react":            "^18.3.0",
-    "react-dom":        "^18.3.0",
-    "react-router-dom": "^6.26.0"
+    "@gokkehub/auth":        "*",
+    "@gokkehub/db":          "*",
+    "@gokkehub/ui":          "*",
+    "@supabase/supabase-js": "^2.45.0",
+    "react":                 "^18.3.0",
+    "react-dom":             "^18.3.0",
+    "react-router-dom":      "^6.26.0"
   },
   "devDependencies": {
-    "@gokkehub/config":              "*",
-    "@cloudflare/workers-types":     "^4.20241022.0",
-    "@supabase/supabase-js":         "^2.45.0",
+    "@gokkehub/config":          "*",
+    "@cloudflare/workers-types": "^4.20241022.0",
     "@types/react":                  "^18.3.0",
     "@types/react-dom":              "^18.3.0",
     "@vitejs/plugin-react":          "^4.3.0",

@@ -1,6 +1,17 @@
+import { useSearchParams } from "react-router-dom";
 import { Button, Panel } from "@gokkehub/ui";
 
+const ERROR_MESSAGES: Record<string, string> = {
+  discord_denied: "Discord login was cancelled.",
+  discord_token:  "Discord login failed — check app credentials.",
+  discord_user:   "Could not fetch Discord profile.",
+};
+
 export default function LoginPage() {
+  const [searchParams] = useSearchParams();
+  const errorKey = searchParams.get("error");
+  const errorMsg = errorKey ? (ERROR_MESSAGES[errorKey] ?? `Login error: ${errorKey}`) : null;
+
   return (
     <div className="flex-1 flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-5">
@@ -9,6 +20,9 @@ export default function LoginPage() {
           <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             Sign in to continue
           </p>
+          {errorMsg && (
+            <p className="mt-2 text-sm" style={{ color: "rgb(239,68,68)" }}>{errorMsg}</p>
+          )}
         </div>
 
         <Panel variant="bare">
