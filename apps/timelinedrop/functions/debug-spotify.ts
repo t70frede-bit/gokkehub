@@ -45,30 +45,34 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   });
   const meBody = await meRes.text();
 
-  // Test playlist items with user token — "Today's Top Hits" (Spotify-owned public playlist)
-  const testPlaylistId = "37i9dQZF1DXcBWIGoYBM5M";
-  const userTracksRes = await fetch(
-    `https://api.spotify.com/v1/playlists/${testPlaylistId}/items?limit=1`,
+  // Get user's own playlists — pick the first one to test /items
+  const myPlaylistsRes = await fetch(
+    "https://api.spotify.com/v1/me/playlists?limit=5",
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
-  const userTracksBody = await userTracksRes.text();
+  const myPlaylistsText = await myPlaylistsRes.text();
+  const myPlaylistsData = (() => { try { return JSON.parse(myPlaylistsText); } catch { return null; } })() as {
+    items?: Array<{ id: string; name: string; owner: { id: string }; tracks: { total: number } }>;
+  } | null;
 
-  // Test playlist items with client credentials token (app-level, no user context)
-  let ccToken: string | null = null;
-  let ccError: string | null = null;
-  let ccTracksStatus: number | null = null;
-  let ccTracksBody: unknown = null;
-  try {
-    ccToken = await getClientCredentialsToken(env);
-    const ccRes = await fetch(
-      `https://api.spotify.com/v1/playlists/${testPlaylistId}/items?limit=1`,
-      { headers: { Authorization: `Bearer ${ccToken}` } }
+  const ownedPlaylists = (myPlaylistsData?.items ?? []).filter(
+    p => p.owner.id === session.spotify!.id
+  );
+  const firstOwned = ownedPlaylists[0] ?? myPlaylistsData?.items?.[0] ?? null;
+
+  // Test /items on the first playlist (owned or followed)
+  let ownedItemsStatus: number | null = null;
+  let ownedItemsBody: unknown = null;
+  let ownedPlaylistId: string | null = null;
+  if (firstOwned) {
+    ownedPlaylistId = firstOwned.id;
+    const ownedRes = await fetch(
+      `https://api.spotify.com/v1/playlists/${firstOwned.id}/items?limit=1&market=from_token`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
-    ccTracksStatus = ccRes.status;
-    const ccText = await ccRes.text();
-    ccTracksBody = (() => { try { return JSON.parse(ccText); } catch { return ccText; } })();
-  } catch (e) {
-    ccError = e instanceof Error ? e.message : String(e);
+    ownedItemsStatus = ownedRes.status;
+    const ownedText = await ownedRes.text();
+    ownedItemsBody = (() => { try { return JSON.parse(ownedText); } catch { return ownedText; } })();
   }
 
   // Also show what scopes the stored token has
@@ -83,12 +87,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     refresh_error:  refreshError,
     token_prefix:   accessToken.slice(0, 12) + "...",
     me_status:      meRes.status,
-    me_body:        (() => { try { return JSON.parse(meBody); } catch { return meBody; } })(),
-    test_playlist_id: testPlaylistId,
-    user_token_items_status:  userTracksRes.status,
-    user_token_items_body:    (() => { try { return JSON.parse(userTracksBody); } catch { return userTracksBody; } })(),
-    cc_token_items_status:    ccTracksStatus,
-    cc_token_items_body:      ccTracksBody,
-    cc_token_error:           ccError,
+    my_playlists_status: myPlaylistsRes.status,
+    my_playlists: (myPlaylistsData?.items ?? []).map(p => ({
+      id:    p.id,
+      name:  p.name,
+      owner: p.owner.id,
+      total: p.tracks.total,
+    })),
+    test_playlist_id:      ownedPlaylistId,
+    owned_items_status:    ownedItemsStatus,
+    owned_items_body:      ownedItemsBody,
   }, 200, req);
 };
