@@ -188,22 +188,10 @@ export async function fetchPlaylistTracks(
     }
   };
 
-  // Use the base playlist endpoint — the /tracks sub-endpoint requires user OAuth
-  // (Spotify API restriction since late 2023). Base endpoint works with client credentials.
-  const firstRes = await fetch(
-    `https://api.spotify.com/v1/playlists/${playlistId}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!firstRes.ok) {
-    const body = await firstRes.text().catch(() => "");
-    throw new Error(`Spotify playlist fetch: ${firstRes.status} — ${body}`);
-  }
-  const firstData = await firstRes.json() as {
-    tracks: { next: string | null; items: SpotifyPlaylistItem[] };
-  };
-
-  addItems(firstData.tracks.items);
-  let nextUrl = firstData.tracks.next;
+  // Requires a user OAuth token with playlist-read-private scope.
+  let nextUrl: string | null =
+    `https://api.spotify.com/v1/playlists/${playlistId}/tracks` +
+    `?limit=100&fields=next,items(track(id,name,uri,artists(name),album(name,release_date,images)))`;
 
   while (nextUrl) {
     const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -212,7 +200,7 @@ export async function fetchPlaylistTracks(
       throw new Error(`Spotify playlist fetch: ${res.status} — ${body}`);
     }
     const page = await res.json() as { next: string | null; items: SpotifyPlaylistItem[] };
-    addItems(page.items);
+    addItems(page.items ?? []);
     nextUrl = page.next;
   }
 

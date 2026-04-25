@@ -1,8 +1,9 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
+import { parseSessionId } from "@gokkehub/auth/cookie";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, updateRoom, fetchPlaylistTracks, getClientCredentialsToken } from "../../_supabase";
+import { getRoom, updateRoom, fetchPlaylistTracks, refreshSpotifyToken } from "../../_supabase";
 import type { AddPlaylistResponse } from "../../../src/lib/types";
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -16,6 +17,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   try {
     const session = await getSession(env.SESSIONS, req);
     if (!session) return json({ error: "Not authenticated — sign in first" }, 401, req);
+
+    if (!session.spotify) {
+      return json({ error: "Connect Spotify on your profile at account.gokkehub.com first" }, 403, req);
+    }
 
     const room = await getRoom(env, roomId);
     if (!room) return json({ error: "Room not found" }, 404, req);
@@ -34,23 +39,37 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const playlistId = match?.[1] ?? (/^[A-Za-z0-9]{22}$/.test(url.trim()) ? url.trim() : null);
     if (!playlistId) return json({ error: "Invalid Spotify playlist URL" }, 400, req);
 
-    // Fetch name + first tracks page in one request using client credentials.
-    // The /tracks sub-endpoint requires user OAuth (Spotify API restriction since late 2023)
-    // so we use the base endpoint which works with client credentials.
-    const clientToken = await getClientCredentialsToken(env);
+    // Get the host's Spotify token — refresh if within 60 seconds of expiry
+    let { accessToken, refreshToken, expiresAt } = session.spotify;
+    if (Date.now() > expiresAt - 60_000) {
+      const refreshed = await refreshSpotifyToken(env, refreshToken);
+      accessToken = refreshed.access_token;
+      expiresAt   = Date.now() + refreshed.expires_in * 1000;
+      const sessionId = parseSessionId(req.headers.get("Cookie"));
+      if (sessionId) {
+        await env.SESSIONS.put(
+          sessionId,
+          JSON.stringify({ ...session, spotify: { ...session.spotify, accessToken, expiresAt } }),
+          { expirationTtl: 604800 }
+        );
+      }
+    }
+
+    // Fetch playlist name
     const metaRes = await fetch(
       `https://api.spotify.com/v1/playlists/${playlistId}?fields=name`,
-      { headers: { Authorization: `Bearer ${clientToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     if (!metaRes.ok) {
       const status = metaRes.status;
       if (status === 404) return json({ error: "Playlist not found. Make sure the URL is correct and the playlist is public." }, 400, req);
-      if (status === 403) return json({ error: "Playlist is private. Only public Spotify playlists can be used." }, 400, req);
+      if (status === 403) return json({ error: "Playlist is private or not accessible with your Spotify account." }, 400, req);
       return json({ error: `Spotify error ${status} fetching playlist` }, 502, req);
     }
     const { name } = await metaRes.json() as { name: string };
 
-    const tracks = await fetchPlaylistTracks(env, playlistId, clientToken);
+    // Fetch all tracks using the host's token
+    const tracks = await fetchPlaylistTracks(env, playlistId, accessToken);
     if (tracks.length === 0) return json({ error: "No playable tracks found in playlist" }, 400, req);
 
     const existingIds = new Set((room.track_pool ?? []).map(t => t.id));
@@ -69,4 +88,3 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     return json({ error: msg }, 500, req);
   }
 };
-
