@@ -191,8 +191,7 @@ export async function fetchPlaylistTracks(
   // Use the base playlist endpoint — the /tracks sub-endpoint requires user OAuth
   // (Spotify API restriction since late 2023). Base endpoint works with client credentials.
   const firstRes = await fetch(
-    `https://api.spotify.com/v1/playlists/${playlistId}` +
-    `?fields=tracks(next,items(track(id,name,uri,artists(name),album(name,release_date,images))))`,
+    `https://api.spotify.com/v1/playlists/${playlistId}`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!firstRes.ok) {
