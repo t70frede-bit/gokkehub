@@ -110,4 +110,35 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy apps/gridchallenge/dist --project-name=gridchallenge --branch=main
 
-  # trackguess, timelinedrop, beatrank deploy jobs will be added once those apps are built
+  # ── Deploy timelinedrop (musix.gokkehub.com) ────────────────────────────────
+  deploy-timelinedrop:
+    name: Deploy timelinedrop
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build timelinedrop app
+        run: npm run build --workspace=apps/timelinedrop
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/timelinedrop
+          command: pages deploy dist --project-name=timelinedrop --branch=main
+
+  # trackguess, beatrank deploy jobs will be added once those apps are built
