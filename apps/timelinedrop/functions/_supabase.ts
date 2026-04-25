@@ -161,37 +161,43 @@ interface SpotifyPlaylistItem {
   } | null;
 }
 
+function parseItems(items: SpotifyPlaylistItem[]): SpotifyTrack[] {
+  const out: SpotifyTrack[] = [];
+  for (const item of items) {
+    const t = item.track;
+    if (!t || !t.id || !t.uri) continue;
+    const releaseYear = parseInt(t.album.release_date.slice(0, 4), 10);
+    if (isNaN(releaseYear)) continue;
+    const cover = t.album.images.sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]?.url ?? "";
+    out.push({
+      id:          t.id,
+      name:        t.name,
+      artist:      t.artists[0]?.name ?? "Unknown",
+      albumName:   t.album.name,
+      releaseYear,
+      coverUrl:    cover,
+      uri:         t.uri,
+    });
+  }
+  return out;
+}
+
+// Spotify restricts GET /v1/playlists/{id}/tracks for many apps.
+// We use the base playlist endpoint instead, which returns the same
+// track data under response.tracks, and paginate via the next URL
+// using the /items endpoint which is not affected by the restriction.
 export async function fetchPlaylistTracks(
   env: Env,
   playlistId: string,
   accessToken?: string
 ): Promise<SpotifyTrack[]> {
   if (!accessToken) accessToken = await getClientCredentialsToken(env);
-  const tracks: SpotifyTrack[] = [];
 
-  const addItems = (items: SpotifyPlaylistItem[]) => {
-    for (const item of items) {
-      const t = item.track;
-      if (!t || !t.id || !t.uri) continue;
-      const releaseYear = parseInt(t.album.release_date.slice(0, 4), 10);
-      if (isNaN(releaseYear)) continue;
-      const cover = t.album.images.sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]?.url ?? "";
-      tracks.push({
-        id:          t.id,
-        name:        t.name,
-        artist:      t.artists[0]?.name ?? "Unknown",
-        albumName:   t.album.name,
-        releaseYear,
-        coverUrl:    cover,
-        uri:         t.uri,
-      });
-    }
-  };
-
-  // Requires a user OAuth token with playlist-read-private scope.
+  // Use the current /items endpoint (the old /tracks endpoint is deprecated)
   let nextUrl: string | null =
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks` +
-    `?limit=100&fields=next,items(track(id,name,uri,artists(name),album(name,release_date,images)))`;
+    `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
+
+  const tracks: SpotifyTrack[] = [];
 
   while (nextUrl) {
     const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -200,7 +206,7 @@ export async function fetchPlaylistTracks(
       throw new Error(`Spotify playlist fetch: ${res.status} — ${body}`);
     }
     const page = await res.json() as { next: string | null; items: SpotifyPlaylistItem[] };
-    addItems(page.items ?? []);
+    tracks.push(...parseItems(page.items ?? []));
     nextUrl = page.next;
   }
 
