@@ -95,6 +95,39 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     discord: discordData,
   });
 
+  // Restore Spotify connection if the user had it linked before logging out
+  const storedSpotifyRaw = await env.SESSIONS.get(`spotify_link:${discordUser.id}`);
+  if (storedSpotifyRaw) {
+    try {
+      const stored = JSON.parse(storedSpotifyRaw) as {
+        id: string; refreshToken: string; displayName: string | null; scope: string;
+      };
+      const refreshRes = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": `Basic ${btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`)}`,
+        },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: stored.refreshToken }),
+      });
+      if (refreshRes.ok) {
+        const refreshed = await refreshRes.json<{ access_token: string; expires_in: number }>();
+        await updateSession(env.SESSIONS, sessionId, {
+          spotify: {
+            id: stored.id,
+            accessToken: refreshed.access_token,
+            refreshToken: stored.refreshToken,
+            expiresAt: Date.now() + refreshed.expires_in * 1000,
+            displayName: stored.displayName,
+            scope: stored.scope,
+          },
+        });
+      }
+    } catch {
+      // Silently skip — user can reconnect Spotify manually if needed
+    }
+  }
+
   const cookie = buildSessionCookie(sessionId, env.COOKIE_DOMAIN);
 
   return new Response(null, {

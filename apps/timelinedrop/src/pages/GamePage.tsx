@@ -208,19 +208,16 @@ function TrackCard({ entry }: { entry: TlTimelineEntry }) {
   );
 }
 
-function QuestionCard({ track }: { track: SpotifyTrack }) {
+function QuestionCard(_: { track: SpotifyTrack }) {
   return (
     <div className="question-card">
-      <div className="relative">
-        <img src={track.coverUrl} alt="" className="w-full aspect-square object-cover" style={{ opacity: 0.3 }} />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-xl">🎵</span>
-        </div>
+      <div className="w-full aspect-square flex items-center justify-center"
+        style={{ background: "rgba(255,255,255,0.04)" }}>
+        <span className="text-2xl">🎵</span>
       </div>
       <div className="p-1.5">
         <p className="text-sm font-black" style={{ color: "rgb(var(--color-primary-rgb))", fontFamily: "var(--font-mono)" }}>???</p>
-        <p className="text-xs truncate opacity-70">{track.artist}</p>
-        <p className="text-xs truncate opacity-45">{track.name}</p>
+        <p className="text-xs opacity-30">Place your guess</p>
       </div>
     </div>
   );
@@ -580,15 +577,18 @@ export default function GamePage() {
       {round && (
         <div className="flex items-center gap-3 rounded-xl p-3"
           style={{ background: "rgba(var(--surface-raised-rgb), 0.3)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <img src={round.track.coverUrl} alt=""
-            className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-            style={{ opacity: round.outcome === null ? 0.5 : 0.85 }} />
+          {round.outcome === null ? (
+            <div className="w-12 h-12 rounded-lg flex-shrink-0 flex items-center justify-center"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <span className="text-xl">🎵</span>
+            </div>
+          ) : (
+            <img src={round.track.coverUrl} alt=""
+              className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+          )}
           <div className="flex-1 min-w-0">
             {round.outcome === null ? (
-              <>
-                <p className="font-semibold truncate">{round.track.artist}</p>
-                <p className="text-sm opacity-60 truncate">{round.track.name}</p>
-              </>
+              <p className="text-sm opacity-50 italic">Listen and guess the year…</p>
             ) : (
               <>
                 <p className="font-bold" style={{ color: "rgb(var(--color-secondary-rgb))", fontFamily: "var(--font-mono)" }}>

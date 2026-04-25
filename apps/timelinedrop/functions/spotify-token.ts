@@ -31,5 +31,5 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     }
   }
 
-  return json({ accessToken, expiresAt }, 200, req);
+  return json({ access_token: accessToken, expiresAt }, 200, req);
 };

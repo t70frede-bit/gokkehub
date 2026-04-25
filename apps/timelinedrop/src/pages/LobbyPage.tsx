@@ -202,29 +202,6 @@ export default function LobbyPage() {
         </Panel>
       )}
 
-      {/* Track pool — visible to host */}
-      {isHost && trackCount > 0 && (
-        <Panel className="p-4">
-          <h2 className="font-bold mb-3">Loaded tracks <span className="opacity-40 font-normal text-sm">({trackCount})</span></h2>
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {room.track_pool.map(track => (
-              <div key={track.id} className="flex items-center gap-3 py-1.5">
-                {track.coverUrl
-                  ? <img src={track.coverUrl} alt={track.albumName} className="w-10 h-10 rounded object-cover flex-shrink-0" />
-                  : <div className="w-10 h-10 rounded flex-shrink-0 opacity-20" style={{ background: "rgba(255,255,255,0.1)" }} />
-                }
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{track.name}</p>
-                  <p className="text-xs opacity-50 truncate">{track.artist} · {track.albumName} · {track.releaseYear}</p>
-                  <p className="text-xs opacity-25 truncate font-mono">{track.id}</p>
-                </div>
-                <span className="text-xs opacity-40 flex-shrink-0 font-mono">{track.releaseYear}</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      )}
-
       {/* Start */}
       {isHost && (
         <div className="space-y-2">

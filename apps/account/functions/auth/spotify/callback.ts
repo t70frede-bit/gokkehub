@@ -80,5 +80,16 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     avatarUrl: session.avatarUrl ?? imageUrl,
   });
 
+  // Persist refresh token under user ID so it survives logout/re-login
+  await env.SESSIONS.put(
+    `spotify_link:${session.userId}`,
+    JSON.stringify({
+      id: spotifyUser.id,
+      refreshToken: tokens.refresh_token,
+      displayName: spotifyUser.display_name ?? null,
+      scope: tokens.scope,
+    }),
+  );
+
   return Response.redirect("https://account.gokkehub.com/profile", 302);
 };
