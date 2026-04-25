@@ -1,15 +1,12 @@
 name = "timelinedrop"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "gokkehub-db"
-database_id = "9048a034-49ea-41ba-8743-c01737b9a96d"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-10-22"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = "5c6e3465296c41e986c086727c8459e7"
 
 [vars]
-COOKIE_DOMAIN = ".gokkehub.com"
+COOKIE_DOMAIN      = ".gokkehub.com"
+SUPABASE_URL       = "https://verbxfbfurachhxztkob.supabase.co"
+# SUPABASE_SERVICE_ROLE_KEY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET set as encrypted secrets

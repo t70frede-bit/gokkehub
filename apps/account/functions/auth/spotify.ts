@@ -5,6 +5,10 @@ import type { Env } from "../_env";
 
 // GET /auth/spotify — redirect to Spotify OAuth
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  if (!env.SPOTIFY_CLIENT_ID) {
+    return new Response("SPOTIFY_CLIENT_ID is not configured on this server.", { status: 500 });
+  }
+
   // 20 OAuth initiations per minute per IP
   const limited = await rateLimit(env.SESSIONS, request as unknown as Request, {
     max: 20,
@@ -12,11 +16,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     prefix: "rl:oauth",
   });
   if (limited) return limited;
+
   const params = new URLSearchParams({
     client_id: env.SPOTIFY_CLIENT_ID,
     redirect_uri: `https://account.gokkehub.com/auth/spotify/callback`,
     response_type: "code",
-    scope: "user-read-email user-read-private",
+    scope: "user-read-email user-read-private user-modify-playback-state user-read-playback-state streaming playlist-read-private playlist-read-collaborative",
   });
 
   return Response.redirect(
