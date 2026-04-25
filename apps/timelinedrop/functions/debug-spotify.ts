@@ -2,7 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "./_env";
 import { json, handlePreflight } from "./_cors";
-import { refreshSpotifyToken, getClientCredentialsToken } from "./_supabase";
+import { refreshSpotifyToken } from "./_supabase";
 import { parseSessionId } from "@gokkehub/auth/cookie";
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
@@ -39,70 +39,63 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     }
   }
 
-  // Optional: test a specific playlist from ?playlist= query param
-  const url = new URL(req.url);
-  const queryPlaylistId = url.searchParams.get("playlist");
+  const spotifyId  = session.spotify.id;
+  const authHeader = { Authorization: `Bearer ${accessToken}` };
 
-  // Test /v1/me
-  const meRes = await fetch("https://api.spotify.com/v1/me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  // /v1/me
+  const meStatus = await fetch("https://api.spotify.com/v1/me", { headers: authHeader })
+    .then(r => r.status);
 
-  // Get user's own playlists
-  const myPlaylistsRes = await fetch(
-    "https://api.spotify.com/v1/me/playlists?limit=10",
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  const myPlaylistsData = await myPlaylistsRes.json().catch(() => null) as {
-    items?: Array<{ id: string; name: string; owner: { id: string }; tracks: { total: number } }>;
-  } | null;
+  // /v1/me/playlists
+  const myPlaylistsRes  = await fetch("https://api.spotify.com/v1/me/playlists?limit=10", { headers: authHeader });
+  const myPlaylistsJson = await myPlaylistsRes.json() as { items?: Array<{ id: string; name: string; owner: { id: string }; tracks: { total: number } }> };
+  const myPlaylists     = (myPlaylistsJson?.items ?? []).map(p => ({
+    id: p.id, name: p.name, owner: p.owner.id, tracks: p.tracks.total,
+  }));
 
-  const ownedPlaylists = (myPlaylistsData?.items ?? []).filter(
-    p => p.owner.id === session.spotify!.id
-  );
-  const firstOwned = ownedPlaylists[0] ?? myPlaylistsData?.items?.[0] ?? null;
+  // Pick first owned playlist to test
+  const firstOwned = myPlaylists.find(p => p.owner === spotifyId) ?? myPlaylists[0] ?? null;
 
-  async function testPlaylist(id: string) {
+  // Optional: ?playlist= query param
+  const queryId = new URL(req.url).searchParams.get("playlist");
+
+  // Test a playlist: fetch meta + items
+  const playlistToTest = queryId ?? firstOwned?.id ?? null;
+  let metaStatus: number | null = null;
+  let metaBody:   unknown       = null;
+  let itemsStatus: number | null = null;
+  let itemsBody:   unknown       = null;
+
+  if (playlistToTest) {
     const metaRes = await fetch(
-      `https://api.spotify.com/v1/playlists/${id}?fields=name,owner,public`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      `https://api.spotify.com/v1/playlists/${playlistToTest}?fields=name,owner,public`,
+      { headers: authHeader }
     );
-    const metaBody = await metaRes.json().catch(() => null);
+    metaStatus = metaRes.status;
+    metaBody   = await metaRes.json().catch(() => null);
 
     const itemsRes = await fetch(
-      `https://api.spotify.com/v1/playlists/${id}/items?limit=1&market=from_token`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      `https://api.spotify.com/v1/playlists/${playlistToTest}/items?limit=1&market=from_token`,
+      { headers: authHeader }
     );
-    const itemsBody = await itemsRes.json().catch((e: unknown) => String(e));
-
-    return {
-      playlist_id:   id,
-      meta_status:   metaRes.status,
-      meta_body:     metaBody,
-      items_status:  itemsRes.status,
-      items_body:    itemsBody,
-    };
+    itemsStatus = itemsRes.status;
+    itemsBody   = await itemsRes.json().catch(() => null);
   }
 
-  const ownedTest  = firstOwned  ? await testPlaylist(firstOwned.id)  : null;
-  const queryTest  = queryPlaylistId ? await testPlaylist(queryPlaylistId) : null;
-
   return json({
-    spotify_id:     session.spotify.id,
+    spotify_id:     spotifyId,
     stored_scope:   session.spotify.scope ?? "(not stored)",
     token_expires_in_seconds: tokenAge,
     token_was_refreshed: refreshed,
     refresh_error:  refreshError,
-    me_status:      meRes.status,
+    me_status:      meStatus,
     my_playlists_status: myPlaylistsRes.status,
-    my_playlists: (myPlaylistsData?.items ?? []).map(p => ({
-      id:    p.id,
-      name:  p.name,
-      owner: p.owner.id,
-      tracks: p.tracks.total,
-    })),
-    first_owned_playlist_test: ownedTest,
-    query_playlist_test: queryTest,
-    hint: queryPlaylistId ? null : "Add ?playlist=<id> to test a specific playlist",
+    my_playlists:   myPlaylists,
+    tested_playlist_id: playlistToTest,
+    meta_status:    metaStatus,
+    meta_body:      metaBody,
+    items_status:   itemsStatus,
+    items_body:     itemsBody,
+    hint: queryId ? null : "Add ?playlist=<id> to test a specific playlist ID",
   }, 200, req);
 };
