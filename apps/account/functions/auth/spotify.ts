@@ -22,6 +22,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     redirect_uri: `https://account.gokkehub.com/auth/spotify/callback`,
     response_type: "code",
     scope: "user-read-email user-read-private user-modify-playback-state user-read-playback-state streaming playlist-read-private playlist-read-collaborative",
+    show_dialog: "true",
   });
 
   return Response.redirect(

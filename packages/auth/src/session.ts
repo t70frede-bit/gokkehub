@@ -130,11 +130,12 @@ export async function deleteSession(
  */
 export function toPublicSession(data: SessionData): PublicSessionData {
   return {
-    userId:      data.userId,
-    email:       data.email,
-    displayName: data.displayName,
-    avatarUrl:   data.avatarUrl,
-    steamId:     data.steamId ?? data.steam?.steamId ?? null,
+    userId:        data.userId,
+    email:         data.email,
+    displayName:   data.displayName,
+    avatarUrl:     data.avatarUrl,
+    steamId:       data.steamId ?? data.steam?.steamId ?? null,
+    spotifyScopes: data.spotify?.scope,
     linked: {
       spotify: !!data.spotify,
       discord: !!data.discord,

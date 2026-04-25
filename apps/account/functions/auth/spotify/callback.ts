@@ -46,6 +46,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     access_token: string;
     refresh_token: string;
     expires_in: number;
+    scope: string;
   }>();
 
   // Fetch Spotify user
@@ -74,6 +75,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       expiresAt: Date.now() + tokens.expires_in * 1000,
       displayName: spotifyUser.display_name ?? null,
       imageUrl,
+      scope: tokens.scope,
     },
     avatarUrl: session.avatarUrl ?? imageUrl,
   });

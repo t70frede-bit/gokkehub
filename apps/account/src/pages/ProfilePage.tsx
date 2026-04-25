@@ -1,4 +1,5 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { PublicSessionData } from "@gokkehub/auth/types";
 import { Button, Panel, useToast } from "@gokkehub/ui";
 
@@ -9,7 +10,21 @@ interface Props {
 
 export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const { addToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [avatarUrl, setAvatarUrl] = useState(session.avatarUrl);
+
+  useEffect(() => {
+    const error = searchParams.get("error");
+    if (error) {
+      const messages: Record<string, string> = {
+        spotify_denied:  "Spotify connection was denied or cancelled.",
+        spotify_token:   "Spotify login failed — check your Spotify app credentials.",
+        spotify_user:    "Could not fetch Spotify profile after login.",
+      };
+      addToast(messages[error] ?? `OAuth error: ${error}`, "error");
+      setSearchParams({}, { replace: true });
+    }
+  }, []);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [removingAvatar, setRemovingAvatar] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,6 +253,13 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onDisconnect={() => handleDisconnect("spotify")}
           color="#1db954"
           description="Give GokkeHub access to your music taste"
+          scopeWarning={(() => {
+            if (!session.linked.spotify) return undefined;
+            const required = ["streaming", "playlist-read-private", "user-modify-playback-state"];
+            const granted  = (session.spotifyScopes ?? "").split(" ");
+            const missing  = required.filter(s => !granted.includes(s));
+            return missing.length > 0 ? "Missing permissions — disconnect and reconnect to fix" : undefined;
+          })()}
         />
         <LinkedAccountRow
           name="Steam"
@@ -370,9 +392,10 @@ interface LinkedAccountRowProps {
   onDisconnect: () => void;
   color: string;
   description: string;
+  scopeWarning?: string;
 }
 
-function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color, description }: LinkedAccountRowProps) {
+function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color, description, scopeWarning }: LinkedAccountRowProps) {
   return (
     <Panel variant="bare">
       <div className="flex items-center gap-4 p-4">
@@ -384,8 +407,8 @@ function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconn
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>{name}</p>
-          <p className="text-sm" style={{ color: linked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
-            {linked ? "Connected" : description}
+          <p className="text-sm" style={{ color: scopeWarning ? "rgb(220,160,0)" : linked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
+            {scopeWarning ?? (linked ? "Connected" : description)}
           </p>
         </div>
         {linked ? (

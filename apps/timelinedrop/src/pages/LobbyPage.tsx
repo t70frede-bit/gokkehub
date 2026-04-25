@@ -71,7 +71,17 @@ export default function LobbyPage() {
       while (nextUrl) {
         const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${access_token}` } });
         if (!res.ok) {
-          setPlaylistError(`Spotify error ${res.status} fetching tracks. Make sure the playlist is public.`);
+          const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+          const detail = body?.error?.message ?? "";
+          if (res.status === 403) {
+            setPlaylistError(
+              detail
+                ? `Spotify 403: ${detail} — disconnect and reconnect Spotify on your profile to get the latest permissions.`
+                : "Spotify 403 — your Spotify connection is missing playlist permissions. Disconnect and reconnect on your profile page."
+            );
+          } else {
+            setPlaylistError(`Spotify error ${res.status}${detail ? `: ${detail}` : ""}. Make sure the playlist is public.`);
+          }
           return;
         }
         const page = await res.json() as {

@@ -22,6 +22,7 @@ export interface SessionData {
     expiresAt:    number;   // Unix ms
     displayName:  string | null;
     imageUrl:     string | null;
+    scope?:       string;   // space-separated scopes granted at last auth
   };
   discord?: {
     id:           string;
@@ -44,11 +45,12 @@ export interface SessionData {
 // ── What the client receives (safe subset — no tokens) ───────────────────────
 
 export interface PublicSessionData {
-  userId:      string;
-  email:       string | null;
-  displayName: string | null;
-  avatarUrl:   string | null;
-  steamId?:    string | null;
+  userId:        string;
+  email:         string | null;
+  displayName:   string | null;
+  avatarUrl:     string | null;
+  steamId?:      string | null;
+  spotifyScopes?: string;  // scopes granted at last Spotify auth (space-separated)
   linked: {
     spotify: boolean;
     discord: boolean;
