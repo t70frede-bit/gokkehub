@@ -35,82 +35,11 @@ export default function LobbyPage() {
     if (!playlistUrl.trim()) return;
     setAddingPlaylist(true); setPlaylistError(null); setPlaylistMsg(null);
     try {
-      // Get host's Spotify token from session
-      const tokenRes = await fetch("/spotify/token", { credentials: "include" });
-      if (!tokenRes.ok) {
-        setPlaylistError("Connect Spotify on your profile at account.gokkehub.com first.");
-        return;
-      }
-      const { access_token } = await tokenRes.json() as { access_token: string };
-
-      // Extract playlist ID from URL or raw ID
-      const match = playlistUrl.trim().match(/playlist\/([A-Za-z0-9]+)/);
-      const playlistId = match?.[1] ?? (/^[A-Za-z0-9]{22}$/.test(playlistUrl.trim()) ? playlistUrl.trim() : null);
-      if (!playlistId) { setPlaylistError("Invalid Spotify playlist URL"); return; }
-
-      // Fetch playlist name
-      const metaRes = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlistId}?fields=name`,
-        { headers: { Authorization: `Bearer ${access_token}` } }
-      );
-      if (!metaRes.ok) {
-        setPlaylistError(`Could not fetch playlist (Spotify ${metaRes.status}). Make sure it's public.`);
-        return;
-      }
-      const { name } = await metaRes.json() as { name: string };
-
-      // Fetch all tracks (paginated)
-      const tracks: Array<{
-        id: string; name: string; uri: string; artist: string;
-        albumName: string; releaseYear: number; coverUrl: string;
-      }> = [];
-      let nextUrl: string | null =
-        `https://api.spotify.com/v1/playlists/${playlistId}/tracks` +
-        `?limit=100&fields=next,items(track(id,name,uri,artists(name),album(name,release_date,images)))`;
-
-      while (nextUrl) {
-        const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${access_token}` } });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
-          const detail = body?.error?.message ?? "";
-          if (res.status === 403) {
-            setPlaylistError(
-              detail
-                ? `Spotify 403: ${detail} — disconnect and reconnect Spotify on your profile to get the latest permissions.`
-                : "Spotify 403 — your Spotify connection is missing playlist permissions. Disconnect and reconnect on your profile page."
-            );
-          } else {
-            setPlaylistError(`Spotify error ${res.status}${detail ? `: ${detail}` : ""}. Make sure the playlist is public.`);
-          }
-          return;
-        }
-        const page = await res.json() as {
-          next: string | null;
-          items: Array<{ track: {
-            id: string; name: string; uri: string;
-            artists: Array<{ name: string }>;
-            album: { name: string; release_date: string; images: Array<{ url: string; width: number }> };
-          } | null }>;
-        };
-        for (const item of page.items) {
-          const t = item.track;
-          if (!t?.id || !t?.uri) continue;
-          const releaseYear = parseInt(t.album.release_date?.slice(0, 4) ?? "", 10);
-          if (isNaN(releaseYear)) continue;
-          const cover = [...t.album.images].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]?.url ?? "";
-          tracks.push({ id: t.id, name: t.name, uri: t.uri, artist: t.artists[0]?.name ?? "Unknown", albumName: t.album.name, releaseYear, coverUrl: cover });
-        }
-        nextUrl = page.next;
-      }
-
-      if (tracks.length === 0) { setPlaylistError("No tracks found in playlist"); return; }
-
-      // Send pre-fetched tracks to server
       const res = await fetch(`/room/${roomId}/playlist`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ name, tracks }),
+        body: JSON.stringify({ url: playlistUrl.trim() }),
       });
       const data = await res.json() as { added: number; total: number; name: string; error?: string };
       if (!res.ok) { setPlaylistError(data.error ?? "Failed to add playlist"); return; }

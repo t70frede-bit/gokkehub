@@ -144,8 +144,7 @@ export interface JoinRoomResponse {
 }
 
 export interface AddPlaylistRequest {
-  name:   string;
-  tracks: SpotifyTrack[];
+  url: string;
 }
 
 export interface AddPlaylistResponse {
