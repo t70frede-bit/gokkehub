@@ -15,8 +15,15 @@ import {
 // POST /room/:id/curate?action=generate-batch  — initial 30 tracks
 // POST /room/:id/curate?action=refill-buffer   — top-up keeping pool >= 5 ahead
 
-const TARGET_BATCH_SIZE = 30;
+// Cloudflare's free-tier limit is 50 subrequests per request. Profile fetches
+// (2 per player), Spotify token refresh, Supabase reads, and per-track Spotify
+// search all count. We keep the curation pool small enough to fit comfortably.
+const TARGET_BATCH_SIZE = 15;
 const REFILL_THRESHOLD  = 5;
+const MAX_SPOTIFY_LOOKUPS = 18;     // ≤ 18 search subrequests per call
+const MAX_SIMILAR_SEEDS   = 3;      // ≤ 3 similar-artist queries
+const MAX_ARTIST_TRACKS   = 6;      // ≤ 6 artist-top-tracks queries
+const TRACKS_PER_ARTIST   = 3;
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -103,16 +110,20 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   // 6) Arrange the playlist arc
   const arranged = arrangePlaylistArc(banded, isRefill ? 15 : TARGET_BATCH_SIZE);
 
-  // 7) Look up Spotify URIs for each candidate
+  // 7) Look up Spotify URIs for each candidate. Hard cap on attempts to stay
+  //    under the 50-subrequest limit even on cold cache.
   const tracks: SpotifyTrack[] = [];
   const enriched: Array<SpotifyTrack & { _meta: ScoredCandidate }> = [];
+  let attempts = 0;
   for (const c of arranged) {
+    if (attempts >= MAX_SPOTIFY_LOOKUPS) break;
+    if (tracks.length >= (isRefill ? 15 : TARGET_BATCH_SIZE)) break;
+    attempts++;
     const hit = await searchTrackUri(accessToken, c.artist, c.track);
     if (hit) {
       tracks.push(hit);
       enriched.push({ ...hit, _meta: c });
     }
-    if (tracks.length >= (isRefill ? 15 : TARGET_BATCH_SIZE)) break;
   }
 
   // 8) Append to track_pool
@@ -143,30 +154,29 @@ async function buildCandidatePool(env: Env, profiles: PlayerProfile[], difficult
 
   if (difficulty === "easy") return dedupe(easyPool);
 
-  // Medium: 40% easy + 60% similar to top-5 shared artists
+  // Medium: easy pool + tracks from a few similar artists
   if (difficulty === "medium") {
-    const seeds       = sharedTopArtists(profiles, 25).slice(0, 5);
-    const similar     = await expandViaSimilar(env, seeds, 30);
-    const similarTrks = await tracksFromArtists(env, similar, 5);
-    return dedupe([...sampleN(easyPool, 40), ...similarTrks]);
+    const seeds       = sharedTopArtists(profiles, 25).slice(0, MAX_SIMILAR_SEEDS);
+    const similar     = await expandViaSimilar(env, seeds, MAX_ARTIST_TRACKS);
+    const similarTrks = await tracksFromArtists(env, similar.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
+    return dedupe([...sampleN(easyPool, 25), ...similarTrks]);
   }
 
-  // Hard: 20% easy + 80% similar to top-10 shared artists, exclude any track scrobbled 10+ times
+  // Hard: similar artists weighted higher; exclude any track scrobbled 10+ times
   if (difficulty === "hard") {
-    const seeds       = sharedTopArtists(profiles, 50).slice(0, 10);
-    const similar     = await expandViaSimilar(env, seeds, 60);
-    const similarTrks = await tracksFromArtists(env, similar, 5);
-    const candidates  = [...sampleN(easyPool, 20), ...similarTrks];
-    // Exclude very-familiar tracks
+    const seeds       = sharedTopArtists(profiles, 50).slice(0, MAX_SIMILAR_SEEDS);
+    const similar     = await expandViaSimilar(env, seeds, MAX_ARTIST_TRACKS);
+    const similarTrks = await tracksFromArtists(env, similar.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
+    const candidates  = [...sampleN(easyPool, 10), ...similarTrks];
     return dedupe(candidates).filter(c => {
       const key = `${c.artist.toLowerCase()}:${c.track.toLowerCase()}`;
       return !profiles.some(p => (p.trackPlaycounts.get(key) ?? 0) >= 10);
     });
   }
 
-  // Hardest: completely unknown artists in the group's genre fingerprint
-  const artists = await hardestPoolArtists(env, profiles, 50);
-  const tracks  = await tracksFromArtists(env, artists, 5);
+  // Hardest: unknown artists in the group's genre fingerprint
+  const artists = await hardestPoolArtists(env, profiles, MAX_ARTIST_TRACKS);
+  const tracks  = await tracksFromArtists(env, artists.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
   return dedupe(tracks);
 }
 

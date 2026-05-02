@@ -51,38 +51,27 @@ export async function buildProfile(env: Env, player: TlPlayer): Promise<PlayerPr
   if (!player.lastfm_username) return empty;
 
   const u = player.lastfm_username;
-  // Fetch all listening data in parallel.
-  const [topArtistsAll, topArtistsRecent, topTracksAll, topTracksRecent, recent] = await Promise.all([
+  // Subrequest budget: only fetch the two essentials. Recent-listening signals
+  // (3-month artists, 7-day tracks, last 50 plays) are nice-to-have but cost
+  // 3 extra subrequests per player. With Cloudflare's free-tier 50/request
+  // limit they push the total over budget for groups of 4+.
+  const [topArtistsAll, topTracksAll] = await Promise.all([
     getTopArtists(env, u, "overall", 50),
-    getTopArtists(env, u, "3month", 25),
     getTopTracks(env, u, "overall", 50),
-    getTopTracks(env, u, "7day", 25),
-    getRecentTracks(env, u, 50),
   ]);
 
   const profile: PlayerProfile = {
     ...empty,
     source: "lastfm",
-    topArtistsAll, topArtistsRecent, topTracksAll, topTracksRecent, recentTracks: recent,
+    topArtistsAll, topTracksAll,
   };
 
   for (const a of topArtistsAll) profile.artistPlaycounts.set(lc(a.name), parsePlaycount(a.playcount));
-  for (const a of topArtistsRecent) profile.recentArtistCounts.set(lc(a.name), parsePlaycount(a.playcount));
   for (const t of topTracksAll) {
     const aName = typeof t.artist === "string" ? t.artist : t.artist.name;
     const k = trackKey(aName, t.name);
     profile.trackPlaycounts.set(k, parsePlaycount(t.playcount));
     profile.topTrackKeys.add(k);
-  }
-  // Recent 7-day scrobbles → mark in recent7d
-  const sevenDaysAgo = (Date.now() / 1000) - 7 * 24 * 3600;
-  for (const t of recent) {
-    if (!t.date) continue;
-    const ts = parseInt(t.date.uts, 10);
-    if (Number.isFinite(ts) && ts >= sevenDaysAgo) {
-      const aName = typeof t.artist === "string" ? t.artist : t.artist.name;
-      profile.recent7d.add(trackKey(aName, t.name));
-    }
   }
 
   return profile;
@@ -200,11 +189,16 @@ export function sharedTopArtists(profiles: PlayerProfile[], topN: number): strin
 }
 
 // Top tags across the group's top artists — used as the genre fingerprint for HARDEST mode.
-export async function groupGenreFingerprint(env: Env, profiles: PlayerProfile[], k = 5): Promise<string[]> {
+// Capped at `maxLookups` artist.getInfo subrequests across the whole group.
+export async function groupGenreFingerprint(env: Env, profiles: PlayerProfile[], k = 5, maxLookups = 6): Promise<string[]> {
   const tagCounts = new Map<string, number>();
-  // Aggregate top-3 tags from each player's top 10 artists
+  let lookups = 0;
+  // Round-robin: take 1-2 top artists from each player so the budget covers the group, not just player 1.
+  const perPlayer = Math.max(1, Math.floor(maxLookups / Math.max(1, profiles.length)));
   for (const p of profiles) {
-    for (const a of p.topArtistsAll.slice(0, 10)) {
+    for (const a of p.topArtistsAll.slice(0, perPlayer)) {
+      if (lookups >= maxLookups) break;
+      lookups++;
       const info = await getArtistInfo(env, a.name);
       const tags = info?.tags?.tag?.slice(0, 3) ?? [];
       for (const t of tags) {
@@ -213,6 +207,7 @@ export async function groupGenreFingerprint(env: Env, profiles: PlayerProfile[],
         tagCounts.set(tk, (tagCounts.get(tk) ?? 0) + 1);
       }
     }
+    if (lookups >= maxLookups) break;
   }
   return [...tagCounts.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -246,14 +241,15 @@ export function arrangePlaylistArc(scored: ScoredCandidate[], target: number): S
 }
 
 // Wider search than scoring: take similar artists from shared favourites.
+// Caller controls seed count (each seed = 1 subrequest).
 export async function expandViaSimilar(env: Env, seedArtists: string[], limit = 30): Promise<string[]> {
   const out = new Set<string>();
-  for (const seed of seedArtists.slice(0, 10)) {
-    const sim = await getSimilarArtists(env, seed, 10);
+  for (const seed of seedArtists) {
+    const sim = await getSimilarArtists(env, seed, Math.min(10, limit));
     for (const s of sim) out.add(s.name);
-    if (out.size >= limit * 2) break;
+    if (out.size >= limit) break;
   }
-  return [...out].slice(0, limit * 2);
+  return [...out].slice(0, limit);
 }
 
 // Pull tracks for a list of artist names (top tracks each).
@@ -270,8 +266,10 @@ export async function tracksFromArtists(env: Env, artists: string[], perArtist =
 }
 
 // Hardest mode pool: artists from top tags, excluding any player's known artists.
-export async function hardestPoolArtists(env: Env, profiles: PlayerProfile[], maxArtists = 50): Promise<string[]> {
-  const tags = await groupGenreFingerprint(env, profiles, 4);
+// Capped at `maxTagLookups` getTopArtistsByTag subrequests on top of the
+// fingerprint cost.
+export async function hardestPoolArtists(env: Env, profiles: PlayerProfile[], maxArtists = 50, maxTagLookups = 2): Promise<string[]> {
+  const tags = (await groupGenreFingerprint(env, profiles, maxTagLookups)).slice(0, maxTagLookups);
   const knownSet = new Set<string>();
   for (const p of profiles) {
     for (const a of p.topArtistsAll) knownSet.add(lc(a.name));
