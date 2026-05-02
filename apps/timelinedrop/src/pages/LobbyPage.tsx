@@ -57,7 +57,10 @@ export default function LobbyPage() {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   async function copyInviteLink() {
-    const baseUrl = `${window.location.origin}/join?room=${roomId}`;
+    // Players land on gokkehub.com — the hub looks the code up across games
+    // and forwards them to the right subdomain. Hosts continue to navigate
+    // directly to the game site.
+    const baseUrl = `https://gokkehub.com/join?room=${encodeURIComponent(roomId ?? "")}`;
     await navigator.clipboard.writeText(baseUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -167,32 +170,20 @@ export default function LobbyPage() {
   return (
     <div className="p-4 max-w-5xl mx-auto w-full flex flex-col gap-4">
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
+      {/* ── Page sub-header (room code lives in the global GameHeader) ──── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-extrabold text-2xl tracking-tight">
-              {settings.streamerMode ? "Lobby" : (
-                <>
-                  Lobby{" "}
-                  <span style={{
-                    color:      "rgb(var(--color-primary-rgb))",
-                    fontFamily: "var(--font-mono)",
-                  }}>
-                    {roomId}
-                  </span>
-                </>
-              )}
-            </h1>
-            {isHost && <Badge variant="host">HOST</Badge>}
-          </div>
-          <p className="text-sm mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+        <div className="flex items-center gap-2">
+          <h1 className="font-extrabold tracking-tight" style={{ fontSize: "var(--text-xl)", fontFamily: "var(--font-display)" }}>
+            Lobby
+          </h1>
+          {isHost && <Badge variant="host">HOST</Badge>}
+          <p className="ml-1" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
             {isHost ? "Configure settings and start when ready" : "Waiting for host to start…"}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" size="sm" onClick={copyInviteLink}>
-            {copied ? "✓ Copied" : (settings.streamerMode ? "🔗 Copy invite link" : "📋 Copy link")}
+            {copied ? "✓ Copied" : "📋 Copy link"}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => navigate("/")}>Leave</Button>
         </div>

@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 // ── Game catalogue ────────────────────────────────────────────────────────────
 
 interface Game {
@@ -62,6 +64,15 @@ const GAMES: Game[] = [
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  // Lightweight client-side router. Any path other than the catalogue gets
+  // routed below via the simple switch in <Catalogue /> wrapper.
+  const path = typeof window !== "undefined" ? window.location.pathname : "/";
+  if (path === "/join") return <JoinRedirect />;
+
+  return <Catalogue />;
+}
+
+function Catalogue() {
   return (
     <div
       className="min-h-screen relative overflow-x-hidden"
@@ -220,5 +231,139 @@ function GameCard({ game }: { game: Game }) {
         </div>
       )}
     </a>
+  );
+}
+
+// ── /join — looks up a room code and forwards to the right game ────────────
+
+function JoinRedirect() {
+  const initialCode = typeof window !== "undefined"
+    ? (new URLSearchParams(window.location.search).get("room") ?? "").toUpperCase().trim()
+    : "";
+
+  const [code,  setCode]  = useState(initialCode);
+  const [state, setState] = useState<"idle" | "looking" | "notfound" | "error">(
+    initialCode ? "looking" : "idle",
+  );
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  async function lookup(target: string) {
+    setState("looking");
+    setErrMsg(null);
+    try {
+      const res = await fetch(`/api/find-room?code=${encodeURIComponent(target)}`);
+      if (res.status === 404) { setState("notfound"); return; }
+      if (!res.ok) { setState("error"); setErrMsg(`Lookup failed (${res.status})`); return; }
+      const data = await res.json() as { url?: string };
+      if (data.url) { window.location.replace(data.url); return; }
+      setState("notfound");
+    } catch (err) {
+      setState("error");
+      setErrMsg(err instanceof Error ? err.message : "Network error");
+    }
+  }
+
+  // Auto-lookup if a code came in via the URL.
+  useEffect(() => {
+    if (initialCode) lookup(initialCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!code.trim()) return;
+    lookup(code.trim().toUpperCase());
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "var(--bg-tint-1)" }}>
+      <div
+        className="w-full max-w-sm rounded-xl p-6 sm:p-8"
+        style={{
+          background: "rgb(var(--surface-raised-rgb))",
+          border:     "1px solid rgb(var(--border-rgb))",
+          boxShadow:  "var(--shadow-card)",
+        }}
+      >
+        <p
+          className="font-bold uppercase mb-2"
+          style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 11, letterSpacing: "0.18em" }}
+        >
+          GokkeHub
+        </p>
+        <h1
+          className="text-3xl font-extrabold mb-1 tracking-tight"
+          style={{ fontFamily: "var(--font-display)", color: "rgb(var(--text-primary-rgb))" }}
+        >
+          Join a room
+        </h1>
+        <p className="text-sm mb-6" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          Enter the code your host shared. We'll send you to the right game.
+        </p>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="ABC123"
+            maxLength={12}
+            autoFocus
+            className="w-full rounded-md px-4 py-3 text-center text-2xl font-bold outline-none tracking-widest"
+            style={{
+              background: "rgb(var(--surface-input-rgb))",
+              border:     "1px solid rgb(var(--border-rgb))",
+              color:      "rgb(var(--color-primary-rgb))",
+              fontFamily: "var(--font-mono)",
+              caretColor: "rgb(var(--color-primary-rgb))",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!code.trim() || state === "looking"}
+            className="rounded-md py-3 font-bold transition-all active:scale-[0.98] disabled:opacity-45"
+            style={{
+              background: "rgb(var(--color-primary-rgb))",
+              color:      "rgb(var(--bg-rgb))",
+              fontSize:   15,
+            }}
+          >
+            {state === "looking" ? "Finding game…" : "Continue"}
+          </button>
+        </form>
+
+        {state === "notfound" && (
+          <p
+            className="text-sm mt-4 px-3 py-2 rounded-md"
+            style={{
+              background: "rgba(199,85,61,0.10)",
+              border:     "1px solid rgba(199,85,61,0.4)",
+              color:      "rgb(var(--color-danger-rgb))",
+            }}
+          >
+            No room with that code. Check the spelling — codes are 4–12 letters/numbers.
+          </p>
+        )}
+        {state === "error" && (
+          <p
+            className="text-sm mt-4 px-3 py-2 rounded-md"
+            style={{
+              background: "rgba(199,85,61,0.10)",
+              border:     "1px solid rgba(199,85,61,0.4)",
+              color:      "rgb(var(--color-danger-rgb))",
+            }}
+          >
+            Couldn't reach the lookup service. {errMsg && `(${errMsg})`}
+          </p>
+        )}
+
+        <a
+          href="/"
+          className="block text-center text-sm mt-6"
+          style={{ color: "rgb(var(--text-muted-rgb))" }}
+        >
+          ← Back to GokkeHub
+        </a>
+      </div>
+    </div>
   );
 }

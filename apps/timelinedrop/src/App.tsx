@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Link } from "react-router-dom";
+import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
 import { GameHeader } from "@gokkehub/ui";
 import { useSession } from "./hooks/useSession";
 import HomePage   from "./pages/HomePage";
@@ -9,11 +9,20 @@ import EndPage    from "./pages/EndPage";
 import DebugPage  from "./pages/DebugPage";
 import DesignPage from "./pages/DesignPage";
 
+// Pull a room code from the path when we're inside /lobby /game or /end.
+// Lets the shared header always show the code in the same spot.
+function useRoomCodeFromPath(): string | undefined {
+  const { pathname } = useLocation();
+  const m = pathname.match(/^\/(?:lobby|game|end)\/([^/]+)/);
+  return m?.[1];
+}
+
 export default function App() {
   const { session } = useSession();
+  const roomCode    = useRoomCodeFromPath();
   return (
     <div className="min-h-dvh flex flex-col">
-      <GameHeader appName="musix" session={session} LinkComponent={Link} />
+      <GameHeader appName="musix" session={session} LinkComponent={Link} roomCode={roomCode} />
       <main className="flex-1 flex flex-col">
         <Routes>
           <Route path="/"              element={<HomePage />} />

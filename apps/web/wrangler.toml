@@ -1,3 +1,7 @@
 name = "web"
 pages_build_output_dir = "dist"
 compatibility_date = "2024-01-01"
+
+[vars]
+SUPABASE_URL      = "https://verbxfbfurachhxztkob.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlcmJ4ZmJmdXJhY2hoeHp0a29iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDQ5MzUsImV4cCI6MjA5MDg4MDkzNX0.F8YbpRnMZTtNG40jJ9HuyFlOS2W_XYQxcDGHH6RL1mQ"

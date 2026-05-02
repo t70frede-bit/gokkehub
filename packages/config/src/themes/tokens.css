@@ -81,6 +81,19 @@
   --font-sans:    "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:    "JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, monospace;
 
+  /* Font-size scale (px-based for predictability across apps) */
+  --text-xs:    11px;
+  --text-sm:    13px;
+  --text-base:  15px;
+  --text-lg:    17px;
+  --text-xl:    20px;
+  --text-2xl:   24px;
+  --text-3xl:   32px;
+  --text-display: 48px;
+
+  /* Header height — shared across every app */
+  --header-height: 56px;
+
   /* ── Effects ───────────────────────────────────────────────────────────── */
   --blur-panel: 0px;                                /* glassmorphism out */
   --shadow-card: 0 8px 16px rgba(0, 0, 0, 0.25);
