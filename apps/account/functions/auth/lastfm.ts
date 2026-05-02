@@ -14,7 +14,7 @@ interface LastfmInfoResponse {
 
 async function validateUsername(env: Env, username: string): Promise<{ ok: true; canonical: string } | { ok: false; error: string }> {
   if (!env.LASTFM_API_KEY) return { ok: false, error: "Last.fm is not configured on this server." };
-  const url = `http://ws.audioscrobbler.com/2.0/?method=user.getinfo&user=${encodeURIComponent(username)}&api_key=${env.LASTFM_API_KEY}&format=json`;
+  const url = `https://ws.audioscrobbler.com/2.0/?method=user.getinfo&user=${encodeURIComponent(username)}&api_key=${env.LASTFM_API_KEY}&format=json`;
   try {
     const res = await fetch(url);
     if (!res.ok) return { ok: false, error: `Last.fm returned ${res.status}` };

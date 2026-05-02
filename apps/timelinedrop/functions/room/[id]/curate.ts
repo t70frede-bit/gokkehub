@@ -28,7 +28,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   const action = new URL(req.url).searchParams.get("action");
 
   if (action === "generate-batch" || action === "refill-buffer") {
-    return handleGenerate(req, roomId, env, action === "refill-buffer");
+    try {
+      return await handleGenerate(req, roomId, env, action === "refill-buffer");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack   = err instanceof Error ? err.stack : undefined;
+      console.error("curate failed", message, stack);
+      return json({ error: `Curation failed: ${message}` }, 500, req);
+    }
   }
   return json({ error: "Unknown action" }, 400, req);
 };

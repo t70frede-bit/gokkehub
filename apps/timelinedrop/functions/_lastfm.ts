@@ -6,7 +6,7 @@ import type { Env } from "./_env";
 // Cache TTL: 1 hour by default. Per-user listening data drifts slowly; tracks
 // & artist info are essentially static.
 
-const LASTFM_BASE = "http://ws.audioscrobbler.com/2.0/";
+const LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/";
 const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
 
 // ── Types (subset of Last.fm response shapes) ───────────────────────────────
