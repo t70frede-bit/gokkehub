@@ -72,6 +72,8 @@ function TimerRing({ remaining, total = 90 }: { remaining: number; total?: numbe
 
 // ── Timeline component ────────────────────────────────────────────────────────
 
+interface TimelinePing { id: number; year: number; player_name: string }
+
 interface TimelineProps {
   entries:        TlTimelineEntry[];
   dragCard:       SpotifyTrack | null;
@@ -81,8 +83,8 @@ interface TimelineProps {
   stagedRight:    number | null;
   onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
   onPingYear?:    (year: number) => void;
-  pingYears?:     number[];
-  recentPings?:   { year: number; player_name: string; ts: number }[];
+  onDismissPing?: (pingId: number) => void;   // captain (or host) only
+  pings?:         TimelinePing[];
   pending?:       SpotifyTrack[];
 }
 
@@ -94,8 +96,9 @@ interface MergedItem {
 
 function Timeline({
   entries, dragCard, isCaptain, isActive, stagedLeft, stagedRight, onStageGap, onPingYear,
-  pingYears = [], recentPings = [], pending = [],
+  onDismissPing, pings = [], pending = [],
 }: TimelineProps) {
+  const pingYears = pings.map(p => p.year);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const dragging = useRef(false);
 
@@ -230,14 +233,11 @@ function Timeline({
             gapIdx > 0 && gapIdx < merged.length
             && merged[gapIdx - 1].year === merged[gapIdx].year;
 
-          // Recent pings landing inside this gap's year range
+          // Pings landing inside this gap's year range — persistent until dismissed.
           const [gapL, gapR] = getYearsForGap(gapIdx);
-          const gapPings = recentPings.filter(p => {
+          const gapPings = pings.filter(p => {
             if (gapL !== null && p.year < gapL) return false;
             if (gapR !== null && p.year > gapR) return false;
-            // Endpoints (no left/right): only include if on the open side
-            if (gapL === null && gapR !== null && p.year > gapR) return false;
-            if (gapR === null && gapL !== null && p.year < gapL) return false;
             return true;
           });
 
@@ -286,7 +286,7 @@ function Timeline({
                     <>
                       <span className="tl-gap-dot" />
                       {gapPings.length > 0 && (
-                        <PingBubbles pings={gapPings} />
+                        <PingBubbles pings={gapPings} onDismiss={onDismissPing} />
                       )}
                     </>
                   )}
@@ -331,28 +331,122 @@ function Timeline({
   );
 }
 
-// Stack of recent ping bubbles floating above a gap. Fade out after ~5s.
-function PingBubbles({ pings }: { pings: { year: number; player_name: string; ts: number }[] }) {
-  const recent = pings.slice(-3); // cap visible
+// Avatar row at the bottom of each team panel. Recent chat messages (last 12s)
+// appear as speech bubbles directly above each player's avatar.
+interface FooterNote { id: number; player_id: string; content: string; createdMs: number }
+
+function PlayerFooter({
+  players, notes, color, myPlayerId, nowMs, onMakeCaptain, isHost,
+}: {
+  players:        TlPlayer[];
+  notes:          FooterNote[];
+  color:          TeamColor | "spectator";
+  myPlayerId:     string | undefined;
+  nowMs:          number;
+  onMakeCaptain?: (p: TlPlayer) => void;
+  isHost?:        boolean;
+}) {
+  if (players.length === 0) return null;
   return (
-    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5 pointer-events-none">
-      {recent.map((p, i) => {
-        const ageMs = Date.now() - p.ts;
-        const fade  = Math.max(0, 1 - ageMs / 5000);
+    <div className="flex flex-wrap items-end gap-2 sm:gap-3 pt-2 mt-1"
+      style={{ borderTop: `1px dashed rgba(var(--team-${color}-rgb), 0.18)` }}>
+      {players.map(p => {
+        const mine = notes.filter(n => n.player_id === p.id && (nowMs - n.createdMs) < 12000).slice(-3);
+        const isMe = p.id === myPlayerId;
         return (
-          <div key={i}
-            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
-            style={{
-              background: "rgba(var(--color-secondary-rgb), 0.85)",
-              color:      "#fff",
-              opacity:    fade,
-              boxShadow:  "0 1px 4px rgba(0,0,0,0.4)",
-            }}
-          >
-            {p.player_name.split(" ")[0]} · {p.year}
+          <div key={p.id} className="relative flex flex-col items-center min-w-0" style={{ width: 56 }}>
+            {/* Speech bubbles stacked above the avatar */}
+            {mine.length > 0 && (
+              <div className="absolute bottom-full mb-1 flex flex-col gap-1 items-center"
+                style={{ minWidth: 90 }}>
+                {mine.map(n => {
+                  const age = nowMs - n.createdMs;
+                  const fade = age < 8000 ? 1 : Math.max(0, 1 - (age - 8000) / 4000);
+                  return (
+                    <div key={n.id}
+                      className="text-[11px] px-2 py-1 rounded-2xl whitespace-pre-wrap break-words text-center"
+                      style={{
+                        background: `rgba(var(--team-${color}-rgb), 0.85)`,
+                        color:      "#fff",
+                        boxShadow:  "0 1px 4px rgba(0,0,0,0.4)",
+                        opacity:    fade,
+                        maxWidth:   140,
+                      }}
+                    >
+                      {n.content}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Avatar */}
+            <button
+              onClick={onMakeCaptain && isHost ? () => onMakeCaptain(p) : undefined}
+              disabled={!onMakeCaptain || !isHost}
+              title={isHost ? (p.is_captain ? "Click to remove captain" : "Make captain") : p.name}
+              className="relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-extrabold disabled:cursor-default"
+              style={{
+                background: `rgba(var(--team-${color}-rgb), 0.55)`,
+                color:      "#fff",
+                border:     `2px solid rgba(var(--team-${color}-rgb), 0.85)`,
+                cursor:     (onMakeCaptain && isHost) ? "pointer" : "default",
+              }}
+            >
+              {(p.name.trim()[0] ?? "?").toUpperCase()}
+              {p.is_captain && (
+                <span className="absolute -top-1 -right-1 text-[10px]"
+                  style={{
+                    background: "linear-gradient(135deg, #facc15, #b45309)",
+                    width: 18, height: 18,
+                    borderRadius: "50%",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: "0 0 6px rgba(250,204,21,0.55)",
+                  }}>
+                  👑
+                </span>
+              )}
+            </button>
+            {/* Name */}
+            <span className="text-[10px] mt-0.5 truncate max-w-full"
+              style={{ color: isMe ? "#fff" : "rgb(var(--text-muted-rgb))" }}>
+              {p.name.split(" ")[0]}{isMe && " (you)"}
+            </span>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Persistent ping bubbles stacked above a gap. Captain (or host) sees a × button to dismiss.
+function PingBubbles({ pings, onDismiss }: { pings: TimelinePing[]; onDismiss?: (id: number) => void }) {
+  // Stack the latest first; cap to a few visible to avoid runaway columns
+  const visible = pings.slice(-4);
+  return (
+    <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5"
+      style={{ pointerEvents: onDismiss ? "auto" : "none" }}>
+      {visible.map((p) => (
+        <div key={p.id}
+          className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1"
+          style={{
+            background: "rgba(var(--color-secondary-rgb), 0.92)",
+            color:      "#fff",
+            boxShadow:  "0 1px 6px rgba(0,0,0,0.45)",
+          }}
+        >
+          <span>📍 {p.player_name.split(" ")[0]} · {p.year}</span>
+          {onDismiss && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDismiss(p.id); }}
+              className="text-[10px] leading-none -mr-0.5 hover:text-red-300"
+              title="Dismiss"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -569,28 +663,36 @@ interface RevealProps {
   isActiveTeam:         boolean;
   isCaptain:            boolean;
   isJudgeEligible:      boolean;
+  isHost:               boolean;
   myPlayerId:           string;
   totalEligibleVoters:  number;
   pendingCount:         number;
-  onJudge:              (kind: "artist" | "songname", verdict: boolean) => Promise<void>;
+  onJudge:              (verdict: boolean) => Promise<void>;
   onFinalize:           () => Promise<void>;
   onStop:               () => void;
   onNext:               () => void;
+  onProposeYear:        (year: number) => Promise<void>;
+  onApproveYear:        (approve: boolean) => Promise<void>;
 }
 
 function RevealOverlay({
-  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible,
+  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost,
   myPlayerId, totalEligibleVoters, pendingCount,
-  onJudge, onFinalize, onStop, onNext,
+  onJudge, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
   const hasGuess       = (round.artist_guess?.trim() ?? "") !== "" || (round.songname_guess?.trim() ?? "") !== "";
   const isVoteMode     = judgeMode === "vote-all";
+  // Combined verdict: both artist & songname always move together — show finalized
+  // once either field has a verdict (vote-all keeps its own finalize flag).
   const finalized      = !hasGuess
     ? true
-    : (isVoteMode ? round.judging_finalized : (round.artist_correct !== null && round.songname_correct !== null));
-  const bonusEligible  = hasGuess && round.artist_correct === true && round.songname_correct === true;
+    : (isVoteMode ? round.judging_finalized : (round.artist_correct !== null || round.songname_correct !== null));
+  const combinedVerdict: boolean | null = round.artist_correct ?? round.songname_correct ?? null;
+  const bonusEligible  = hasGuess && combinedVerdict === true;
+  // Show whichever year is currently authoritative
+  const displayYear    = round.corrected_year ?? round.track.releaseYear;
 
   // Vote timer (vote-all mode only): client-side countdown driven by judging_started_at.
   const startedAtMs = round.judging_started_at ? Date.parse(round.judging_started_at) : 0;
@@ -620,12 +722,20 @@ function RevealOverlay({
         <div className="w-full max-w-sm text-center space-y-4">
           <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" style={{ opacity: 0.6 }} />
 
-          <YearStamp year={round.track.releaseYear} variant="wrong" />
+          <YearStamp year={displayYear} variant="wrong" />
 
           <div>
             <p className="font-bold text-lg">{round.track.name}</p>
             <p className="text-sm opacity-60">{round.track.artist}</p>
           </div>
+
+          <YearCorrectionWidget
+            round={round}
+            isHost={isHost}
+            myPlayerId={myPlayerId}
+            onPropose={onProposeYear}
+            onApprove={onApproveYear}
+          />
 
           <div className="rounded-xl p-3"
             style={{ background: "rgba(220,60,60,0.1)", border: "1px solid rgba(220,60,60,0.2)" }}>
@@ -650,17 +760,25 @@ function RevealOverlay({
       <div className="w-full max-w-md space-y-4">
         <div className="text-center space-y-3">
           <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" />
-          <YearStamp year={round.track.releaseYear} variant="right" />
+          <YearStamp year={displayYear} variant="right" />
           <div>
             <p className="font-bold text-lg">{round.track.name}</p>
             <p className="text-sm opacity-60">{round.track.artist}</p>
           </div>
         </div>
 
+        <YearCorrectionWidget
+          round={round}
+          isHost={isHost}
+          myPlayerId={myPlayerId}
+          onPropose={onProposeYear}
+          onApprove={onApproveYear}
+        />
+
         {hasGuess && (
           <Panel className="p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-wider opacity-50">Your guess</p>
+              <p className="text-xs uppercase tracking-wider opacity-50">The guess</p>
               {isVoteMode && !finalized && startedAtMs > 0 && (
                 <p className="text-xs font-mono"
                   style={{ color: remainingSec <= 5 ? "rgb(220,60,60)" : "rgb(var(--color-secondary-rgb))" }}>
@@ -669,29 +787,17 @@ function RevealOverlay({
               )}
             </div>
 
-            <JudgeRow
-              label="Song name"
-              guess={round.songname_guess ?? ""}
-              actual={round.track.name}
-              verdict={round.songname_correct}
+            <CombinedJudgeRow
+              songnameGuess={round.songname_guess ?? ""}
+              artistGuess={round.artist_guess ?? ""}
+              actualSongname={round.track.name}
+              actualArtist={round.track.artist}
+              verdict={combinedVerdict}
               canJudge={isJudgeEligible}
-              onJudge={(v) => onJudge("songname", v)}
+              onJudge={onJudge}
               voteMode={isVoteMode}
               finalized={finalized}
               votes={round.songname_votes}
-              myPlayerId={myPlayerId}
-              totalVoters={totalEligibleVoters}
-            />
-            <JudgeRow
-              label="Artist"
-              guess={round.artist_guess ?? ""}
-              actual={round.track.artist}
-              verdict={round.artist_correct}
-              canJudge={isJudgeEligible}
-              onJudge={(v) => onJudge("artist", v)}
-              voteMode={isVoteMode}
-              finalized={finalized}
-              votes={round.artist_votes}
               myPlayerId={myPlayerId}
               totalVoters={totalEligibleVoters}
             />
@@ -778,81 +884,220 @@ function YearStamp({ year, variant }: { year: number; variant: "right" | "wrong"
   );
 }
 
-function JudgeRow({
-  label, guess, actual, verdict, canJudge, onJudge,
+function CombinedJudgeRow({
+  songnameGuess, artistGuess, actualSongname, actualArtist,
+  verdict, canJudge, onJudge,
   voteMode = false, finalized = false, votes = {}, myPlayerId = "", totalVoters = 0,
 }: {
-  label:        string;
-  guess:        string;
-  actual:       string;
-  verdict:      boolean | null;
-  canJudge:     boolean;
-  onJudge:      (v: boolean) => void;
-  voteMode?:    boolean;
-  finalized?:   boolean;
-  votes?:       Record<string, boolean>;
-  myPlayerId?:  string;
-  totalVoters?: number;
+  songnameGuess:   string;
+  artistGuess:     string;
+  actualSongname:  string;
+  actualArtist:    string;
+  verdict:         boolean | null;
+  canJudge:        boolean;
+  onJudge:         (v: boolean) => void;
+  voteMode?:       boolean;
+  finalized?:      boolean;
+  votes?:          Record<string, boolean>;
+  myPlayerId?:     string;
+  totalVoters?:    number;
 }) {
-  // In vote-mode pre-finalize, "verdict" comes from MY vote, not the final verdict.
+  // Vote-mode pre-finalize uses the songname channel as the single source — both
+  // get set together server-side, so reading either is fine.
   let myVote: boolean | null = null;
   let yesCount = 0, noCount = 0;
   if (voteMode) {
     for (const v of Object.values(votes)) v ? yesCount++ : noCount++;
     if (myPlayerId in votes) myVote = votes[myPlayerId];
   }
-  const showVerdict     = !voteMode || finalized;
+  const showVerdict      = !voteMode || finalized;
   const highlightVerdict = showVerdict ? verdict : myVote;
 
   return (
-    <div className="rounded-lg p-3"
+    <div className="rounded-lg p-3 space-y-2"
       style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-      <p className="text-xs uppercase tracking-wider opacity-50 mb-1">{label}</p>
-      <div className="flex items-baseline gap-2 mb-2 flex-wrap">
-        <p className="text-sm">
-          <span className="opacity-50">Guess:</span>{" "}
-          <span className="font-semibold">{guess || <span className="opacity-40 italic">—</span>}</span>
-        </p>
-        <p className="text-sm">
-          <span className="opacity-50">Actual:</span>{" "}
-          <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actual}</span>
-        </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider opacity-50 mb-0.5">Song name</p>
+          <p className="text-sm">
+            <span className="opacity-60">Guessed </span>
+            <span className="font-semibold">{songnameGuess || <span className="opacity-40 italic">—</span>}</span>
+          </p>
+          <p className="text-xs">
+            <span className="opacity-50">Actual </span>
+            <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actualSongname}</span>
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider opacity-50 mb-0.5">Artist</p>
+          <p className="text-sm">
+            <span className="opacity-60">Guessed </span>
+            <span className="font-semibold">{artistGuess || <span className="opacity-40 italic">—</span>}</span>
+          </p>
+          <p className="text-xs">
+            <span className="opacity-50">Actual </span>
+            <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actualArtist}</span>
+          </p>
+        </div>
       </div>
+      <p className="text-[11px] opacity-50 text-center">Both must be right to earn the bonus 🪙</p>
       <div className="grid grid-cols-2 gap-2">
         <button
           onClick={() => canJudge && onJudge(true)}
           disabled={!canJudge}
-          className="text-xs font-bold py-1.5 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1"
+          className="text-sm font-bold py-2 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1.5"
           style={{
-            background: highlightVerdict === true ? "rgba(40,180,60,0.2)" : "transparent",
-            border:    `1px solid ${highlightVerdict === true ? "rgba(40,180,60,0.6)" : "rgba(255,255,255,0.12)"}`,
+            background: highlightVerdict === true ? "rgba(40,180,60,0.22)" : "transparent",
+            border:    `1px solid ${highlightVerdict === true ? "rgba(40,180,60,0.65)" : "rgba(255,255,255,0.12)"}`,
             color:      highlightVerdict === true ? "rgb(40,180,60)" : "rgb(var(--text-muted-rgb))",
             opacity:    canJudge ? 1 : 0.7,
           }}
         >
-          ✓ Correct
-          {voteMode && !finalized && <span className="opacity-60 font-mono">{yesCount}</span>}
+          ✓ Both correct
+          {voteMode && !finalized && <span className="opacity-60 font-mono text-xs">{yesCount}</span>}
         </button>
         <button
           onClick={() => canJudge && onJudge(false)}
           disabled={!canJudge}
-          className="text-xs font-bold py-1.5 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1"
+          className="text-sm font-bold py-2 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1.5"
           style={{
-            background: highlightVerdict === false ? "rgba(220,60,60,0.2)" : "transparent",
-            border:    `1px solid ${highlightVerdict === false ? "rgba(220,60,60,0.6)" : "rgba(255,255,255,0.12)"}`,
+            background: highlightVerdict === false ? "rgba(220,60,60,0.22)" : "transparent",
+            border:    `1px solid ${highlightVerdict === false ? "rgba(220,60,60,0.65)" : "rgba(255,255,255,0.12)"}`,
             color:      highlightVerdict === false ? "rgb(220,60,60)" : "rgb(var(--text-muted-rgb))",
             opacity:    canJudge ? 1 : 0.7,
           }}
         >
-          ✗ Wrong
-          {voteMode && !finalized && <span className="opacity-60 font-mono">{noCount}</span>}
+          ✗ Not quite
+          {voteMode && !finalized && <span className="opacity-60 font-mono text-xs">{noCount}</span>}
         </button>
       </div>
       {voteMode && !finalized && totalVoters > 0 && (
-        <p className="text-[10px] opacity-50 text-center mt-1.5">
+        <p className="text-[10px] opacity-50 text-center">
           {yesCount + noCount}/{totalVoters} voted
         </p>
       )}
+    </div>
+  );
+}
+
+// Year correction: any player can propose, host approves. Host's own propose
+// applies immediately (the server takes care of that). When a proposal is
+// pending, the host sees an approve/reject banner.
+function YearCorrectionWidget({
+  round, isHost, myPlayerId, onPropose, onApprove,
+}: {
+  round:       TlRound;
+  isHost:      boolean;
+  myPlayerId:  string;
+  onPropose:   (year: number) => Promise<void>;
+  onApprove:   (approve: boolean) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState<string>(String(round.corrected_year ?? round.track.releaseYear));
+  const [busy, setBusy]       = useState(false);
+
+  const corrected = round.corrected_year !== null;
+  const proposed  = round.year_correction_proposed !== null;
+  const proposedByMe = round.year_correction_proposed_by === myPlayerId;
+
+  // Host: pending approval banner
+  if (proposed && isHost) {
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-center gap-2 flex-wrap"
+        style={{ background: "rgba(220,160,0,0.12)", border: "1px solid rgba(220,160,0,0.4)" }}>
+        <span style={{ color: "rgb(220,160,0)" }}>
+          ⚠️ <strong>{round.year_correction_proposed_name ?? "Someone"}</strong> proposes year{" "}
+          <strong>{round.year_correction_proposed}</strong> instead of <strong>{round.track.releaseYear}</strong>
+        </span>
+        <div className="flex gap-2 ml-auto">
+          <button
+            onClick={async () => { setBusy(true); try { await onApprove(true); } finally { setBusy(false); } }}
+            disabled={busy}
+            className="text-xs font-bold px-3 py-1 rounded"
+            style={{ background: "rgba(40,180,60,0.2)", color: "rgb(40,180,60)", border: "1px solid rgba(40,180,60,0.4)" }}
+          >
+            ✓ Approve
+          </button>
+          <button
+            onClick={async () => { setBusy(true); try { await onApprove(false); } finally { setBusy(false); } }}
+            disabled={busy}
+            className="text-xs font-bold px-3 py-1 rounded"
+            style={{ background: "rgba(220,60,60,0.18)", color: "rgb(220,60,60)", border: "1px solid rgba(220,60,60,0.4)" }}
+          >
+            ✗ Reject
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-host pending
+  if (proposed) {
+    return (
+      <p className="text-xs text-center opacity-70" style={{ color: "rgb(220,160,0)" }}>
+        ⏳ {proposedByMe ? "You" : (round.year_correction_proposed_name ?? "Someone")} proposed <strong>{round.year_correction_proposed}</strong> — waiting for host
+      </p>
+    );
+  }
+
+  // Approved correction badge
+  if (corrected) {
+    return (
+      <p className="text-xs text-center opacity-70">
+        ✓ Year corrected to <strong>{round.corrected_year}</strong> (was {round.track.releaseYear})
+      </p>
+    );
+  }
+
+  // Editor (open or trigger)
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="text-xs opacity-50 hover:opacity-90 underline"
+      >
+        Year wrong? Propose a correction
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 justify-center flex-wrap">
+      <span className="text-xs opacity-60">Correct year:</span>
+      <input
+        type="number"
+        min={1900}
+        max={2100}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        autoFocus
+        className="w-20 rounded px-2 py-1 text-sm font-mono outline-none"
+        style={{
+          background: "rgba(var(--surface-raised-rgb),0.5)",
+          border:     "1px solid rgba(255,255,255,0.15)",
+          color:      "inherit",
+        }}
+      />
+      <button
+        onClick={async () => {
+          const y = parseInt(draft, 10);
+          if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
+          setBusy(true);
+          try { await onPropose(y); setEditing(false); }
+          finally { setBusy(false); }
+        }}
+        disabled={busy}
+        className="text-xs font-bold px-3 py-1 rounded"
+        style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.4)" }}
+      >
+        {isHost ? "Apply" : "Propose"}
+      </button>
+      <button
+        onClick={() => setEditing(false)}
+        className="text-xs opacity-50"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -867,7 +1112,6 @@ export default function GamePage() {
   const { state } = useRoom(roomId, myPlayerId);
 
   const [noteText,   setNoteText]   = useState("");
-  const [pingYear,   setPingYear]   = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Lifted guess inputs so chat-pull buttons can write into them.
@@ -933,8 +1177,15 @@ export default function GamePage() {
 
   const isDJ       = state?.myPlayer?.is_host ?? false;
   const isHost     = state?.myPlayer?.is_host ?? false;
-  const isMyTurn   = !!(state?.room.active_team_id && state.myPlayer?.team_id === state.room.active_team_id);
-  const iAmCaptain = state?.myPlayer?.is_captain ?? false;
+  const singleScreen = !!state?.room.settings?.singleScreenMode;
+  // In single-screen mode the host stands in for whoever's playing. They get
+  // captain powers on whatever team is currently active.
+  const isMyTurn   = !!(state?.room.active_team_id && (
+    state.myPlayer?.team_id === state.room.active_team_id
+    || (singleScreen && isHost)
+  ));
+  const iAmCaptain = (state?.myPlayer?.is_captain ?? false)
+    || (singleScreen && isHost && isMyTurn);
 
   async function kickPlayer(targetId: string) {
     if (!myPlayerId) return;
@@ -1023,12 +1274,13 @@ export default function GamePage() {
 
   const { room, teams, round, timelines, notes, pings, myPlayer } = state;
   const activeTeam = teams.find(t => t.id === room.active_team_id);
-  const pingYears  = pings.map(p => p.year);
-  // Pings from the last 5s, with parsed timestamp — feed gap-bubble UI.
-  const nowMs = Date.now();
-  const recentPings = pings
-    .map(p => ({ year: p.year, player_name: p.player_name, ts: Date.parse(p.created_at) }))
-    .filter(p => !Number.isNaN(p.ts) && (nowMs - p.ts) < 5000);
+  // Pings persist on the timeline until the captain (or host) dismisses them.
+  const persistentPings = pings.map(p => ({ id: p.id, year: p.year, player_name: p.player_name }));
+  // Notes for the per-player speech bubbles (last 12s) — feeds PlayerFooter.
+  const chatTickMs = Date.now();
+  const footerNotes: FooterNote[] = notes
+    .map(n => ({ id: n.id, player_id: n.player_id, content: n.content, createdMs: Date.parse(n.created_at) }))
+    .filter(n => !Number.isNaN(n.createdMs) && (chatTickMs - n.createdMs) < 12000);
 
   async function confirmGuess() {
     if (!round || submitting) return;
@@ -1055,11 +1307,35 @@ export default function GamePage() {
     }
   }
 
-  async function judge(kind: "artist" | "songname", verdict: boolean) {
+  async function judge(verdict: boolean) {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=judge`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, kind, verdict }),
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, kind: "combined", verdict }),
+    });
+  }
+
+  async function proposeYearCorrection(year: number) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=propose-year`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, year }),
+    });
+  }
+
+  async function approveYearCorrection(approve: boolean) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=approve-year`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, approve }),
+    });
+  }
+
+  async function dismissPing(pingId: number) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/ping`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ ping_id: pingId, player_id: myPlayerId }),
     });
   }
 
@@ -1111,13 +1387,6 @@ export default function GamePage() {
     supabase.from("tl_pings").insert({
       round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, year,
     });
-  }
-
-  async function sendPing() {
-    const yr = parseInt(pingYear, 10);
-    if (isNaN(yr)) return;
-    pingAtYear(yr);
-    setPingYear("");
   }
 
   return (
@@ -1315,36 +1584,6 @@ export default function GamePage() {
                 </span>
               </div>
 
-              {/* Team roster (host can re-assign captain by clicking) */}
-              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-                {state.players.filter(p => p.team_id === team.id && !p.is_spectator).map(p => {
-                  const hostCanToggle = isHost;
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => hostCanToggle && makeCaptain(p)}
-                      disabled={!hostCanToggle}
-                      title={hostCanToggle
-                        ? (p.is_captain ? "Click to remove captain" : "Make captain")
-                        : (p.is_captain ? "Captain" : p.name)}
-                      className="text-xs px-2.5 py-1 rounded-full transition-all disabled:cursor-default"
-                      style={{
-                        background: p.is_captain
-                          ? `rgba(var(--team-${color}-rgb), 0.22)`
-                          : (hostCanToggle ? "rgba(255,255,255,0.04)" : "transparent"),
-                        border: p.is_captain
-                          ? `1px solid rgba(var(--team-${color}-rgb), 0.6)`
-                          : "1px solid rgba(255,255,255,0.10)",
-                        color: p.is_captain ? `rgb(var(--team-${color}-rgb))` : "rgb(var(--text-muted-rgb))",
-                      }}
-                    >
-                      {p.is_captain && "👑 "}{p.name}
-                      {p.id === myPlayer?.id && <span className="opacity-50 ml-0.5 font-normal">(you)</span>}
-                    </button>
-                  );
-                })}
-              </div>
-
               {/* The big timeline */}
               <div className="flex-1 min-h-0 overflow-auto pt-1">
                 {tl.length === 0 && !showDragCard ? (
@@ -1363,12 +1602,23 @@ export default function GamePage() {
                       : null}
                     onStageGap={stageGap}
                     onPingYear={isActive ? pingAtYear : undefined}
-                    pingYears={isActive ? pingYears : []}
-                    recentPings={isActive ? recentPings : []}
+                    onDismissPing={isActive && (iAmCaptain || isHost) ? dismissPing : undefined}
+                    pings={isActive ? persistentPings : []}
                     pending={pending as SpotifyTrack[]}
                   />
                 )}
               </div>
+
+              {/* Player avatars footer — chat messages float above each head */}
+              <PlayerFooter
+                players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
+                notes={footerNotes}
+                color={color}
+                myPlayerId={myPlayerId}
+                nowMs={chatTickMs}
+                onMakeCaptain={isHost ? makeCaptain : undefined}
+                isHost={isHost}
+              />
             </Panel>
           );
         };
@@ -1426,6 +1676,15 @@ export default function GamePage() {
                   />
                 )}
               </div>
+
+              {/* Compact avatars at bottom (smaller, no name) */}
+              <PlayerFooter
+                players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
+                notes={footerNotes}
+                color={color}
+                myPlayerId={myPlayerId}
+                nowMs={chatTickMs}
+              />
             </Panel>
           );
         };
@@ -1499,105 +1758,30 @@ export default function GamePage() {
           </div>
         </Panel>
       ) : (
-      <Panel className="flex-shrink-0 p-2.5 space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold opacity-50 uppercase tracking-wider">Chat</p>
-          {pingYears.length > 0 && (
-            <p className="text-[10px] opacity-50">📍 {pingYears.length} pin{pingYears.length !== 1 ? "s" : ""}</p>
-          )}
-        </div>
-
-        <div className="space-y-1 max-h-24 overflow-y-auto">
-          {notes.length === 0 && <p className="text-xs opacity-30 italic">No notes yet…</p>}
-          {notes.map(n => {
-            const showPullButtons =
-              iAmCaptain && isMyTurn && round?.outcome === "correct"
-              && round.artist_guess === null;
-            return (
-              <div key={n.id} className="note-enter flex items-baseline gap-2">
-                <p className="text-sm flex-1 min-w-0 break-words">
-                  <span className="font-semibold opacity-70">{n.player_name}: </span>
-                  <span>{n.content}</span>
-                </p>
-                {showPullButtons && (
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => setGuessSongname(n.content)}
-                      title="Use as song name"
-                      className="text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
-                      style={{
-                        background: "rgba(var(--color-primary-rgb),0.15)",
-                        color:      "rgb(var(--color-primary-rgb))",
-                        border:     "1px solid rgba(var(--color-primary-rgb),0.3)",
-                      }}>
-                      → Song
-                    </button>
-                    <button
-                      onClick={() => setGuessArtist(n.content)}
-                      title="Use as artist"
-                      className="text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
-                      style={{
-                        background: "rgba(var(--color-secondary-rgb),0.15)",
-                        color:      "rgb(var(--color-secondary-rgb))",
-                        border:     "1px solid rgba(var(--color-secondary-rgb),0.3)",
-                      }}>
-                      → Artist
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="flex gap-2">
-          <input
-            value={noteText}
-            onChange={e => setNoteText(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && sendNote()}
-            placeholder="Type a hint, song name, year…"
-            maxLength={100}
-            className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none"
-            style={{
-              background: "rgba(var(--surface-raised-rgb),0.5)",
-              border:     "1px solid rgba(255,255,255,0.1)",
-              color:      "inherit",
-            }}
-          />
-          <button onClick={sendNote}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium"
-            style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))" }}>
-            Send
-          </button>
-        </div>
-
-        <div className="flex gap-2 items-center">
-          <span className="text-xs opacity-40 flex-shrink-0">📍</span>
-          <input
-            type="number"
-            value={pingYear}
-            onChange={e => setPingYear(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && sendPing()}
-            placeholder="Pin year (e.g. 1991)"
-            min={1900} max={2025}
-            className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm outline-none"
-            style={{
-              background: "rgba(var(--surface-raised-rgb),0.5)",
-              border:     "1px solid rgba(255,255,255,0.1)",
-              color:      "inherit",
-              fontFamily: "var(--font-mono)",
-            }}
-          />
-          <button onClick={sendPing}
-            className="px-3 py-1 rounded text-xs font-bold flex-shrink-0"
-            style={{
-              background: "rgba(var(--color-secondary-rgb),0.2)",
-              color:      "rgb(var(--color-secondary-rgb))",
-              border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
-            }}>
-            📍 Pin year
-          </button>
-        </div>
+      <Panel className="flex-shrink-0 p-2 flex items-center gap-2">
+        <span className="text-base flex-shrink-0">💬</span>
+        <input
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && sendNote()}
+          placeholder="Say something — it'll pop above your head"
+          maxLength={100}
+          className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-sm outline-none"
+          style={{
+            background: "rgba(var(--surface-raised-rgb),0.5)",
+            border:     "1px solid rgba(255,255,255,0.1)",
+            color:      "inherit",
+          }}
+        />
+        <button onClick={sendNote}
+          disabled={!noteText.trim()}
+          className="px-3 py-1.5 rounded-lg text-sm font-medium flex-shrink-0 disabled:opacity-40"
+          style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))" }}>
+          Send
+        </button>
+        {persistentPings.length > 0 && (
+          <span className="text-[11px] opacity-50 flex-shrink-0 ml-1">📍 {persistentPings.length}</span>
+        )}
       </Panel>
       )}
 
@@ -1653,6 +1837,7 @@ export default function GamePage() {
             isActiveTeam={isMyTurn}
             isCaptain={iAmCaptain && isMyTurn}
             isJudgeEligible={isJudgeEligible}
+            isHost={isHost}
             myPlayerId={myPlayerId ?? ""}
             totalEligibleVoters={totalEligibleVoters}
             pendingCount={activeTeam?.pending_tracks?.length ?? 0}
@@ -1660,6 +1845,8 @@ export default function GamePage() {
             onFinalize={finalizeJudgment}
             onStop={() => doTurnAction("stop")}
             onNext={() => doTurnAction("next")}
+            onProposeYear={proposeYearCorrection}
+            onApproveYear={approveYearCorrection}
           />
         );
       })()}
