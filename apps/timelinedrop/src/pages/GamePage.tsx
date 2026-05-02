@@ -196,11 +196,13 @@ function Timeline({
             gapIdx > 0 && gapIdx < merged.length
             && merged[gapIdx - 1].year === merged[gapIdx].year;
 
-          // Pings landing inside this gap's year range — persistent until dismissed.
+          // Pings strictly inside this gap's year range — pings exactly on a
+          // card's year belong to the card, not the gap, so we use exclusive
+          // boundaries here to avoid the same ping rendering in 3 places.
           const [gapL, gapR] = getYearsForGap(gapIdx);
           const gapPings = pings.filter(p => {
-            if (gapL !== null && p.year < gapL) return false;
-            if (gapR !== null && p.year > gapR) return false;
+            if (gapL !== null && p.year <= gapL) return false;
+            if (gapR !== null && p.year >= gapR) return false;
             return true;
           });
 
@@ -258,17 +260,17 @@ function Timeline({
                   ) : isOver ? (
                     <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 16 }}>↓</span>
                   ) : (
-                    <>
-                      <span className="tl-gap-dot" />
-                      {gapPings.length > 0 && (
-                        <PingBubbles
-                          pings={gapPings}
-                          myPlayerId={myPlayerId}
-                          canDismissAny={isCaptain || isHost}
-                          onDismiss={onDismissPing}
-                        />
-                      )}
-                    </>
+                    <span className="tl-gap-dot" />
+                  )}
+                  {/* Bubbles render regardless of staged/over state so the
+                      captain can see suggestions even while staging. */}
+                  {gapPings.length > 0 && (
+                    <PingBubbles
+                      pings={gapPings}
+                      myPlayerId={myPlayerId}
+                      canDismissAny={isCaptain || isHost}
+                      onDismiss={onDismissPing}
+                    />
                   )}
                 </div>
               ) : (

@@ -129,9 +129,31 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           });
         })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "tl_notes" },
-        (payload) => setState(s => s ? { ...s, notes: [...s.notes, payload.new as TlNote] } : s))
+        (payload) => setState(s => {
+          if (!s) return s;
+          const note = payload.new as TlNote;
+          // Only accept notes for the round we're currently displaying
+          if (s.round && note.round_id !== s.round.id) return s;
+          // Avoid duplicate inserts (some realtime drivers re-emit on reconnect)
+          if (s.notes.some(n => n.id === note.id)) return s;
+          return { ...s, notes: [...s.notes, note] };
+        }))
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "tl_pings" },
-        (payload) => setState(s => s ? { ...s, pings: [...s.pings, payload.new as TlPing] } : s))
+        (payload) => setState(s => {
+          if (!s) return s;
+          const ping = payload.new as TlPing;
+          if (s.round && ping.round_id !== s.round.id) return s;
+          if (s.pings.some(p => p.id === ping.id)) return s;
+          return { ...s, pings: [...s.pings, ping] };
+        }))
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "tl_pings" },
+        (payload) => setState(s => {
+          if (!s) return s;
+          // payload.old has at least the primary key under REPLICA IDENTITY DEFAULT
+          const removedId = (payload.old as { id?: number }).id;
+          if (typeof removedId !== "number") return s;
+          return { ...s, pings: s.pings.filter(p => p.id !== removedId) };
+        }))
       .subscribe();
 
     channelRef.current = channel;
