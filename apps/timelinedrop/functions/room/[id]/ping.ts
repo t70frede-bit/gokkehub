@@ -24,20 +24,34 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const room = await getRoom(env, roomId);
     if (!room) return json({ error: "Room not found" }, 404, req);
 
-    // Authorise: captain of active team, host, or single-screen-mode host.
+    // Authorise: captain of active team, host, or the player who created the ping.
     const players = await getPlayers(env, roomId);
     const me = players.find(p => p.id === player_id);
     if (!me) return json({ error: "Not in room" }, 403, req);
 
     const isHost          = me.is_host || room.host_id === player_id;
     const captainOfActive = !!(room.active_team_id && me.team_id === room.active_team_id && me.is_captain);
-    if (!isHost && !captainOfActive) {
-      return json({ error: "Only the captain or host can dismiss pings" }, 403, req);
-    }
 
-    // Belt-and-braces: only delete pings tied to a round in this room.
+    // Need to fetch the ping to check ownership (and to scope deletion to this room's round).
     const round = room.current_round_id ? await getRound(env, room.current_round_id) : null;
     if (!round) return json({ error: "No active round" }, 400, req);
+
+    const lookupUrl = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}&round_id=eq.${round.id}&select=player_id`;
+    const lookup = await fetch(lookupUrl, {
+      headers: {
+        "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
+    if (!lookup.ok) return json({ error: `Lookup failed: ${lookup.status}` }, 500, req);
+    const rows = await lookup.json() as Array<{ player_id: string }>;
+    const target = rows[0];
+    if (!target) return json({ error: "Ping not found" }, 404, req);
+
+    const isOwnPing = target.player_id === player_id;
+    if (!isHost && !captainOfActive && !isOwnPing) {
+      return json({ error: "Only the captain, host, or the ping's author can dismiss it" }, 403, req);
+    }
 
     const url = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}&round_id=eq.${round.id}`;
     const res = await fetch(url, {

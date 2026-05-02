@@ -72,18 +72,20 @@ function TimerRing({ remaining, total = 90 }: { remaining: number; total?: numbe
 
 // ── Timeline component ────────────────────────────────────────────────────────
 
-interface TimelinePing { id: number; year: number; player_name: string }
+interface TimelinePing { id: number; year: number; player_name: string; player_id: string }
 
 interface TimelineProps {
   entries:        TlTimelineEntry[];
   dragCard:       SpotifyTrack | null;
   isCaptain:      boolean;
   isActive:       boolean;       // is this the active team's timeline?
+  isHost?:        boolean;
+  myPlayerId?:    string;
   stagedLeft:     number | null;
   stagedRight:    number | null;
   onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
   onPingYear?:    (year: number) => void;
-  onDismissPing?: (pingId: number) => void;   // captain (or host) only
+  onDismissPing?: (pingId: number) => void;   // server enforces: captain, host, or ping author
   pings?:         TimelinePing[];
   pending?:       SpotifyTrack[];
 }
@@ -95,8 +97,8 @@ interface MergedItem {
 }
 
 function Timeline({
-  entries, dragCard, isCaptain, isActive, stagedLeft, stagedRight, onStageGap, onPingYear,
-  onDismissPing, pings = [], pending = [],
+  entries, dragCard, isCaptain, isActive, isHost = false, myPlayerId, stagedLeft, stagedRight,
+  onStageGap, onPingYear, onDismissPing, pings = [], pending = [],
 }: TimelineProps) {
   const pingYears = pings.map(p => p.year);
   const [dragOver, setDragOver] = useState<number | null>(null);
@@ -249,6 +251,17 @@ function Timeline({
             if (isCaptain) stageGap(gapIdx);
             else if (onPingYear && isActive) pingGap(gapIdx);
           };
+          // Right-click: remove a ping authored by ME inside this gap's range.
+          // Captains/host can right-click any ping.
+          const handleRightClick = (e: React.MouseEvent) => {
+            if (!onDismissPing) return;
+            const removable = gapPings.filter(p => isCaptain || isHost || p.player_id === myPlayerId);
+            if (removable.length === 0) return;
+            e.preventDefault();
+            // Newest first — drop the most recent removable ping
+            const target = removable[removable.length - 1];
+            onDismissPing(target.id);
+          };
 
           return (
             <Fragment key={gapIdx}>
@@ -268,12 +281,13 @@ function Timeline({
                   onDragLeave={isCaptain ? (() => setDragOver(null)) : undefined}
                   onDrop={isCaptain ? (() => { setDragOver(null); stageGap(gapIdx); }) : undefined}
                   onClick={handleClick}
+                  onContextMenu={handleRightClick}
                   title={
                     isStaged
                       ? (isCaptain ? "Selected — click again to clear" : "Captain is considering this spot")
                       : isCaptain
-                        ? "Click to place card here"
-                        : (isActive ? "Click to suggest this spot to your captain" : "")
+                        ? "Click to place · right-click to clear pings"
+                        : (isActive ? "Click to suggest · right-click to clear yours" : "")
                   }
                 >
                   {isStaged && dragCard ? (
@@ -286,7 +300,12 @@ function Timeline({
                     <>
                       <span className="tl-gap-dot" />
                       {gapPings.length > 0 && (
-                        <PingBubbles pings={gapPings} onDismiss={onDismissPing} />
+                        <PingBubbles
+                          pings={gapPings}
+                          myPlayerId={myPlayerId}
+                          canDismissAny={isCaptain || isHost}
+                          onDismiss={onDismissPing}
+                        />
                       )}
                     </>
                   )}
@@ -303,11 +322,17 @@ function Timeline({
                     position:   "relative",
                   }}
                   onClick={() => pingGap(gapIdx)}
-                  title={onPingYear ? "Click to drop a pin" : ""}
+                  onContextMenu={handleRightClick}
+                  title={onPingYear ? "Click to pin · right-click to clear yours" : ""}
                 >
                   <span className="tl-gap-dot" />
                   {gapPings.length > 0 && (
-                    <PingBubbles pings={gapPings} />
+                    <PingBubbles
+                      pings={gapPings}
+                      myPlayerId={myPlayerId}
+                      canDismissAny={isCaptain || isHost}
+                      onDismiss={onDismissPing}
+                    />
                   )}
                 </div>
               ))}
@@ -420,34 +445,51 @@ function PlayerFooter({
   );
 }
 
-// Persistent ping bubbles stacked above a gap. Captain (or host) sees a × button to dismiss.
-function PingBubbles({ pings, onDismiss }: { pings: TimelinePing[]; onDismiss?: (id: number) => void }) {
-  // Stack the latest first; cap to a few visible to avoid runaway columns
+// Persistent ping bubbles stacked above a gap. Each bubble shows × when the
+// viewer is allowed to remove it: own pings are always removable, captain/host
+// can remove any. Right-click on a bubble also dismisses (if allowed).
+function PingBubbles({
+  pings, myPlayerId, canDismissAny, onDismiss,
+}: {
+  pings:          TimelinePing[];
+  myPlayerId?:    string;
+  canDismissAny?: boolean;
+  onDismiss?:     (id: number) => void;
+}) {
   const visible = pings.slice(-4);
   return (
     <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5"
       style={{ pointerEvents: onDismiss ? "auto" : "none" }}>
-      {visible.map((p) => (
-        <div key={p.id}
-          className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1"
-          style={{
-            background: "rgba(var(--color-secondary-rgb), 0.92)",
-            color:      "#fff",
-            boxShadow:  "0 1px 6px rgba(0,0,0,0.45)",
-          }}
-        >
-          <span>📍 {p.player_name.split(" ")[0]} · {p.year}</span>
-          {onDismiss && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onDismiss(p.id); }}
-              className="text-[10px] leading-none -mr-0.5 hover:text-red-300"
-              title="Dismiss"
-            >
-              ×
-            </button>
-          )}
-        </div>
-      ))}
+      {visible.map((p) => {
+        const isMine    = !!myPlayerId && p.player_id === myPlayerId;
+        const canRemove = !!onDismiss && (isMine || !!canDismissAny);
+        return (
+          <div key={p.id}
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1"
+            style={{
+              background: isMine
+                ? "rgba(var(--color-primary-rgb), 0.92)"
+                : "rgba(var(--color-secondary-rgb), 0.92)",
+              color:      "#fff",
+              boxShadow:  "0 1px 6px rgba(0,0,0,0.45)",
+              cursor:     canRemove ? "pointer" : "default",
+            }}
+            title={canRemove ? "Right-click or × to remove" : ""}
+            onContextMenu={canRemove ? ((e) => { e.preventDefault(); e.stopPropagation(); onDismiss!(p.id); }) : undefined}
+          >
+            <span>📍 {p.player_name.split(" ")[0]} · {p.year}</span>
+            {canRemove && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDismiss!(p.id); }}
+                className="text-[11px] leading-none -mr-0.5 hover:text-red-300"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1284,8 +1326,11 @@ export default function GamePage() {
 
   const { room, teams, round, timelines, notes, pings, myPlayer } = state;
   const activeTeam = teams.find(t => t.id === room.active_team_id);
-  // Pings persist on the timeline until the captain (or host) dismisses them.
-  const persistentPings = pings.map(p => ({ id: p.id, year: p.year, player_name: p.player_name }));
+  // Pings persist on the timeline until dismissed (right-click / × button).
+  // Players can dismiss their own; captain & host can dismiss any.
+  const persistentPings = pings.map(p => ({
+    id: p.id, year: p.year, player_name: p.player_name, player_id: p.player_id,
+  }));
   // Notes for the per-player speech bubbles (last 12s) — feeds PlayerFooter.
   const chatTickMs = Date.now();
   const footerNotes: FooterNote[] = notes
@@ -1380,18 +1425,16 @@ export default function GamePage() {
     setNoteText("");
   }
 
-  // Drop a ping at a specific year, throttled to prevent spam.
-  // Cooldown: 0.5s between pings; if 5+ pings in the last 3.5s, escalates to 2s.
+  // Drop a ping at a specific year. Light dedupe-throttle (200ms) — fast enough
+  // to feel instant, just blocks accidental double-clicks creating two rows.
   function pingAtYear(year: number) {
     if (!round || !myPlayer) return;
     if (year < 1900 || year > 2030) return;
 
     const now = Date.now();
-    pingTimestampsRef.current = pingTimestampsRef.current.filter(ts => now - ts < 3500);
-    const recent  = pingTimestampsRef.current;
-    const lastTs  = recent[recent.length - 1] ?? 0;
-    const cooldown = recent.length >= 5 ? 2000 : 500;
-    if (now - lastTs < cooldown) return; // silently throttle
+    pingTimestampsRef.current = pingTimestampsRef.current.filter(ts => now - ts < 5000);
+    const lastTs = pingTimestampsRef.current[pingTimestampsRef.current.length - 1] ?? 0;
+    if (now - lastTs < 200) return; // silently dedupe rapid double-clicks
 
     pingTimestampsRef.current.push(now);
     supabase.from("tl_pings").insert({
@@ -1656,7 +1699,9 @@ export default function GamePage() {
                       : null}
                     onStageGap={stageGap}
                     onPingYear={isActive ? pingAtYear : undefined}
-                    onDismissPing={isActive && (iAmCaptain || isHost) ? dismissPing : undefined}
+                    onDismissPing={isActive ? dismissPing : undefined}
+                    isHost={isHost}
+                    myPlayerId={myPlayerId}
                     pings={isActive ? persistentPings : []}
                     pending={pending as SpotifyTrack[]}
                   />
