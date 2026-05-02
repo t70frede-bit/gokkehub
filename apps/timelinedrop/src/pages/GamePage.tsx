@@ -101,7 +101,6 @@ function Timeline({
   onStageGap, onPingYear, onDismissPing, pings = [], pending = [],
 }: TimelineProps) {
   const [dragOver, setDragOver] = useState<number | null>(null);
-  const dragging = useRef(false);
 
   // Merge locked + pending into a single ordered list — pending cards form gaps too.
   const merged: MergedItem[] = [
@@ -167,23 +166,8 @@ function Timeline({
       {/* Timeline rail */}
       <div className="timeline-rail">
 
-        {/* Mystery card — sits at the front of the rail when no staged gap is
-            chosen yet, or moves into the staged gap once one is. Visible to
-            EVERY player on the active team (and the captain can drag it). */}
-        {dragCard && isActive && stagedGap === null && (
-          <div
-            draggable={isCaptain}
-            onDragStart={() => { if (isCaptain) dragging.current = true; }}
-            onDragEnd={() => { dragging.current = false; setDragOver(null); }}
-            className="flex-shrink-0 mr-1 mystery-card-wrap"
-            style={{ cursor: isCaptain ? "grab" : "default" }}
-            title={isCaptain
-              ? "Click a gap or drag this card onto one"
-              : "The captain hasn't picked a spot yet"}
-          >
-            <QuestionCard track={dragCard} />
-          </div>
-        )}
+        {/* The mystery card is intentionally NOT shown alongside the rail.
+            It only appears when the captain stages it into a specific gap. */}
 
         {Array.from({ length: gaps }).map((_, gapIdx) => {
           const item        = merged[gapIdx];
@@ -454,9 +438,12 @@ function PlayerFooter({
   );
 }
 
-// Persistent ping bubbles stacked above a gap. Each bubble shows × when the
-// viewer is allowed to remove it: own pings are always removable, captain/host
-// can remove any. Right-click on a bubble also dismisses (if allowed).
+// Persistent ping bubbles stacked above a gap. Styled to feel like physical
+// push-pins: layered shadow gives elevation, subtle inner highlight on top,
+// and a small triangular tail points down at the gap.
+//
+// Each bubble shows × when the viewer is allowed to remove it: own pings are
+// always removable, captain/host can remove any. Right-click also dismisses.
 function PingBubbles({
   pings, myPlayerId, canDismissAny, onDismiss,
 }: {
@@ -467,34 +454,62 @@ function PingBubbles({
 }) {
   const visible = pings.slice(-4);
   return (
-    <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5"
+    <div className="absolute -top-9 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1"
       style={{ pointerEvents: onDismiss ? "auto" : "none" }}>
-      {visible.map((p) => {
+      {visible.map((p, idx) => {
         const isMine    = !!myPlayerId && p.player_id === myPlayerId;
         const canRemove = !!onDismiss && (isMine || !!canDismissAny);
+        const isLast    = idx === visible.length - 1;
+        const colorVar  = isMine ? "--color-primary-rgb" : "--color-secondary-rgb";
+
         return (
-          <div key={p.id}
-            className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1"
-            style={{
-              background: isMine
-                ? "rgba(var(--color-primary-rgb), 0.92)"
-                : "rgba(var(--color-secondary-rgb), 0.92)",
-              color:      "#fff",
-              boxShadow:  "0 1px 6px rgba(0,0,0,0.45)",
-              cursor:     canRemove ? "pointer" : "default",
-            }}
-            title={canRemove ? `${p.player_name} · right-click to remove` : p.player_name}
-            onContextMenu={canRemove ? ((e) => { e.preventDefault(); e.stopPropagation(); onDismiss!(p.id); }) : undefined}
-          >
-            <span>📍 {p.player_name.split(" ")[0]}</span>
-            {canRemove && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onDismiss!(p.id); }}
-                className="text-[11px] leading-none -mr-0.5 hover:text-red-300"
-                title="Dismiss"
-              >
-                ×
-              </button>
+          <div key={p.id} className="relative">
+            <div
+              className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap flex items-center gap-1.5"
+              style={{
+                background: `linear-gradient(180deg, rgba(var(${colorVar}), 1) 0%, rgba(var(${colorVar}), 0.78) 100%)`,
+                color:      "#fff",
+                // Layered shadow: 1px crisp drop + diffuse below = "lifted off the rail"
+                boxShadow: [
+                  "0 1px 0 rgba(255,255,255,0.18) inset",     // top inner highlight
+                  "0 1px 1px rgba(0,0,0,0.35)",               // crisp 1px ground line
+                  "0 6px 14px rgba(0,0,0,0.38)",              // diffuse halo
+                ].join(", "),
+                border:     `1px solid rgba(var(${colorVar}), 0.55)`,
+                cursor:     canRemove ? "pointer" : "default",
+                textShadow: "0 1px 1px rgba(0,0,0,0.35)",
+              }}
+              title={canRemove ? `${p.player_name} · right-click to remove` : p.player_name}
+              onContextMenu={canRemove ? ((e) => { e.preventDefault(); e.stopPropagation(); onDismiss!(p.id); }) : undefined}
+            >
+              <span>📍 {p.player_name.split(" ")[0]}</span>
+              {canRemove && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDismiss!(p.id); }}
+                  className="text-sm leading-none -mr-0.5 hover:text-red-200"
+                  title="Dismiss"
+                  style={{ opacity: 0.85 }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Tail — only on the bottom-most bubble so the stack points at one place */}
+            {isLast && (
+              <div
+                className="absolute left-1/2 -translate-x-1/2"
+                style={{
+                  top:    "100%",
+                  width:  0,
+                  height: 0,
+                  borderLeft:  "5px solid transparent",
+                  borderRight: "5px solid transparent",
+                  borderTop:   `5px solid rgba(var(${colorVar}), 0.85)`,
+                  filter:      "drop-shadow(0 1px 1px rgba(0,0,0,0.35))",
+                  pointerEvents: "none",
+                }}
+              />
             )}
           </div>
         );

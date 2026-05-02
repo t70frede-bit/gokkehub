@@ -1,12 +1,13 @@
 import { Routes, Route, Navigate, Link } from "react-router-dom";
 import { GameHeader } from "@gokkehub/ui";
 import { useSession } from "./hooks/useSession";
-import HomePage  from "./pages/HomePage";
-import JoinPage  from "./pages/JoinPage";
-import LobbyPage from "./pages/LobbyPage";
-import GamePage  from "./pages/GamePage";
-import EndPage   from "./pages/EndPage";
-import DebugPage from "./pages/DebugPage";
+import HomePage   from "./pages/HomePage";
+import JoinPage   from "./pages/JoinPage";
+import LobbyPage  from "./pages/LobbyPage";
+import GamePage   from "./pages/GamePage";
+import EndPage    from "./pages/EndPage";
+import DebugPage  from "./pages/DebugPage";
+import DesignPage from "./pages/DesignPage";
 
 export default function App() {
   const { session } = useSession();
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/game/:roomId"  element={<GamePage />} />
           <Route path="/end/:roomId"   element={<EndPage />} />
           <Route path="/debug"         element={<DebugPage />} />
+          <Route path="/design"        element={<DesignPage />} />
           <Route path="*"              element={<Navigate to="/" replace />} />
         </Routes>
       </main>
