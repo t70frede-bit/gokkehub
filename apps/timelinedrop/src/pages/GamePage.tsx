@@ -1127,6 +1127,15 @@ export default function GamePage() {
   // Player-leave notifications (transient).
   const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
 
+  // "Copy invite link" feedback flash in the header.
+  const [linkCopied, setLinkCopied] = useState(false);
+  async function copyInviteLink() {
+    if (!roomId) return;
+    await navigator.clipboard.writeText(`${window.location.origin}/join?room=${roomId}`);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  }
+
   // Tick every 500ms so the recent-ping bubbles fade out and disappear after 5s.
   const [, setPingTick] = useState(0);
   useEffect(() => {
@@ -1392,7 +1401,7 @@ export default function GamePage() {
   return (
     <div className="flex-1 flex flex-col p-2 gap-1 w-full min-h-0">
 
-      {/* ── Header bar: turn info · tokens · timer · host menu ───────── */}
+      {/* ── Header bar: turn info · room code · tokens · timer · invite · host menu ─ */}
       <div className="flex-shrink-0 flex items-center gap-3 rounded-lg px-3 py-1 relative"
         style={{
           background: isMyTurn ? "rgba(var(--color-primary-rgb), 0.12)" : "rgba(var(--surface-raised-rgb), 0.3)",
@@ -1403,7 +1412,28 @@ export default function GamePage() {
           <p className="font-bold text-sm leading-tight truncate">{activeTeam?.name ?? "—"}</p>
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        {/* Center: room code (hidden in streamer mode so chat/stream viewers can't peek) */}
+        <div className="flex-1 flex justify-center min-w-0">
+          {!room.settings?.streamerMode && (
+            <div className="flex items-baseline gap-2 truncate">
+              <span className="text-[10px] uppercase tracking-wider opacity-50 hidden sm:inline">Room</span>
+              <span
+                className="font-extrabold tracking-widest text-base sm:text-lg leading-none"
+                style={{
+                  background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor:  "transparent",
+                  backgroundClip:       "text",
+                  fontFamily:           "var(--font-mono)",
+                }}
+              >
+                {roomId}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
           {teams.map(t => (
             <div key={t.id} className="flex items-center gap-1 text-xs opacity-60"
               title={`${t.tokens} ready · ${t.tokens_pending ?? 0} pending`}>
@@ -1415,6 +1445,27 @@ export default function GamePage() {
             </div>
           ))}
           {timerStartedAt && <TimerRing remaining={remaining} />}
+
+          {/* Copy invite link — visible to everyone */}
+          <button
+            onClick={copyInviteLink}
+            className="text-xs px-2 py-1 rounded-lg transition-all whitespace-nowrap"
+            style={{
+              background: linkCopied
+                ? "rgba(40,180,60,0.18)"
+                : "rgba(var(--surface-raised-rgb),0.5)",
+              border:     `1px solid ${linkCopied ? "rgba(40,180,60,0.5)" : "rgba(255,255,255,0.12)"}`,
+              color:      linkCopied ? "rgb(40,180,60)" : "rgb(var(--text-muted-rgb))",
+            }}
+            title="Copy invite link"
+          >
+            {linkCopied ? "✓ Copied" : (
+              <>
+                <span className="hidden sm:inline">📋 Copy link</span>
+                <span className="sm:hidden">📋</span>
+              </>
+            )}
+          </button>
 
           {/* Host management menu */}
           {isHost && (
