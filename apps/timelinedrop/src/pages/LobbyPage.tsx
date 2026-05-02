@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Badge, Button, Input, Panel, Toggle } from "@gokkehub/ui";
+import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import type { TlPlayer, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, PlaylistMode } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, PlaylistMode } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
+
+// Map a team's sort_order (0-3) to a colour token from the design system.
+type TeamColor = "red" | "blue" | "green" | "yellow";
+const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
+function getTeamColor(sortOrder: number): TeamColor {
+  return TEAM_PALETTE[sortOrder % TEAM_PALETTE.length];
+}
+function getInitial(name: string): string {
+  return (name.trim()[0] ?? "?").toUpperCase();
+}
 
 export default function LobbyPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -21,6 +31,10 @@ export default function LobbyPage() {
   const [starting,       setStarting]       = useState(false);
   const [startError,     setStartError]     = useState<string | null>(null);
   const [copied,         setCopied]         = useState(false);
+  // Action sheet state — tap a player tile to open
+  const [selectedPlayer, setSelectedPlayer] = useState<TlPlayer | null>(null);
+  // Manual-artists editor state
+  const [editingArtists, setEditingArtists] = useState<TlPlayer | null>(null);
 
   // ── Auto-redirect to game when host starts ───────────────────────────────────
   useEffect(() => {
@@ -86,14 +100,6 @@ export default function LobbyPage() {
       credentials: "include",
       body:        JSON.stringify({ player_id: targetId, team_id: teamId }),
     });
-  }
-
-  async function cycleTeam(player: TlPlayer) {
-    if (player.is_spectator) return;
-    if (teams.length === 0) return;
-    const idx     = teams.findIndex(t => t.id === player.team_id);
-    const nextIdx = idx === -1 ? 0 : (idx + 1) % teams.length;
-    await changeTeam(player.id, teams[nextIdx].id);
   }
 
   async function kickPlayer(targetId: string) {
@@ -428,108 +434,54 @@ export default function LobbyPage() {
 
         {/* Right: Players + Start */}
         <div className="flex flex-col gap-4">
-          <Panel className="p-4">
-            <h2 className="font-bold text-base mb-3">
-              Players <span style={{ color: "rgb(var(--text-muted-rgb))" }}>({visiblePlayers.length})</span>
-            </h2>
-            {visiblePlayers.length === 0 ? (
-              <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>Waiting for players…</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {[...visiblePlayers]
-                  .sort((a, b) => Number(a.is_spectator) - Number(b.is_spectator))
-                  .map(p => {
-                    const team    = teams.find(t => t.id === p.team_id);
-                    const isMe    = p.id === myPlayerId;
-                    const canSwap = !p.is_spectator && (isHost || (isMe && teamSwap));
-                    // Host can act on anyone (including themselves for captain toggling).
-                    // Kick is gated separately to prevent host self-kick.
-                    const showHostActions = isHost;
-                    const canCaptain      = isHost && !p.is_spectator;
-                    return (
-                      <div key={p.id} className="flex flex-col gap-1.5 py-1">
-                        {/* Row 1: name + badges + team chip */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-sm truncate min-w-0">
-                            {p.name}{isMe && <span className="ml-1 text-xs opacity-40 font-normal">(you)</span>}
-                          </span>
-                          {p.is_host && <Badge variant="host">HOST</Badge>}
-                          {p.is_captain && !p.is_spectator && <Badge variant="primary">👑 Captain</Badge>}
-                          {p.is_spectator ? (
-                            <Badge variant="team" team="spectator">👁️ Spectator</Badge>
-                          ) : (
-                            <button
-                              onClick={() => canSwap && cycleTeam(p)}
-                              disabled={!canSwap}
-                              title={canSwap ? "Click to change team" : team?.name}
-                              className="text-xs font-bold px-2.5 py-0.5 rounded-full transition-opacity disabled:cursor-default"
-                              style={{
-                                background:  "rgba(var(--color-primary-rgb),0.18)",
-                                border:      "1px solid rgba(var(--color-primary-rgb),0.4)",
-                                color:       "rgb(var(--color-primary-rgb))",
-                                opacity:     canSwap ? 1 : 0.85,
-                              }}
-                            >
-                              {team?.name ?? "No team"}
-                            </button>
-                          )}
-                        </div>
-                        {/* Row 2: host-only actions */}
-                        {showHostActions && (
-                          <div className="flex items-center gap-2 pl-1">
-                            {canCaptain && (
-                              <button
-                                onClick={() => setCaptain(p)}
-                                className="text-xs px-2 py-0.5 rounded transition-colors"
-                                style={{
-                                  border: p.is_captain
-                                    ? "1px solid rgba(var(--color-primary-rgb),0.6)"
-                                    : "1px solid rgba(255,255,255,0.12)",
-                                  background: p.is_captain ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
-                                  color: p.is_captain ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))",
-                                }}
-                              >
-                                {p.is_captain ? "👑 Un-captain" : "👑 Make captain"}
-                              </button>
-                            )}
-                            {!p.is_host && (
-                              <button
-                                onClick={() => kickPlayer(p.id)}
-                                className="text-xs px-2 py-0.5 rounded hover:bg-red-500/20"
-                                style={{ color: "rgb(var(--text-muted-rgb))" }}
-                              >
-                                Kick
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        {/* Row 3: music source — Last.fm or manual artists */}
-                        {!p.is_spectator && (
-                          <PlayerMusicRow
-                            player={p}
-                            roomId={roomId!}
-                            isMe={isMe}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
-          </Panel>
+          {/* Music coverage status */}
+          {(() => {
+            const activePlayers = visiblePlayers.filter(p => !p.is_spectator);
+            const linked = activePlayers.filter(p => !!p.lastfm_username || (p.manual_artists?.length ?? 0) > 0);
+            if (activePlayers.length === 0) return null;
+            const allLinked = linked.length === activePlayers.length;
+            return (
+              <Panel className="p-3 flex items-center gap-2">
+                <span className="text-base">🎵</span>
+                <p className="text-xs flex-1" style={{ color: allLinked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
+                  <strong>{linked.length} of {activePlayers.length}</strong> players have music linked
+                  {!allLinked && <span> · songs are picked from those who have</span>}
+                </p>
+              </Panel>
+            );
+          })()}
 
-          {/* Empty teams hint (host only) */}
-          {isHost && teams.some(t => !players.some(p => p.team_id === t.id && !p.is_spectator)) && (
-            <Panel className="p-3">
-              <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                <span style={{ color: "rgb(220,160,0)" }}>⚠️</span>{" "}
-                {teams
-                  .filter(t => !players.some(p => p.team_id === t.id && !p.is_spectator))
-                  .map(t => t.name)
-                  .join(", ")} {teams.filter(t => !players.some(p => p.team_id === t.id && !p.is_spectator)).length === 1 ? "has" : "have"} no players yet.
-              </p>
-            </Panel>
-          )}
+          {/* Team panels — one per team */}
+          <div className="flex flex-col gap-3">
+            {teams.map(team => {
+              const teamPlayers = visiblePlayers.filter(p => p.team_id === team.id && !p.is_spectator);
+              return (
+                <TeamPanel
+                  key={team.id}
+                  team={team}
+                  color={getTeamColor(team.sort_order)}
+                  players={teamPlayers}
+                  myPlayerId={myPlayerId}
+                  isHost={isHost}
+                  onTileClick={(p) => setSelectedPlayer(p)}
+                />
+              );
+            })}
+          </div>
+
+          {/* Spectator panel */}
+          {(() => {
+            const spectators = visiblePlayers.filter(p => p.is_spectator);
+            if (spectators.length === 0) return null;
+            return (
+              <SpectatorPanel
+                players={spectators}
+                myPlayerId={myPlayerId}
+                isHost={isHost}
+                onTileClick={(p) => setSelectedPlayer(p)}
+              />
+            );
+          })()}
 
           {/* Start */}
           {isHost && (() => {
@@ -556,6 +508,51 @@ export default function LobbyPage() {
           })()}
         </div>
       </div>
+
+      {/* Player action sheet — opened by tapping any tile */}
+      {selectedPlayer && (
+        <PlayerActionSheet
+          player={selectedPlayer}
+          teams={teams}
+          isHost={isHost}
+          isMe={selectedPlayer.id === myPlayerId}
+          teamSwap={teamSwap}
+          hostId={room.host_id}
+          onClose={() => setSelectedPlayer(null)}
+          onChangeTeam={async (teamId) => {
+            await changeTeam(selectedPlayer.id, teamId);
+            setSelectedPlayer(null);
+          }}
+          onToggleSpectator={async () => {
+            await changeTeam(selectedPlayer.id, null);
+            setSelectedPlayer(null);
+          }}
+          onSetCaptain={async () => {
+            await setCaptain(selectedPlayer);
+            setSelectedPlayer(null);
+          }}
+          onKick={async () => {
+            await kickPlayer(selectedPlayer.id);
+            setSelectedPlayer(null);
+          }}
+          onEditMusic={() => {
+            setEditingArtists(selectedPlayer);
+            setSelectedPlayer(null);
+          }}
+        />
+      )}
+
+      {/* Manual artists editor modal */}
+      {editingArtists && (
+        <ManualArtistsModal
+          player={editingArtists}
+          onClose={() => setEditingArtists(null)}
+          onSave={async (list) => {
+            await supabase.from("tl_players").update({ manual_artists: list }).eq("id", editingArtists.id);
+            setEditingArtists(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -564,98 +561,475 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex-1 flex items-center justify-center opacity-50">{children}</div>;
 }
 
-// ── Per-player music source row ─────────────────────────────────────────────
-// Shows the player's Last.fm linkage (read-only) or, if missing, lets them type
-// 3-5 favourite artists as a manual fallback. Only the player themselves can
-// edit their own row.
+// ── Team panel: a coloured card holding all of a team's players as tiles ────
 
-function PlayerMusicRow({ player, isMe }: { player: TlPlayer; roomId: string; isMe: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState((player.manual_artists ?? []).join(", "));
-  const [saving, setSaving]   = useState(false);
+interface TeamPanelProps {
+  team:        TlTeam;
+  color:       TeamColor;
+  players:     TlPlayer[];
+  myPlayerId:  string | undefined;
+  isHost:      boolean;
+  onTileClick: (p: TlPlayer) => void;
+}
 
-  const linked         = !!player.lastfm_username;
-  const hasManual      = (player.manual_artists?.length ?? 0) > 0;
-  const needsFallback  = !linked && !hasManual;
-
-  async function saveManual() {
-    const list = draft.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
-    setSaving(true);
-    try {
-      await supabase.from("tl_players").update({ manual_artists: list }).eq("id", player.id);
-      setEditing(false);
-    } finally { setSaving(false); }
-  }
-
-  if (linked) {
-    return (
-      <p className="text-[11px] pl-1 truncate" style={{ color: "rgba(34,197,94,0.85)" }}>
-        🎵 Last.fm: <strong>{player.lastfm_username}</strong>
-      </p>
-    );
-  }
-
-  if (!isMe) {
-    return (
-      <p className="text-[11px] pl-1" style={{ color: needsFallback ? "rgb(220,160,0)" : "rgb(var(--text-muted-rgb))" }}>
-        {hasManual
-          ? `🎵 Manual: ${player.manual_artists.slice(0, 3).join(", ")}${player.manual_artists.length > 3 ? "…" : ""}`
-          : "🎵 No music linked — songs will be picked from group taste"}
-      </p>
-    );
-  }
-
-  // Editable for self
-  if (editing) {
-    return (
-      <div className="flex items-center gap-2 pl-1">
-        <input
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && saveManual()}
-          placeholder="3-5 favourite artists, comma-separated"
-          className="flex-1 min-w-0 rounded px-2 py-0.5 text-[11px] outline-none"
-          style={{
-            background: "rgba(var(--surface-raised-rgb),0.5)",
-            border:     "1px solid rgba(255,255,255,0.1)",
-            color:      "inherit",
-          }}
+function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: TeamPanelProps) {
+  const isEmpty = players.length === 0;
+  const captain = players.find(p => p.is_captain);
+  return (
+    <Panel
+      className="p-4"
+      style={{
+        borderTop:    `3px solid rgba(var(--team-${color}-rgb), 0.85)`,
+        background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.06) 0%, transparent 60%)`,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <span
+          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+          style={{ background: `rgb(var(--team-${color}-rgb))` }}
         />
-        <button onClick={saveManual} disabled={saving}
-          className="text-[10px] px-2 py-0.5 rounded font-bold"
+        <h3 className="font-bold text-sm flex-1 truncate">{team.name}</h3>
+        <span className="text-xs font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          {players.length}
+        </span>
+        {isEmpty && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ background: "rgba(220,160,0,0.18)", color: "rgb(220,160,0)" }}>
+            EMPTY
+          </span>
+        )}
+        {!captain && !isEmpty && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ background: "rgba(220,160,0,0.18)", color: "rgb(220,160,0)" }}>
+            NO CAPTAIN
+          </span>
+        )}
+      </div>
+
+      {isEmpty ? (
+        <div
+          className="rounded-lg flex items-center justify-center py-5 text-xs"
           style={{
-            background: "rgba(var(--color-primary-rgb),0.18)",
-            color:      "rgb(var(--color-primary-rgb))",
-            border:     "1px solid rgba(var(--color-primary-rgb),0.4)",
-          }}>
-          {saving ? "…" : "Save"}
+            border: `1px dashed rgba(var(--team-${color}-rgb), 0.4)`,
+            color:  "rgb(var(--text-muted-rgb))",
+          }}
+        >
+          No players yet
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {players.map(p => (
+            <PlayerTile
+              key={p.id}
+              player={p}
+              color={color}
+              isMe={p.id === myPlayerId}
+              clickable={isHost || (p.id === myPlayerId)}
+              onClick={() => onTileClick(p)}
+            />
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ── Spectator panel: muted styling, smaller tiles ──────────────────────────
+
+interface SpectatorPanelProps {
+  players:     TlPlayer[];
+  myPlayerId:  string | undefined;
+  isHost:      boolean;
+  onTileClick: (p: TlPlayer) => void;
+}
+
+function SpectatorPanel({ players, myPlayerId, isHost, onTileClick }: SpectatorPanelProps) {
+  return (
+    <Panel
+      className="p-4"
+      style={{
+        borderTop:  "3px solid rgba(var(--team-spectator-rgb), 0.6)",
+        background: "linear-gradient(180deg, rgba(var(--team-spectator-rgb), 0.06) 0%, transparent 60%)",
+      }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-base">👁️</span>
+        <h3 className="font-bold text-sm flex-1">Spectators</h3>
+        <span className="text-xs font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          {players.length}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {players.map(p => (
+          <PlayerTile
+            key={p.id}
+            player={p}
+            color="spectator"
+            isMe={p.id === myPlayerId}
+            clickable={isHost || p.id === myPlayerId}
+            onClick={() => onTileClick(p)}
+          />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+// ── Single player tile: avatar + name + crown for captain + music indicator ─
+
+interface PlayerTileProps {
+  player:    TlPlayer;
+  color:     TeamColor | "spectator";
+  isMe:      boolean;
+  clickable: boolean;
+  onClick:   () => void;
+}
+
+function PlayerTile({ player, color, isMe, clickable, onClick }: PlayerTileProps) {
+  const linked   = !!player.lastfm_username;
+  const hasManual = (player.manual_artists?.length ?? 0) > 0;
+  const hasMusic  = linked || hasManual;
+  const colorVar  = `--team-${color}-rgb`;
+
+  return (
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      disabled={!clickable}
+      className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg transition-all text-center disabled:cursor-default"
+      style={{
+        background: `rgba(var(${colorVar}), 0.12)`,
+        border:     `1px solid rgba(var(${colorVar}), 0.35)`,
+        cursor:     clickable ? "pointer" : "default",
+      }}
+      title={clickable ? `Tap to manage ${player.name}` : player.name}
+    >
+      {/* Captain crown */}
+      {player.is_captain && !player.is_spectator && (
+        <span
+          className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full text-xs"
+          style={{
+            background: "linear-gradient(135deg, #facc15, #b45309)",
+            boxShadow:  "0 0 10px rgba(250,204,21,0.55)",
+          }}
+          title="Captain"
+        >
+          👑
+        </span>
+      )}
+
+      {/* Avatar = initial in colored chip */}
+      <span
+        className="w-10 h-10 rounded-full flex items-center justify-center text-base font-extrabold"
+        style={{
+          background: `rgba(var(${colorVar}), 0.55)`,
+          color:      "#fff",
+          textShadow: "0 1px 2px rgba(0,0,0,0.4)",
+          border:     `2px solid rgba(var(${colorVar}), 0.85)`,
+        }}
+      >
+        {getInitial(player.name)}
+      </span>
+
+      {/* Name */}
+      <span className="text-xs font-semibold truncate max-w-full">
+        {player.name}
+        {isMe && <span className="ml-1 opacity-50 font-normal">(you)</span>}
+      </span>
+
+      {/* Footer line: host badge + music dot */}
+      <div className="flex items-center gap-1.5">
+        {player.is_host && (
+          <span className="text-[9px] font-bold px-1.5 rounded-full uppercase tracking-wider"
+            style={{
+              background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
+              color:      "#fff",
+            }}>
+            Host
+          </span>
+        )}
+        {!player.is_spectator && (
+          <span
+            className="text-[10px]"
+            style={{ color: hasMusic ? "rgba(34,197,94,0.95)" : "rgb(220,160,0)" }}
+            title={
+              linked     ? `Last.fm: ${player.lastfm_username}` :
+              hasManual  ? `Manual: ${player.manual_artists.join(", ")}` :
+                           "No music linked"
+            }
+          >
+            🎵 {linked ? "Last.fm" : hasManual ? "Manual" : "—"}
+          </span>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ── Player action sheet: opens when host or self taps a tile ────────────────
+
+interface PlayerActionSheetProps {
+  player:            TlPlayer;
+  teams:             TlTeam[];
+  isHost:            boolean;
+  isMe:              boolean;
+  teamSwap:          boolean;
+  hostId:            string;
+  onClose:           () => void;
+  onChangeTeam:      (teamId: number) => void;
+  onToggleSpectator: () => void;
+  onSetCaptain:      () => void;
+  onKick:            () => void;
+  onEditMusic:       () => void;
+}
+
+function PlayerActionSheet({
+  player, teams, isHost, isMe, teamSwap, hostId,
+  onClose, onChangeTeam, onToggleSpectator, onSetCaptain, onKick, onEditMusic,
+}: PlayerActionSheetProps) {
+  const canSwap        = isHost || (isMe && teamSwap);
+  const canChangeTeam  = canSwap && !player.is_spectator;
+  const canMakeSpec    = canSwap && !player.is_spectator;
+  const canRejoinTeam  = canSwap && player.is_spectator;
+  const canSetCaptain  = isHost && !player.is_spectator;
+  const canKick        = isHost && !isMe && player.id !== hostId;
+  const canEditMusic   = isMe && !player.is_spectator;
+
+  const otherTeams = teams.filter(t => t.id !== player.team_id);
+
+  return (
+    <Modal open={true} onClose={onClose} maxWidth="380px">
+      <div className="flex flex-col gap-4">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <span
+            className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-extrabold"
+            style={{
+              background: "rgba(var(--color-primary-rgb), 0.5)",
+              color:      "#fff",
+              border:     "2px solid rgba(var(--color-primary-rgb), 0.85)",
+            }}
+          >
+            {getInitial(player.name)}
+          </span>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-base truncate">{player.name}{isMe && <span className="ml-1 opacity-50 font-normal text-sm">(you)</span>}</h3>
+            <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              {player.is_spectator
+                ? "👁️ Spectator"
+                : player.is_captain ? "👑 Captain" : "Player"}
+            </p>
+          </div>
+        </div>
+
+        {/* Move to team */}
+        {canChangeTeam && otherTeams.length > 0 && (
+          <div>
+            <p className="text-xs font-medium mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              Move to team
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {otherTeams.map(t => {
+                const c = getTeamColor(t.sort_order);
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => onChangeTeam(t.id)}
+                    className="text-sm font-semibold px-3 py-1.5 rounded-lg border transition-all"
+                    style={{
+                      borderColor: `rgba(var(--team-${c}-rgb), 0.7)`,
+                      background:  `rgba(var(--team-${c}-rgb), 0.18)`,
+                    }}
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5"
+                      style={{ background: `rgb(var(--team-${c}-rgb))` }} />
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Rejoin a team (when currently spectator) */}
+        {canRejoinTeam && (
+          <div>
+            <p className="text-xs font-medium mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              Join a team
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {teams.map(t => {
+                const c = getTeamColor(t.sort_order);
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => onChangeTeam(t.id)}
+                    className="text-sm font-semibold px-3 py-1.5 rounded-lg border transition-all"
+                    style={{
+                      borderColor: `rgba(var(--team-${c}-rgb), 0.7)`,
+                      background:  `rgba(var(--team-${c}-rgb), 0.18)`,
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Captain toggle */}
+        {canSetCaptain && (
+          <button
+            onClick={onSetCaptain}
+            className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
+            style={{
+              borderColor: player.is_captain
+                ? "rgba(250,204,21,0.6)"
+                : "rgba(255,255,255,0.12)",
+              background: player.is_captain
+                ? "rgba(250,204,21,0.12)"
+                : "transparent",
+              color: player.is_captain ? "rgb(250,204,21)" : "inherit",
+            }}
+          >
+            {player.is_captain ? "👑 Remove captain" : "👑 Make captain"}
+          </button>
+        )}
+
+        {/* Make spectator */}
+        {canMakeSpec && (
+          <button
+            onClick={onToggleSpectator}
+            className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
+            style={{
+              borderColor: "rgba(var(--team-spectator-rgb), 0.5)",
+              background:  "rgba(var(--team-spectator-rgb), 0.12)",
+              color:       "rgb(var(--text-secondary-rgb))",
+            }}
+          >
+            👁️ Make spectator
+          </button>
+        )}
+
+        {/* Edit music source (self only) */}
+        {canEditMusic && (
+          <button
+            onClick={onEditMusic}
+            className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
+            style={{
+              borderColor: "rgba(var(--color-primary-rgb), 0.4)",
+              background:  "rgba(var(--color-primary-rgb), 0.12)",
+              color:       "rgb(var(--color-primary-rgb))",
+            }}
+          >
+            🎵 Edit music source
+          </button>
+        )}
+
+        {/* Kick */}
+        {canKick && (
+          <button
+            onClick={onKick}
+            className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
+            style={{
+              borderColor: "rgba(220,38,38,0.4)",
+              background:  "rgba(220,38,38,0.08)",
+              color:       "rgb(248,113,113)",
+            }}
+          >
+            Kick from room
+          </button>
+        )}
+
+        <button
+          onClick={onClose}
+          className="text-xs mt-1"
+          style={{ color: "rgb(var(--text-muted-rgb))" }}
+        >
+          Cancel
         </button>
       </div>
-    );
+    </Modal>
+  );
+}
+
+// ── Manual artists modal ───────────────────────────────────────────────────
+
+interface ManualArtistsModalProps {
+  player:  TlPlayer;
+  onClose: () => void;
+  onSave:  (list: string[]) => Promise<void>;
+}
+
+function ManualArtistsModal({ player, onClose, onSave }: ManualArtistsModalProps) {
+  const [draft, setDraft] = useState((player.manual_artists ?? []).join(", "));
+  const [saving, setSaving] = useState(false);
+  const linked = !!player.lastfm_username;
+
+  async function handleSave() {
+    const list = draft.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
+    setSaving(true);
+    try { await onSave(list); }
+    finally { setSaving(false); }
   }
 
   return (
-    <div className="flex items-center gap-2 pl-1">
-      {hasManual ? (
-        <p className="text-[11px] truncate flex-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          🎵 Manual: {player.manual_artists.join(", ")}
-        </p>
-      ) : (
-        <p className="text-[11px] flex-1" style={{ color: "rgb(220,160,0)" }}>
-          🎵 No Last.fm linked. <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">Connect</a>
-          {" "}or list 3-5 favourite artists →
-        </p>
-      )}
-      <button
-        onClick={() => setEditing(true)}
-        className="text-[10px] px-2 py-0.5 rounded font-bold"
-        style={{
-          background: "transparent",
-          color:      "rgb(var(--text-muted-rgb))",
-          border:     "1px solid rgba(255,255,255,0.12)",
-        }}>
-        {hasManual ? "Edit" : "Add artists"}
-      </button>
-    </div>
+    <Modal open={true} onClose={onClose} maxWidth="420px">
+      <div className="flex flex-col gap-4">
+        <h3 className="font-bold text-lg">🎵 Your music source</h3>
+
+        {linked ? (
+          <div className="rounded-lg p-3 text-sm"
+            style={{ background: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.35)" }}>
+            <p style={{ color: "rgba(34,197,94,0.95)" }}>
+              Connected to Last.fm as <strong>{player.lastfm_username}</strong>
+            </p>
+            <p className="text-xs mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Songs will be picked from your scrobbled listening history.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-lg p-3 text-sm"
+            style={{ background: "rgba(220,160,0,0.10)", border: "1px solid rgba(220,160,0,0.35)" }}>
+            <p style={{ color: "rgb(220,160,0)" }}>
+              No Last.fm linked.{" "}
+              <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
+                Connect on your profile
+              </a>{" "}
+              for the best results, or list your favourite artists below.
+            </p>
+          </div>
+        )}
+
+        <div>
+          <label className="text-sm font-medium mb-2 block"
+            style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+            Favourite artists (3-5, comma-separated)
+          </label>
+          <input
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleSave()}
+            placeholder="e.g. Drake, Taylor Swift, The Weeknd"
+            className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+            style={{
+              background: "rgba(var(--surface-raised-rgb),0.5)",
+              border:     "1px solid rgba(255,255,255,0.1)",
+              color:      "inherit",
+            }}
+          />
+          <p className="text-xs mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            Each artist counts as ~100 scrobbles when picking songs.
+          </p>
+        </div>
+
+        <div className="flex gap-2 mt-1">
+          <Button onClick={handleSave} loading={saving} className="flex-1">Save</Button>
+          <Button onClick={onClose} variant="ghost" className="flex-1">Cancel</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
+
