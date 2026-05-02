@@ -479,10 +479,10 @@ function PingBubbles({
               boxShadow:  "0 1px 6px rgba(0,0,0,0.45)",
               cursor:     canRemove ? "pointer" : "default",
             }}
-            title={canRemove ? "Right-click or × to remove" : ""}
+            title={canRemove ? `${p.player_name} · right-click to remove` : p.player_name}
             onContextMenu={canRemove ? ((e) => { e.preventDefault(); e.stopPropagation(); onDismiss!(p.id); }) : undefined}
           >
-            <span>📍 {p.player_name.split(" ")[0]} · {p.year}</span>
+            <span>📍 {p.player_name.split(" ")[0]}</span>
             {canRemove && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDismiss!(p.id); }}
@@ -1438,8 +1438,9 @@ export default function GamePage() {
     setNoteText("");
   }
 
-  // Drop a ping at a specific year. Light dedupe-throttle (200ms) — fast enough
-  // to feel instant, just blocks accidental double-clicks creating two rows.
+  // Toggle a ping at a specific year. One ping per (player, year) per round —
+  // clicking a slot you've already pinged removes it. Light 200ms dedupe so
+  // double-clicks don't oscillate.
   function pingAtYear(year: number) {
     if (!round || !myPlayer) return;
     if (year < 1900 || year > 2030) return;
@@ -1447,9 +1448,16 @@ export default function GamePage() {
     const now = Date.now();
     pingTimestampsRef.current = pingTimestampsRef.current.filter(ts => now - ts < 5000);
     const lastTs = pingTimestampsRef.current[pingTimestampsRef.current.length - 1] ?? 0;
-    if (now - lastTs < 200) return; // silently dedupe rapid double-clicks
-
+    if (now - lastTs < 200) return;
     pingTimestampsRef.current.push(now);
+
+    // Already pinged this year? → toggle off via the dismiss endpoint.
+    const existing = state?.pings.find(p => p.player_id === myPlayer.id && p.year === year);
+    if (existing) {
+      dismissPing(existing.id);
+      return;
+    }
+
     supabase.from("tl_pings").insert({
       round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, year,
     }).then(({ error }) => {
