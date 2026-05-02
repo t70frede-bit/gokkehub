@@ -8,6 +8,13 @@ import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, JudgeMode } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
+// Team colour mapping by sort_order — matches LobbyPage.
+type TeamColor = "red" | "blue" | "green" | "yellow";
+const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
+function getTeamColor(sortOrder: number): TeamColor {
+  return TEAM_PALETTE[sortOrder % TEAM_PALETTE.length];
+}
+
 // ── Timer ─────────────────────────────────────────────────────────────────────
 
 function useTimer(startedAt: number | null, onExpire: () => void) {
@@ -69,11 +76,13 @@ interface TimelineProps {
   entries:        TlTimelineEntry[];
   dragCard:       SpotifyTrack | null;
   isCaptain:      boolean;
+  isActive:       boolean;       // is this the active team's timeline?
   stagedLeft:     number | null;
   stagedRight:    number | null;
   onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
   onPingYear?:    (year: number) => void;
   pingYears?:     number[];
+  recentPings?:   { year: number; player_name: string; ts: number }[];
   pending?:       SpotifyTrack[];
 }
 
@@ -84,8 +93,8 @@ interface MergedItem {
 }
 
 function Timeline({
-  entries, dragCard, isCaptain, stagedLeft, stagedRight, onStageGap, onPingYear,
-  pingYears = [], pending = [],
+  entries, dragCard, isCaptain, isActive, stagedLeft, stagedRight, onStageGap, onPingYear,
+  pingYears = [], recentPings = [], pending = [],
 }: TimelineProps) {
   const [dragOver, setDragOver] = useState<number | null>(null);
   const dragging = useRef(false);
@@ -190,76 +199,116 @@ function Timeline({
       {/* Timeline rail */}
       <div className="timeline-rail">
 
-        {/* Mystery card — leftmost when not staged. When staged, it sits in the chosen gap. */}
-        {isCaptain && dragCard && stagedGap === null && (
+        {/* Mystery card — sits at the front of the rail when no staged gap is
+            chosen yet, or moves into the staged gap once one is. Visible to
+            EVERY player on the active team (and the captain can drag it). */}
+        {dragCard && isActive && stagedGap === null && (
           <div
-            draggable
-            onDragStart={() => { dragging.current = true; }}
+            draggable={isCaptain}
+            onDragStart={() => { if (isCaptain) dragging.current = true; }}
             onDragEnd={() => { dragging.current = false; setDragOver(null); }}
-            className="flex-shrink-0 mr-1"
-            style={{ cursor: "grab" }}
-            title="Click a gap or drag this card onto one"
+            className="flex-shrink-0 mr-1 mystery-card-wrap"
+            style={{ cursor: isCaptain ? "grab" : "default" }}
+            title={isCaptain
+              ? "Click a gap or drag this card onto one"
+              : "The captain hasn't picked a spot yet"}
           >
             <QuestionCard track={dragCard} />
           </div>
         )}
 
         {Array.from({ length: gaps }).map((_, gapIdx) => {
-          const item     = merged[gapIdx];
-          const isOver   = dragOver === gapIdx;
-          const isStaged = stagedGap === gapIdx;
-          const showCard = isCaptain && dragCard;
-          const weight   = gapWeight(gapIdx);
+          const item        = merged[gapIdx];
+          const isOver      = dragOver === gapIdx;
+          const isStaged    = stagedGap === gapIdx;
+          // The gap area renders the mystery card UI when active+round, regardless of role.
+          const hasCard     = !!dragCard && isActive;
+          const weight      = gapWeight(gapIdx);
 
           // Same-year adjacent cards don't get a gap between them — they sit flush.
           const isSameYearGap =
             gapIdx > 0 && gapIdx < merged.length
             && merged[gapIdx - 1].year === merged[gapIdx].year;
 
+          // Recent pings landing inside this gap's year range
+          const [gapL, gapR] = getYearsForGap(gapIdx);
+          const gapPings = recentPings.filter(p => {
+            if (gapL !== null && p.year < gapL) return false;
+            if (gapR !== null && p.year > gapR) return false;
+            // Endpoints (no left/right): only include if on the open side
+            if (gapL === null && gapR !== null && p.year > gapR) return false;
+            if (gapR === null && gapL !== null && p.year < gapL) return false;
+            return true;
+          });
+
+          // Click handler depends on role:
+          // - captain: stage this gap
+          // - non-captain on active team: ping into this gap's year range
+          // - else: nothing
+          const handleClick = () => {
+            if (isCaptain) stageGap(gapIdx);
+            else if (onPingYear && isActive) pingGap(gapIdx);
+          };
+
           return (
             <Fragment key={gapIdx}>
-              {/* Gap. Same-year adjacent cards skip this entirely so they sit flush. */}
-              {!isSameYearGap && (showCard ? (
+              {!isSameYearGap && (hasCard ? (
                 <div
                   className={`tl-gap tl-gap-interactive ${isOver ? "dropping" : ""} ${isStaged ? "active" : ""}`}
                   style={{
-                    flexGrow: weight,
+                    flexGrow:   weight,
                     flexShrink: 1,
-                    flexBasis: 0,
-                    minWidth: "2.5rem",
-                    width: "auto",
-                    cursor: "pointer",
+                    flexBasis:  0,
+                    minWidth:   "2.5rem",
+                    width:      "auto",
+                    cursor:     (isCaptain || (onPingYear && isActive)) ? "pointer" : "default",
+                    position:   "relative",
                   }}
-                  onDragOver={e => { e.preventDefault(); setDragOver(gapIdx); }}
-                  onDragLeave={() => setDragOver(null)}
-                  onDrop={() => { setDragOver(null); stageGap(gapIdx); }}
-                  onClick={() => stageGap(gapIdx)}
-                  title={isStaged ? "Selected — click again to clear" : "Click to place card here"}
+                  onDragOver={isCaptain ? (e => { e.preventDefault(); setDragOver(gapIdx); }) : undefined}
+                  onDragLeave={isCaptain ? (() => setDragOver(null)) : undefined}
+                  onDrop={isCaptain ? (() => { setDragOver(null); stageGap(gapIdx); }) : undefined}
+                  onClick={handleClick}
+                  title={
+                    isStaged
+                      ? (isCaptain ? "Selected — click again to clear" : "Captain is considering this spot")
+                      : isCaptain
+                        ? "Click to place card here"
+                        : (isActive ? "Click to suggest this spot to your captain" : "")
+                  }
                 >
-                  {isStaged ? (
-                    <div onClick={e => e.stopPropagation()} className="px-1">
+                  {isStaged && dragCard ? (
+                    <div onClick={e => isCaptain && e.stopPropagation()} className="px-1">
                       <QuestionCard track={dragCard} />
                     </div>
                   ) : isOver ? (
                     <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 16 }}>↓</span>
                   ) : (
-                    <span className="tl-gap-dot" />
+                    <>
+                      <span className="tl-gap-dot" />
+                      {gapPings.length > 0 && (
+                        <PingBubbles pings={gapPings} />
+                      )}
+                    </>
                   )}
                 </div>
               ) : (
                 <div className="tl-gap"
                   style={{
-                    flexGrow: weight,
+                    flexGrow:   weight,
                     flexShrink: 1,
-                    flexBasis: 0,
-                    minWidth: "1.5rem",
-                    width: "auto",
-                    cursor: onPingYear ? "pointer" : "default",
+                    flexBasis:  0,
+                    minWidth:   "1.5rem",
+                    width:      "auto",
+                    cursor:     onPingYear ? "pointer" : "default",
+                    position:   "relative",
                   }}
                   onClick={() => pingGap(gapIdx)}
                   title={onPingYear ? "Click to drop a pin" : ""}
                 >
                   <span className="tl-gap-dot" />
+                  {gapPings.length > 0 && (
+                    <PingBubbles pings={gapPings} />
+                  )}
                 </div>
               ))}
 
@@ -278,6 +327,32 @@ function Timeline({
         })}
 
       </div>
+    </div>
+  );
+}
+
+// Stack of recent ping bubbles floating above a gap. Fade out after ~5s.
+function PingBubbles({ pings }: { pings: { year: number; player_name: string; ts: number }[] }) {
+  const recent = pings.slice(-3); // cap visible
+  return (
+    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5 pointer-events-none">
+      {recent.map((p, i) => {
+        const ageMs = Date.now() - p.ts;
+        const fade  = Math.max(0, 1 - ageMs / 5000);
+        return (
+          <div key={i}
+            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
+            style={{
+              background: "rgba(var(--color-secondary-rgb), 0.85)",
+              color:      "#fff",
+              opacity:    fade,
+              boxShadow:  "0 1px 4px rgba(0,0,0,0.4)",
+            }}
+          >
+            {p.player_name.split(" ")[0]} · {p.year}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -808,6 +883,13 @@ export default function GamePage() {
   // Player-leave notifications (transient).
   const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
 
+  // Tick every 500ms so the recent-ping bubbles fade out and disappear after 5s.
+  const [, setPingTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setPingTick(n => n + 1), 500);
+    return () => clearInterval(id);
+  }, []);
+
   // Optimistic local staging so the captain sees instant feedback even if the server is slow.
   // Server-driven values (broadcast via realtime) are the source of truth for everyone else.
   const [optimisticStaged, setOptimisticStaged] = useState<{ left: number | null; right: number | null } | null>(null);
@@ -942,6 +1024,11 @@ export default function GamePage() {
   const { room, teams, round, timelines, notes, pings, myPlayer } = state;
   const activeTeam = teams.find(t => t.id === room.active_team_id);
   const pingYears  = pings.map(p => p.year);
+  // Pings from the last 5s, with parsed timestamp — feed gap-bubble UI.
+  const nowMs = Date.now();
+  const recentPings = pings
+    .map(p => ({ year: p.year, player_name: p.player_name, ts: Date.parse(p.created_at) }))
+    .filter(p => !Number.isNaN(p.ts) && (nowMs - p.ts) < 5000);
 
   async function confirmGuess() {
     if (!round || submitting) return;
@@ -1159,141 +1246,205 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* ── Teams' timelines (opponents top, audio center, my team just above chat) ─ */}
+      {/* ── Teams' timelines: spotlight on the active team, others compact ─── */}
       {(() => {
-        const myTeamId    = myPlayer?.team_id ?? null;
-        const otherTeams  = teams.filter(t => t.id !== myTeamId);
-        const myTeam      = teams.find(t => t.id === myTeamId);
-        // Compact rendering for opponent panels — saves vertical space.
-        const renderTeam  = (team: typeof teams[number], variant: "mine" | "other") => {
+        const myTeamId       = myPlayer?.team_id ?? null;
+        // Spotlight = whoever's turn it is. Falls back to my team between rounds.
+        const spotlightId    = room.active_team_id ?? myTeamId ?? teams[0]?.id ?? null;
+        const spotlightTeam  = teams.find(t => t.id === spotlightId) ?? null;
+        const compactTeams   = teams.filter(t => t.id !== spotlightId);
+
+        const renderSpotlight = (team: typeof teams[number]) => {
           const tl           = timelines[team.id] ?? [];
           const isActive     = team.id === room.active_team_id;
           const pending      = team.pending_tracks ?? [];
           const showDragCard = isActive && round && round.outcome === null;
-          const isMyTeam     = variant === "mine";
+          const isMyTeam     = team.id === myTeamId;
+          const color        = getTeamColor(team.sort_order);
 
           return (
             <Panel
-              key={team.id}
-              className={`${isMyTeam ? "p-3" : "p-2"} flex flex-col`}
+              className="p-4 flex flex-col h-full"
               style={{
-                flex:        "1 1 0",
-                minHeight:   0,
-                minWidth:    0,
-                overflow:    "hidden",
-                borderColor: isActive
-                  ? "rgba(var(--color-primary-rgb), 0.7)"
-                  : isMyTeam
-                    ? "rgba(var(--color-primary-rgb), 0.35)"
-                    : "rgba(255,255,255,0.08)",
-                borderWidth: isMyTeam ? 2 : 1,
-                background: isMyTeam
-                  ? "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.06), rgba(var(--surface-overlay-rgb), 0.8))"
-                  : undefined,
+                minHeight:    0,
+                minWidth:     0,
+                overflow:     "hidden",
+                borderTop:    `4px solid rgba(var(--team-${color}-rgb), 0.95)`,
+                borderColor:  isActive
+                  ? `rgba(var(--team-${color}-rgb), 0.7)`
+                  : "rgba(255,255,255,0.08)",
+                borderWidth:  2,
+                background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.10) 0%, rgba(var(--surface-overlay-rgb), 0.85) 70%)`,
+                boxShadow:    isActive
+                  ? `0 0 32px rgba(var(--team-${color}-rgb), 0.25), inset 0 1px 0 rgba(255,255,255,0.05)`
+                  : "var(--shadow-card)",
               }}
             >
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <span className="text-xs uppercase tracking-wider font-semibold"
-                  style={{ color: isMyTeam ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))" }}>
-                  {isMyTeam ? "Your team" : "Opponent"} ·
-                </span>
-                <p className="font-semibold text-sm">{team.name}</p>
-                {isActive && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full font-bold"
-                    style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))" }}>
-                    Active
+              {/* Spotlight header */}
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <span
+                  className="w-3 h-3 rounded-full flex-shrink-0"
+                  style={{
+                    background: `rgb(var(--team-${color}-rgb))`,
+                    boxShadow:  isActive ? `0 0 12px rgba(var(--team-${color}-rgb), 0.85)` : "none",
+                  }}
+                />
+                <h2 className="font-extrabold text-base sm:text-lg tracking-tight">
+                  {team.name}
+                </h2>
+                {isActive ? (
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse"
+                    style={{
+                      background: `rgba(var(--team-${color}-rgb), 0.30)`,
+                      color:      `rgb(var(--team-${color}-rgb))`,
+                      border:     `1px solid rgba(var(--team-${color}-rgb), 0.7)`,
+                    }}>
+                    🎯 On the spot
                   </span>
-                )}
-                <span className="text-xs opacity-40 ml-auto">
-                  {tl.length} locked
-                  {pending.length > 0 && <span style={{ color: "rgb(var(--color-secondary-rgb))" }}> · {pending.length} pending</span>}
+                ) : isMyTeam ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider opacity-70"
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                    Your team
+                  </span>
+                ) : null}
+                <span className="text-xs opacity-50 ml-auto">
+                  {tl.length} card{tl.length !== 1 ? "s" : ""}
+                  {pending.length > 0 && (
+                    <span style={{ color: "rgb(var(--color-secondary-rgb))" }}> · +{pending.length} pending</span>
+                  )}
                 </span>
               </div>
 
-              {/* Team roster — only on my-team panel. Host manages opponents via the ⚙ menu. */}
-              {isMyTeam && (
-              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+              {/* Team roster (host can re-assign captain by clicking) */}
+              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
                 {state.players.filter(p => p.team_id === team.id && !p.is_spectator).map(p => {
-                  // Host can click anyone — toggles captaincy. Others see read-only chips.
                   const hostCanToggle = isHost;
-                  const titleText = hostCanToggle
-                    ? (p.is_captain ? "Click to remove captain" : "Make captain")
-                    : (p.is_captain ? "Captain" : p.name);
                   return (
                     <button
                       key={p.id}
                       onClick={() => hostCanToggle && makeCaptain(p)}
                       disabled={!hostCanToggle}
-                      title={titleText}
-                      className="text-xs px-2 py-0.5 rounded-full transition-all disabled:cursor-default"
+                      title={hostCanToggle
+                        ? (p.is_captain ? "Click to remove captain" : "Make captain")
+                        : (p.is_captain ? "Captain" : p.name)}
+                      className="text-xs px-2.5 py-1 rounded-full transition-all disabled:cursor-default"
                       style={{
                         background: p.is_captain
-                          ? "rgba(var(--color-primary-rgb),0.18)"
+                          ? `rgba(var(--team-${color}-rgb), 0.22)`
                           : (hostCanToggle ? "rgba(255,255,255,0.04)" : "transparent"),
                         border: p.is_captain
-                          ? "1px solid rgba(var(--color-primary-rgb),0.5)"
-                          : "1px solid rgba(255,255,255,0.08)",
-                        color: p.is_captain
-                          ? "rgb(var(--color-primary-rgb))"
-                          : "rgb(var(--text-muted-rgb))",
+                          ? `1px solid rgba(var(--team-${color}-rgb), 0.6)`
+                          : "1px solid rgba(255,255,255,0.10)",
+                        color: p.is_captain ? `rgb(var(--team-${color}-rgb))` : "rgb(var(--text-muted-rgb))",
                       }}
                     >
                       {p.is_captain && "👑 "}{p.name}
+                      {p.id === myPlayer?.id && <span className="opacity-50 ml-0.5 font-normal">(you)</span>}
                     </button>
                   );
                 })}
               </div>
-              )}
 
-              {tl.length === 0 && !showDragCard ? (
-                <p className="text-xs opacity-30 italic">No cards yet</p>
-              ) : (
-                <Timeline
-                  entries={tl}
-                  dragCard={showDragCard && isActive ? round!.track : null}
-                  isCaptain={iAmCaptain && isMyTeam && isActive}
-                  stagedLeft={isActive
-                    ? (optimisticStaged ? optimisticStaged.left : (round?.staged_left_year ?? null))
-                    : null}
-                  stagedRight={isActive
-                    ? (optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null))
-                    : null}
-                  onStageGap={stageGap}
-                  // Anyone can click any active timeline gap to drop a pin.
-                  onPingYear={isActive ? pingAtYear : undefined}
-                  pingYears={isActive ? pingYears : []}
-                  pending={pending as SpotifyTrack[]}
+              {/* The big timeline */}
+              <div className="flex-1 min-h-0 overflow-auto pt-1">
+                {tl.length === 0 && !showDragCard ? (
+                  <p className="text-sm opacity-40 italic text-center py-8">No cards on the timeline yet</p>
+                ) : (
+                  <Timeline
+                    entries={tl}
+                    dragCard={showDragCard && isActive ? round!.track : null}
+                    isCaptain={iAmCaptain && isMyTeam && isActive}
+                    isActive={isActive}
+                    stagedLeft={isActive
+                      ? (optimisticStaged ? optimisticStaged.left : (round?.staged_left_year ?? null))
+                      : null}
+                    stagedRight={isActive
+                      ? (optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null))
+                      : null}
+                    onStageGap={stageGap}
+                    onPingYear={isActive ? pingAtYear : undefined}
+                    pingYears={isActive ? pingYears : []}
+                    recentPings={isActive ? recentPings : []}
+                    pending={pending as SpotifyTrack[]}
+                  />
+                )}
+              </div>
+            </Panel>
+          );
+        };
+
+        const renderCompact = (team: typeof teams[number]) => {
+          const tl       = timelines[team.id] ?? [];
+          const pending  = team.pending_tracks ?? [];
+          const isMyTeam = team.id === myTeamId;
+          const color    = getTeamColor(team.sort_order);
+
+          return (
+            <Panel
+              key={team.id}
+              className="p-2 flex flex-col timeline-compact"
+              style={{
+                flex:         "1 1 0",
+                minHeight:    0,
+                minWidth:     0,
+                overflow:     "hidden",
+                borderTop:    `2px solid rgba(var(--team-${color}-rgb), 0.7)`,
+                borderColor:  "rgba(255,255,255,0.08)",
+                background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.05) 0%, transparent 60%)`,
+              }}
+            >
+              <div className="flex items-center gap-1.5 mb-1.5 flex-shrink-0">
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ background: `rgb(var(--team-${color}-rgb))` }}
                 />
-              )}
+                <p className="font-bold text-xs truncate">{team.name}</p>
+                {isMyTeam && (
+                  <span className="text-[8px] font-bold uppercase opacity-60 px-1 rounded"
+                    style={{ background: "rgba(255,255,255,0.08)" }}>
+                    you
+                  </span>
+                )}
+                <span className="text-[10px] opacity-50 ml-auto whitespace-nowrap">
+                  {tl.length}{pending.length > 0 ? ` (+${pending.length})` : ""}
+                </span>
+              </div>
 
+              <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+                {tl.length === 0 ? (
+                  <p className="text-[10px] opacity-30 italic">No cards</p>
+                ) : (
+                  <Timeline
+                    entries={tl}
+                    dragCard={null}
+                    isCaptain={false}
+                    isActive={false}
+                    stagedLeft={null}
+                    stagedRight={null}
+                    onStageGap={() => {}}
+                    pending={pending as SpotifyTrack[]}
+                  />
+                )}
+              </div>
             </Panel>
           );
         };
 
         return (
           <>
-            {/* Opponents — single horizontal row so multiple teams don't stack vertically. */}
-            {otherTeams.length > 0 && (
-              <div className={`min-h-0 overflow-hidden flex flex-row gap-1 ${isMyTurn ? "timeline-compact" : ""}`}
-                style={{ flex: isMyTurn ? "1 1 0" : "2.5 1 0" }}>
-                {otherTeams.map(t => renderTeam(t, "other"))}
+            {/* Compact strip — all non-spotlight teams stack horizontally up top */}
+            {compactTeams.length > 0 && (
+              <div className="min-h-0 overflow-hidden flex flex-row gap-1 flex-shrink-0"
+                style={{ maxHeight: "22vh", flex: "0 0 auto" }}>
+                {compactTeams.map(t => renderCompact(t))}
               </div>
             )}
 
-            {/* (Audio player moved into the top header bar.) */}
-
-            {/* My team — fills proportionally. Bigger when it's my turn. */}
-            {myTeam && (
-              <div className={`min-h-0 overflow-hidden flex flex-col ${isMyTurn ? "" : "timeline-compact"}`}
-                style={{ flex: isMyTurn ? "2.5 1 0" : "1 1 0" }}>
-                {renderTeam(myTeam, "mine")}
-              </div>
-            )}
-            {/* Spectators see all teams stacked */}
-            {!myTeam && (
-              <div className="min-h-0 overflow-hidden flex flex-col gap-1"
-                style={{ flex: "2 1 0" }}>
-                {teams.map(t => renderTeam(t, "other"))}
+            {/* Spotlight team — fills the remaining vertical space */}
+            {spotlightTeam && (
+              <div className="min-h-0 overflow-hidden flex flex-col"
+                style={{ flex: "1 1 0" }}>
+                {renderSpotlight(spotlightTeam)}
               </div>
             )}
           </>

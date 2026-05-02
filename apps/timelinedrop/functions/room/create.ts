@@ -80,7 +80,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       const t = await createTeam(env, {
         room_id:        roomId,
         name:           team_names[i],
-        tokens:         2,
+        tokens:         0,
         pending_tracks: [],
         sort_order:     i,
       });

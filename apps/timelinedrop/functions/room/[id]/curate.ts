@@ -7,7 +7,7 @@ import { searchTrackUri, getActiveHostToken } from "../../_spotify";
 import type { SpotifyTrack, Difficulty, TlPlayer } from "../../../src/lib/types";
 import { DEFAULT_TL_SETTINGS } from "../../../src/lib/types";
 import {
-  buildProfile, scoreCandidate, withinBand,
+  buildProfile, scoreCandidate,
   sharedTopArtists, expandViaSimilar, tracksFromArtists, hardestPoolArtists, arrangePlaylistArc,
   type Candidate, type ScoredCandidate, type PlayerProfile,
 } from "../../_curate";
@@ -89,26 +89,25 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
     candidates = candidates.filter(c => !blacklist.has(`${c.artist.toLowerCase()}:${c.track.toLowerCase()}`));
   }
 
-  // 4) Score and filter into difficulty band
+  // 4) Score for ranking only — the candidate POOL already encodes difficulty
+  //    (see buildCandidatePool). The previous score-band filter was a no-op for
+  //    single-taste groups because scores cluster bimodally (~70 for known,
+  //    0 for unknown), leaving the medium/hard bands empty and the fallback
+  //    served back the highest-scoring tracks (your top hits).
   let scored: ScoredCandidate[] = candidates.map(c => scoreCandidate(profiles, c));
-  let banded = scored.filter(c => withinBand(c.groupScore, difficulty));
 
-  // 5) Pool exhaustion fallback chain: relax blacklist progressively
-  if (banded.length < TARGET_BATCH_SIZE / 2 && settings.skipRecentlyHeard) {
+  // 5) Pool exhaustion fallback: relax blacklist progressively when too small
+  if (scored.length < TARGET_BATCH_SIZE / 2 && settings.skipRecentlyHeard) {
     for (const days of [7, 3, 0]) {
       const bl = days > 0 ? await fetchBlacklist(env, roomId, eligible, days) : new Set<string>();
       const fresh = candidates.filter(c => !bl.has(`${c.artist.toLowerCase()}:${c.track.toLowerCase()}`));
-      const rescored = fresh.map(c => scoreCandidate(profiles, c));
-      banded = rescored.filter(c => withinBand(c.groupScore, difficulty));
-      if (banded.length >= TARGET_BATCH_SIZE / 2) break;
+      scored = fresh.map(c => scoreCandidate(profiles, c));
+      if (scored.length >= TARGET_BATCH_SIZE / 2) break;
     }
   }
 
-  // If we still have nothing, fall back to all scored candidates regardless of band.
-  if (banded.length === 0) banded = scored;
-
   // 6) Arrange the playlist arc
-  const arranged = arrangePlaylistArc(banded, isRefill ? 15 : TARGET_BATCH_SIZE);
+  const arranged = arrangePlaylistArc(scored, isRefill ? 15 : TARGET_BATCH_SIZE);
 
   // 7) Look up Spotify URIs for each candidate. Hard cap on attempts to stay
   //    under the 50-subrequest limit even on cold cache.
@@ -141,49 +140,54 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
 }
 
 // ── Build candidate pool by difficulty ──────────────────────────────────────
+// Each difficulty owns a slice of each player's top-50 tracks. This guarantees
+// medium/hard *can't* fall back to "your top hits" because those tracks aren't
+// in the pool — solving the bimodal-score problem for single-taste groups.
+
+function tracksInRange(profile: PlayerProfile, fromRank: number, toRank: number): Candidate[] {
+  return profile.topTracksAll.slice(fromRank, toRank).map(t => ({
+    artist: typeof t.artist === "string" ? t.artist : t.artist.name,
+    track:  t.name,
+  }));
+}
 
 async function buildCandidatePool(env: Env, profiles: PlayerProfile[], difficulty: Difficulty): Promise<Candidate[]> {
-  // Always start with all-time top tracks across all players (the "easy" pool).
-  const easyPool: Candidate[] = [];
-  for (const p of profiles) {
-    for (const t of p.topTracksAll) {
-      const aName = typeof t.artist === "string" ? t.artist : t.artist.name;
-      easyPool.push({ artist: aName, track: t.name });
-    }
+  // Easy: every player's top 0-15. The mainstream / "obvious" hits.
+  if (difficulty === "easy") {
+    const pool: Candidate[] = [];
+    for (const p of profiles) pool.push(...tracksInRange(p, 0, 15));
+    return dedupe(pool);
   }
 
-  if (difficulty === "easy") return dedupe(easyPool);
-
-  // Medium: easy pool + tracks from a few similar artists
+  // Medium: each player's top 16-35 (their less-obvious favourites) + a small
+  // dose of similar-artist tracks. No top-15 hits; difficulty is real.
   if (difficulty === "medium") {
+    const fromTop: Candidate[] = [];
+    for (const p of profiles) fromTop.push(...tracksInRange(p, 15, 35));
     const seeds       = sharedTopArtists(profiles, 25).slice(0, MAX_SIMILAR_SEEDS);
     const similar     = await expandViaSimilar(env, seeds, MAX_ARTIST_TRACKS);
     const similarTrks = await tracksFromArtists(env, similar.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
-    return dedupe([...sampleN(easyPool, 25), ...similarTrks]);
+    return dedupe([...fromTop, ...similarTrks]);
   }
 
-  // Hard: similar artists weighted higher; exclude any track scrobbled 10+ times
+  // Hard: each player's top 36-50 (deep cuts) + similar artists, exclude any
+  // track they've played 10+ times.
   if (difficulty === "hard") {
+    const fromTop: Candidate[] = [];
+    for (const p of profiles) fromTop.push(...tracksInRange(p, 35, 50));
     const seeds       = sharedTopArtists(profiles, 50).slice(0, MAX_SIMILAR_SEEDS);
     const similar     = await expandViaSimilar(env, seeds, MAX_ARTIST_TRACKS);
     const similarTrks = await tracksFromArtists(env, similar.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
-    const candidates  = [...sampleN(easyPool, 10), ...similarTrks];
-    return dedupe(candidates).filter(c => {
+    return dedupe([...fromTop, ...similarTrks]).filter(c => {
       const key = `${c.artist.toLowerCase()}:${c.track.toLowerCase()}`;
       return !profiles.some(p => (p.trackPlaycounts.get(key) ?? 0) >= 10);
     });
   }
 
-  // Hardest: unknown artists in the group's genre fingerprint
+  // Hardest: unknown artists in the group's genre fingerprint, no top tracks.
   const artists = await hardestPoolArtists(env, profiles, MAX_ARTIST_TRACKS);
   const tracks  = await tracksFromArtists(env, artists.slice(0, MAX_ARTIST_TRACKS), TRACKS_PER_ARTIST);
   return dedupe(tracks);
-}
-
-function sampleN<T>(arr: T[], n: number): T[] {
-  if (arr.length <= n) return [...arr];
-  const out = [...arr].sort(() => Math.random() - 0.5);
-  return out.slice(0, n);
 }
 
 function dedupe(arr: Candidate[]): Candidate[] {
