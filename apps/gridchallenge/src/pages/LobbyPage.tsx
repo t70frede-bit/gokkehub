@@ -729,10 +729,8 @@ export default function LobbyPage() {
                 <>
                   Lobby{" "}
                   <span style={{
-                    background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-accent-rgb)))",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
+                    color:      "rgb(var(--color-primary-rgb))",
+                    fontFamily: "var(--font-mono)",
                   }}>
                     {lobbyId?.toUpperCase()}
                   </span>

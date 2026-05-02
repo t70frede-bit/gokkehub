@@ -28,19 +28,19 @@ export default function Input({
       )}
       <input
         id={inputId}
-        className={`w-full px-4 py-3 rounded-md font-sans text-base
-          outline-none transition-all duration-200
+        className={`w-full px-4 py-2.5 rounded-md font-sans text-base
+          outline-none transition-all duration-150
           focus:ring-2
           placeholder:opacity-60
           ${className}`.trim()}
         style={{
-          background: "rgba(var(--surface-input-rgb), 0.9)",
+          background: "rgb(var(--surface-input-rgb))",
           border: error
-            ? "1px solid rgba(var(--color-danger-rgb), 0.8)"
-            : "1px solid rgba(var(--color-primary-rgb), 0.7)",
+            ? "1px solid rgba(var(--color-danger-rgb), 0.6)"
+            : "1px solid rgb(var(--border-rgb))",
           color: "rgb(var(--text-primary-rgb))",
           // @ts-expect-error css vars
-          "--tw-ring-color": "rgba(var(--color-primary-rgb), 0.25)",
+          "--tw-ring-color": "rgba(var(--color-primary-rgb), 0.18)",
           ...style,
         }}
         {...props}

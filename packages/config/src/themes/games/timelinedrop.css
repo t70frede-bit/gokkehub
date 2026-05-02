@@ -1,19 +1,10 @@
 /**
  * timelinedrop / musix (musix.gokkehub.com)
- * Warm vinyl amber — deep record-store darkness, hot orange accent, gold years
+ * Inherits the platform v0.2 "vinyl liner notes" defaults.
+ * Tiny warmer tint so it feels like a record store at night.
  */
 :root {
-  --color-primary-rgb:       255, 107,   0;   /* #ff6b00 orange */
-  --color-primary-light-rgb: 255, 155,  60;
-  --color-primary-dark-rgb:  210,  72,   0;
-  --color-secondary-rgb:     232, 184,  64;   /* #e8b840 warm amber-gold */
-
-  --bg-tint-1: #130e05;
-  --bg-tint-2: #0a0805;
-  --bg-tint-3: #1c1610;
-
-  /* Override surface tokens for warmer feel */
-  --surface-base-rgb:   24, 18,  9;
-  --surface-raised-rgb: 35, 26, 14;
-  --surface-overlay-rgb: 44, 34, 18;
+  --bg-tint-1: #1B1612;
+  --bg-tint-2: #14100D;
+  --bg-tint-3: #221C16;
 }

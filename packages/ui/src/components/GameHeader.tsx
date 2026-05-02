@@ -34,20 +34,16 @@ export interface GameHeaderProps {
 }
 
 const headerStyle: CSSProperties = {
-  background:           "rgba(var(--surface-base-rgb, 15 10 30), 0.7)",
-  borderBottom:         "1px solid rgba(255,255,255,0.06)",
-  backdropFilter:       "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
+  background:           "rgb(var(--surface-raised-rgb))",
+  borderBottom:         "1px solid rgb(var(--border-rgb))",
   position:             "sticky",
   top:                  0,
   zIndex:               40,
 };
 
-const gradientStyle: CSSProperties = {
-  background:           "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb, var(--color-accent-rgb))))",
-  WebkitBackgroundClip: "text",
-  WebkitTextFillColor:  "transparent",
-  backgroundClip:       "text",
+const accentStyle: CSSProperties = {
+  color:      "rgb(var(--color-primary-rgb))",
+  fontFamily: "var(--font-display)",
 };
 
 export function GameHeader({
@@ -76,7 +72,7 @@ export function GameHeader({
         <HomeLink
           to={homeTo}
           className="font-extrabold text-base leading-none tracking-tight"
-          style={gradientStyle}
+          style={accentStyle}
         >
           {appName}
         </HomeLink>
@@ -87,11 +83,11 @@ export function GameHeader({
         {session ? (
           <a
             href={accountHref}
-            className="flex items-center gap-2 text-sm font-medium rounded-lg px-3 py-1.5 transition-all"
+            className="flex items-center gap-2 text-sm font-medium rounded-md px-3 py-1.5 transition-all"
             style={{
               color:      "rgb(var(--text-secondary-rgb))",
-              background: "rgba(var(--surface-raised-rgb), 0.5)",
-              border:     "1px solid rgba(255,255,255,0.08)",
+              background: "transparent",
+              border:     "1px solid rgb(var(--border-rgb))",
             }}
           >
             {session.avatarUrl && (

@@ -630,11 +630,10 @@ function AudioPlayerUI(props: AudioPlayerProps) {
   const pct = durationMs > 0 ? (positionMs / durationMs) * 100 : 0;
 
   return (
-    <div className="flex-shrink-0 flex items-center gap-3 px-3 py-2 rounded-lg w-full"
+    <div className="flex-shrink-0 flex items-center gap-3 px-3 py-2 rounded-md w-full"
       style={{
-        background:     "linear-gradient(180deg, rgba(var(--surface-raised-rgb), 0.6), rgba(var(--surface-overlay-rgb), 0.85))",
-        border:         "1px solid rgba(var(--color-primary-rgb), 0.25)",
-        backdropFilter: "blur(8px)",
+        background: "rgb(var(--surface-raised-rgb))",
+        border:     "1px solid rgb(var(--border-rgb))",
       }}>
 
       {/* Now-playing label (left side, like Spotify's track info) */}
@@ -878,11 +877,11 @@ function RevealOverlay({
         )}
 
         {finalized && bonusEligible && (
-          <div className="text-center text-sm font-semibold py-2 rounded-lg"
+          <div className="text-center text-sm font-semibold py-2 rounded-md"
             style={{
-              background: "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.18), rgba(var(--color-secondary-rgb), 0.18))",
-              border: "1px solid rgba(var(--color-primary-rgb), 0.35)",
-              color: "rgb(var(--color-secondary-rgb))",
+              background: "rgba(var(--color-primary-rgb), 0.12)",
+              border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
+              color:      "rgb(var(--color-primary-rgb))",
             }}>
             🪙 +1 Token earned (ready next turn)
           </div>
@@ -1512,11 +1511,8 @@ export default function GamePage() {
               <span
                 className="font-extrabold tracking-widest text-base sm:text-lg leading-none"
                 style={{
-                  background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor:  "transparent",
-                  backgroundClip:       "text",
-                  fontFamily:           "var(--font-mono)",
+                  color:       "rgb(var(--color-primary-rgb))",
+                  fontFamily:  "var(--font-mono)",
                 }}
               >
                 {roomId}
@@ -1580,12 +1576,11 @@ export default function GamePage() {
                 <>
                   {/* Click-outside closer */}
                   <div className="fixed inset-0 z-30" onClick={() => setHostMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1 z-40 rounded-lg p-3 w-72 max-h-[60vh] overflow-y-auto scrollbar-hidden"
+                  <div className="absolute right-0 mt-1 z-40 rounded-md p-3 w-72 max-h-[60vh] overflow-y-auto scrollbar-hidden"
                     style={{
-                      background:     "linear-gradient(135deg, rgba(var(--surface-raised-rgb),0.95), rgba(var(--surface-overlay-rgb),0.95))",
-                      border:         "1px solid rgba(var(--color-primary-rgb),0.4)",
-                      backdropFilter: "blur(12px)",
-                      boxShadow:      "var(--shadow-card)",
+                      background: "rgb(var(--surface-overlay-rgb))",
+                      border:     "1px solid rgb(var(--border-rgb))",
+                      boxShadow:  "var(--shadow-elevated)",
                     }}>
                     <p className="text-xs uppercase tracking-wider opacity-50 mb-2">Captain transfer</p>
                     <div className="space-y-3">
@@ -1681,15 +1676,12 @@ export default function GamePage() {
                 minHeight:    0,
                 minWidth:     0,
                 overflow:     "hidden",
-                borderTop:    `4px solid rgba(var(--team-${color}-rgb), 0.95)`,
-                borderColor:  isActive
-                  ? `rgba(var(--team-${color}-rgb), 0.7)`
-                  : "rgba(255,255,255,0.08)",
-                borderWidth:  2,
-                background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.10) 0%, rgba(var(--surface-overlay-rgb), 0.85) 70%)`,
-                boxShadow:    isActive
-                  ? `0 0 32px rgba(var(--team-${color}-rgb), 0.25), inset 0 1px 0 rgba(255,255,255,0.05)`
-                  : "var(--shadow-card)",
+                borderTop:    `3px solid rgb(var(--team-${color}-rgb))`,
+                borderRight:  "1px solid rgb(var(--border-rgb))",
+                borderLeft:   "1px solid rgb(var(--border-rgb))",
+                borderBottom: "1px solid rgb(var(--border-rgb))",
+                background:   "rgb(var(--surface-raised-rgb))",
+                boxShadow:    "var(--shadow-card)",
               }}
             >
               {/* Spotlight header */}
@@ -1783,9 +1775,11 @@ export default function GamePage() {
                 minHeight:    0,
                 minWidth:     0,
                 overflow:     "hidden",
-                borderTop:    `2px solid rgba(var(--team-${color}-rgb), 0.7)`,
-                borderColor:  "rgba(255,255,255,0.08)",
-                background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.05) 0%, transparent 60%)`,
+                borderTop:    `2px solid rgb(var(--team-${color}-rgb))`,
+                borderRight:  "1px solid rgb(var(--border-rgb))",
+                borderLeft:   "1px solid rgb(var(--border-rgb))",
+                borderBottom: "1px solid rgb(var(--border-rgb))",
+                background:   "rgb(var(--surface-raised-rgb))",
               }}
             >
               <div className="flex items-center gap-1.5 mb-1.5 flex-shrink-0">

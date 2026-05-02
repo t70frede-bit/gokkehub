@@ -1,14 +1,9 @@
 /**
  * web (gokkehub.com landing page)
- * Purple → Pink — matches the platform brand / gridchallenge as the flagship
+ * Inherits the platform v0.2 "vinyl liner notes" defaults.
  */
 :root {
-  --color-primary-rgb:       138,  43, 226;   /* #8a2be2 blueviolet */
-  --color-primary-light-rgb: 180, 100, 255;
-  --color-primary-dark-rgb:   90,  20, 160;
-  --color-secondary-rgb:     255,  20, 147;   /* #ff1493 deep pink  */
-
-  --bg-tint-1: #12001c;
-  --bg-tint-2: #080010;
-  --bg-tint-3: #14002a;
+  --bg-tint-1: #1A1614;
+  --bg-tint-2: #14110F;
+  --bg-tint-3: #221E1B;
 }

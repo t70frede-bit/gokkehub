@@ -1,72 +1,71 @@
 /**
- * GokkeHub Design Tokens
- * ======================
- * Single source of truth for every visual value in the platform.
+ * GokkeHub Design Tokens — v0.2 "vinyl liner notes"
+ * ====================================================
+ * Warm charcoal surfaces, single confident amber accent, muted team colours.
+ * Solid surfaces (no gradients), hairline borders, soft shadows.
  *
  * HOW TO CHANGE THINGS:
- *   - Global change (all games):  edit the :root block below
- *   - Per-game change:            edit the matching file in ./games/
- *
- * HOW IT WORKS:
- *   Each game imports this file first, then its own game theme file which
- *   overrides only --color-primary-rgb, --color-secondary-rgb, and the
- *   background tint. Everything else stays identical.
+ *   - Global change (all apps):  edit the :root block below
+ *   - Per-app accent override:   edit ./games/<app>.css
  */
 
 :root {
-  /* ── Brand colours (overridden per game) ────────────────────────────────── */
-  /* Using RGB triplets so we can do: rgba(var(--color-primary-rgb), 0.4)     */
-  --color-primary-rgb:       138, 43, 226;   /* #8a2be2  blueviolet           */
-  --color-primary-light-rgb: 180, 100, 255;  /* lighter tint for hover states */
-  --color-primary-dark-rgb:  90,  20, 160;   /* darker shade for pressed      */
-  --color-secondary-rgb:     255, 20, 147;   /* #ff1493  deep pink            */
+  /* ── Brand accent (overridable per-app) ─────────────────────────────────── */
+  --color-primary-rgb:       212, 160,  74;   /* #D4A04A  warm amber           */
+  --color-primary-light-rgb: 232, 188, 110;   /* hover tint                    */
+  --color-primary-dark-rgb:  184, 133,  59;   /* #B8853B  pressed              */
+  --color-secondary-rgb:     199, 137,  77;   /* #C7894D  bronze for accents   */
 
-  /* Background tint (overridden per game) */
-  --bg-tint-1: #1b0024;   /* gradient start */
-  --bg-tint-2: #0b0010;   /* gradient mid   */
-  --bg-tint-3: #1a0033;   /* gradient end   */
+  /* Page background tint (per-app) — kept as a tonal nudge over the base bg.
+     Default uses the warm-charcoal neutrals; per-app files lean a bit warmer
+     or cooler. */
+  --bg-tint-1: #1A1614;
+  --bg-tint-2: #14110F;
+  --bg-tint-3: #221E1B;
 
-  /* ── Team colours — NEVER change these, they must be consistent ─────────── */
-  --team-blue-rgb:     31,  79, 216;   /* #1f4fd8 */
-  --team-blue-dark:    #163a9e;
-  --team-red-rgb:      193, 18,  31;   /* #c1121f */
-  --team-red-dark:     #780000;
-  --team-green-rgb:    26, 122,  46;   /* #1a7a2e */
-  --team-green-dark:   #0e5020;
-  --team-yellow-rgb:   160, 120,   0;  /* #a07800 */
-  --team-yellow-dark:  #7a5a00;
-  --team-spectator-rgb:80,  80,  80;   /* neutral gray */
+  /* ── Team colours — muted versions, distinct without overpowering art ───── */
+  --team-blue-rgb:      74, 123, 156;   /* #4A7B9C slate */
+  --team-blue-dark:     "#365A75";
+  --team-red-rgb:      184, 100,  82;   /* #B86452 terracotta */
+  --team-red-dark:      "#8C4838";
+  --team-green-rgb:    123, 156,  95;   /* #7B9C5F sage */
+  --team-green-dark:    "#566F40";
+  --team-yellow-rgb:   212, 160,  74;   /* #D4A04A amber (matches accent) */
+  --team-yellow-dark:   "#9C7330";
+  --team-spectator-rgb:117, 106,  96;   /* #756A60 warm grey */
 
   /* ── Surfaces ────────────────────────────────────────────────────────────── */
-  --surface-base-rgb:    20,  10,  30;   /* darkest — page background panels  */
-  --surface-raised-rgb:  30,  30,  50;   /* cards, modals                     */
-  --surface-overlay-rgb: 50,  20,  60;   /* hover state, elevated panels      */
-  --surface-input-rgb:   15,  10,  30;   /* form inputs                       */
+  --bg-rgb:              26,  22,  20;   /* #1A1614 page bg                 */
+  --surface-base-rgb:    26,  22,  20;   /* same as page bg                 */
+  --surface-raised-rgb:  34,  30,  27;   /* #221E1B cards, panels           */
+  --surface-overlay-rgb: 46,  40,  35;   /* #2E2823 modals, popovers        */
+  --surface-input-rgb:   30,  26,  23;   /* form inputs                     */
 
-  /* ── Text ───────────────────────────────────────────────────────────────── */
-  --text-primary-rgb:    255, 255, 255;  /* #ffffff */
-  --text-secondary-rgb:  224, 192, 255;  /* #e0c0ff — purple-tinted white     */
-  --text-muted-rgb:      176, 160, 208;  /* #b0a0d0 — dimmer label text       */
-  --text-input-rgb:      112,  96, 160;  /* #7060a0 — placeholder text        */
+  /* ── Text — warm cream, not pure white ──────────────────────────────────── */
+  --text-primary-rgb:    245, 237, 226;  /* #F5EDE2 */
+  --text-secondary-rgb:  184, 169, 154;  /* #B8A99A */
+  --text-muted-rgb:      117, 106,  96;  /* #756A60 */
+  --text-input-rgb:       96,  86,  78;  /* placeholder */
 
-  /* ── Status colours ─────────────────────────────────────────────────────── */
-  --color-success-rgb:   40, 180,  60;   /* green  */
-  --color-warning-rgb:  255, 215,   0;   /* gold   */
-  --color-danger-rgb:   220,  60,  60;   /* red    */
+  /* ── Status ─────────────────────────────────────────────────────────────── */
+  --color-success-rgb:   123, 156,  95;  /* matches team green */
+  --color-warning-rgb:   212, 160,  74;  /* matches accent     */
+  --color-danger-rgb:    199,  85,  61;  /* #C7553D terracotta */
 
   /* ── Border ─────────────────────────────────────────────────────────────── */
-  --border-opacity: 0.4;
-  --border-width: 2px;
+  --border-rgb:          58,  51,  46;   /* #3A332E hairline neutral */
+  --border-opacity: 1;                   /* used as solid borders now */
+  --border-width: 1px;                   /* hairline by default      */
 
-  /* ── Radii ───────────────────────────────────────────────────────────────── */
-  --radius-sm:   8px;
-  --radius-md:  12px;
-  --radius-lg:  16px;
-  --radius-xl:  24px;
-  --radius-2xl: 32px;
+  /* ── Radii ─────────────────────────────────────────────────────────────── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-2xl: 20px;
   --radius-pill: 9999px;
 
-  /* ── Spacing scale ───────────────────────────────────────────────────────── */
+  /* ── Spacing scale ─────────────────────────────────────────────────────── */
   --space-1:  4px;
   --space-2:  8px;
   --space-3: 12px;
@@ -77,15 +76,17 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  /* ── Typography ──────────────────────────────────────────────────────────── */
-  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: "Cascadia Code", "Fira Code", monospace;
+  /* ── Typography ────────────────────────────────────────────────────────── */
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-sans:    "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    "JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, monospace;
 
-  /* ── Effects ─────────────────────────────────────────────────────────────── */
-  --blur-panel: 10px;
-  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 28px rgba(var(--color-primary-rgb), 0.6);
-  --transition-fast: 0.15s ease;
-  --transition-base: 0.2s ease;
-  --transition-slow: 0.35s ease;
+  /* ── Effects ───────────────────────────────────────────────────────────── */
+  --blur-panel: 0px;                                /* glassmorphism out */
+  --shadow-card: 0 8px 16px rgba(0, 0, 0, 0.25);
+  --shadow-elevated: 0 24px 48px rgba(0, 0, 0, 0.5);
+  --shadow-glow: none;                              /* no glows on hover */
+  --transition-fast: 80ms ease;
+  --transition-base: 150ms ease;
+  --transition-slow: 250ms ease;
 }

@@ -1,14 +1,9 @@
 /**
  * gridchallenge (partybingo.gokkehub.com)
- * Purple → Pink — party / chaotic energy
+ * Inherits the platform v0.2 "vinyl liner notes" defaults.
  */
 :root {
-  --color-primary-rgb:       138,  43, 226;   /* #8a2be2 blueviolet */
-  --color-primary-light-rgb: 180, 100, 255;
-  --color-primary-dark-rgb:   90,  20, 160;
-  --color-secondary-rgb:     255,  20, 147;   /* #ff1493 deep pink  */
-
-  --bg-tint-1: #1b0024;
-  --bg-tint-2: #0b0010;
-  --bg-tint-3: #1a0033;
+  --bg-tint-1: #1A1614;
+  --bg-tint-2: #14110F;
+  --bg-tint-3: #221E1B;
 }

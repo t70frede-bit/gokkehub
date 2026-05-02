@@ -18,13 +18,13 @@ export default function Panel({
   return (
     <Tag
       className={`
-        rounded-xl backdrop-blur-[10px]
+        rounded-xl
         ${variant === "default" ? "p-6 sm:p-8" : ""}
         ${className}
       `.trim()}
       style={{
-        background: "linear-gradient(135deg, rgba(var(--surface-raised-rgb), 0.8), rgba(var(--surface-overlay-rgb), 0.8))",
-        border: "2px solid rgba(var(--color-primary-rgb), var(--border-opacity))",
+        background: "rgb(var(--surface-raised-rgb))",
+        border: "1px solid rgb(var(--border-rgb))",
         boxShadow: "var(--shadow-card)",
         ...style,
       }}

@@ -1193,11 +1193,12 @@ export default function BoardPage() {
           className="fixed inset-0 flex items-center justify-center z-50"
           style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
         >
-          <div className="text-center p-8 rounded-2xl flex flex-col items-center gap-4"
+          <div className="text-center p-8 rounded-xl flex flex-col items-center gap-4"
             style={{
-              background: "linear-gradient(135deg, rgba(var(--surface-raised-rgb),0.97), rgba(var(--surface-overlay-rgb),0.97))",
-              border: "1.5px solid rgba(255,215,0,0.3)",
-              boxShadow: "0 0 60px rgba(255,215,0,0.15)",
+              background: "rgb(var(--surface-overlay-rgb))",
+              border:     "1px solid rgb(var(--border-rgb))",
+              borderTop:  "3px solid rgb(var(--color-primary-rgb))",
+              boxShadow:  "var(--shadow-elevated)",
             }}
           >
             <div className="text-6xl">{TEAM_EMOJIS[winnerTeam as TeamColor] ?? "🏆"}</div>

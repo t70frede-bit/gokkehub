@@ -11,11 +11,11 @@ export interface BadgeProps {
 }
 
 const TEAM_STYLES: Record<TeamColor | "spectator", React.CSSProperties> = {
-  blue:      { background: "rgba(var(--team-blue-rgb), 0.35)",      color: "#90b0ff", border: "1px solid rgba(var(--team-blue-rgb), 0.6)" },
-  red:       { background: "rgba(var(--team-red-rgb), 0.35)",       color: "#ff9090", border: "1px solid rgba(var(--team-red-rgb), 0.6)" },
-  green:     { background: "rgba(var(--team-green-rgb), 0.35)",     color: "#90e0a0", border: "1px solid rgba(var(--team-green-rgb), 0.6)" },
-  yellow:    { background: "rgba(var(--team-yellow-rgb), 0.35)",    color: "#ffe070", border: "1px solid rgba(var(--team-yellow-rgb), 0.6)" },
-  spectator: { background: "rgba(var(--team-spectator-rgb), 0.35)", color: "#c0c0c0", border: "1px solid rgba(var(--team-spectator-rgb), 0.5)" },
+  blue:      { background: "transparent", color: "rgb(var(--team-blue-rgb))",      border: "1px solid rgba(var(--team-blue-rgb), 0.6)" },
+  red:       { background: "transparent", color: "rgb(var(--team-red-rgb))",       border: "1px solid rgba(var(--team-red-rgb), 0.6)" },
+  green:     { background: "transparent", color: "rgb(var(--team-green-rgb))",     border: "1px solid rgba(var(--team-green-rgb), 0.6)" },
+  yellow:    { background: "transparent", color: "rgb(var(--team-yellow-rgb))",    border: "1px solid rgba(var(--team-yellow-rgb), 0.6)" },
+  spectator: { background: "transparent", color: "rgb(var(--team-spectator-rgb))", border: "1px solid rgba(var(--team-spectator-rgb), 0.5)" },
 };
 
 export default function Badge({
@@ -28,29 +28,29 @@ export default function Badge({
 
   if (variant === "primary") {
     style = {
-      background: "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.35), rgba(var(--color-secondary-rgb), 0.35))",
-      color: "rgb(var(--text-secondary-rgb))",
-      border: "1px solid rgba(var(--color-primary-rgb), 0.7)",
+      background: "transparent",
+      color: "rgb(var(--color-primary-rgb))",
+      border: "1px solid rgba(var(--color-primary-rgb), 0.55)",
     };
   } else if (variant === "team" && team) {
     style = TEAM_STYLES[team];
   } else if (variant === "host") {
     style = {
-      background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-      color: "#fff",
+      background: "rgb(var(--color-primary-rgb))",
+      color: "rgb(var(--bg-rgb))",
     };
   } else if (variant === "gm") {
     style = {
-      background: "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.4), rgba(var(--color-secondary-rgb), 0.4))",
-      color: "rgb(var(--text-secondary-rgb))",
-      border: "1px solid rgba(var(--color-primary-rgb), 0.7)",
+      background: "transparent",
+      color: "rgb(var(--color-primary-rgb))",
+      border: "1px solid rgba(var(--color-primary-rgb), 0.55)",
     };
   }
 
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold tracking-wide ${className}`}
-      style={style}
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${className}`}
+      style={{ letterSpacing: "0.06em", ...style }}
     >
       {children}
     </span>

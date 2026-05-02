@@ -16,20 +16,19 @@ const sizeStyles: Record<NonNullable<ButtonProps["size"]>, string> = {
 
 const variantStyles: Record<NonNullable<ButtonProps["variant"]>, React.CSSProperties> = {
   primary: {
-    background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-    color: "#fff",
-    border: "none",
-    boxShadow: "0 4px 15px rgba(var(--color-primary-rgb), 0.4)",
+    background: "rgb(var(--color-primary-rgb))",
+    color: "rgb(var(--bg-rgb))",
+    border: "1px solid transparent",
   },
   ghost: {
-    background: "rgba(var(--color-primary-rgb), 0.12)",
-    color: "rgb(var(--text-secondary-rgb))",
-    border: "2px solid rgba(var(--color-primary-rgb), 0.5)",
+    background: "transparent",
+    color: "rgb(var(--text-primary-rgb))",
+    border: "1px solid rgb(var(--border-rgb))",
   },
   danger: {
-    background: "rgba(var(--color-danger-rgb), 0.15)",
+    background: "transparent",
     color: "rgb(var(--color-danger-rgb))",
-    border: "2px solid rgba(var(--color-danger-rgb), 0.5)",
+    border: "1px solid rgba(var(--color-danger-rgb), 0.55)",
   },
 };
 
@@ -61,15 +60,15 @@ export default function Button({
     <button
       disabled={disabled || loading}
       className={`
-        inline-flex items-center justify-center font-semibold rounded-md
-        cursor-pointer select-none transition-all duration-150
-        hover:-translate-y-0.5 active:translate-y-0
-        disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
+        inline-flex items-center justify-center font-bold rounded-md
+        cursor-pointer select-none transition-all duration-100
+        active:scale-[0.98]
+        disabled:opacity-45 disabled:cursor-not-allowed
         ${sizeStyles[size]}
         ${fullWidth ? "w-full" : ""}
         ${className}
       `.trim()}
-      style={{ ...variantStyles[variant], ...style }}
+      style={{ letterSpacing: "0.01em", ...variantStyles[variant], ...style }}
       {...props}
     >
       {loading && <Spinner />}

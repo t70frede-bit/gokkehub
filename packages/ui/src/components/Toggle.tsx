@@ -18,8 +18,11 @@ export default function Toggle<T extends string = string>({
 }: ToggleProps<T>) {
   return (
     <div
-      className={`flex rounded-xl overflow-hidden ${className}`}
-      style={{ background: "rgba(255, 255, 255, 0.07)" }}
+      className={`flex rounded-md overflow-hidden ${className}`}
+      style={{
+        background: "rgb(var(--surface-raised-rgb))",
+        border:     "1px solid rgb(var(--border-rgb))",
+      }}
     >
       {options.map((opt) => {
         const active = opt.value === value;
@@ -28,17 +31,16 @@ export default function Toggle<T extends string = string>({
             key={opt.value}
             type="button"
             onClick={() => onChange(opt.value)}
-            className="flex-1 px-4 py-2.5 text-sm font-semibold transition-all duration-200 border-none cursor-pointer"
+            className="flex-1 px-4 py-2 text-sm font-bold transition-all duration-150 border-none cursor-pointer"
             style={
               active
                 ? {
-                    background:
-                      "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.75), rgba(var(--color-secondary-rgb), 0.75))",
-                    color: "#fff",
+                    background: "rgba(var(--color-primary-rgb), 0.18)",
+                    color:      "rgb(var(--color-primary-rgb))",
                   }
                 : {
                     background: "transparent",
-                    color: "rgb(var(--text-secondary-rgb))",
+                    color:      "rgb(var(--text-secondary-rgb))",
                   }
             }
           >

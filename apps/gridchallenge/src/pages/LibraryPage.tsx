@@ -34,9 +34,8 @@ function CoverImage({
       <div
         className={`w-full h-full flex items-center justify-center text-3xl font-extrabold select-none ${className}`}
         style={{
-          background:
-            "linear-gradient(135deg, rgba(var(--color-primary-rgb),0.45), rgba(var(--color-accent-rgb),0.35))",
-          color: "rgba(255,255,255,0.5)",
+          background: "rgba(var(--color-primary-rgb), 0.18)",
+          color:      "rgb(var(--color-primary-rgb))",
         }}
       >
         {name.charAt(0).toUpperCase()}

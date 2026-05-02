@@ -20,8 +20,8 @@ const GAMES: Game[] = [
       "Split into teams, claim squares by completing challenges, and race to bingo. Custom challenge sets, live lobby, and team chaos.",
     emoji: "🎯",
     url: "https://partybingo.gokkehub.com",
-    accentRgb: "138, 43, 226",
-    secondaryRgb: "255, 20, 147",
+    accentRgb: "184, 100, 82",
+    secondaryRgb: "212, 160, 74",
     status: "live",
   },
   {
@@ -31,8 +31,8 @@ const GAMES: Game[] = [
       "A snippet plays — first team to buzz in and name the song scores. Pull from any Spotify playlist. Points, streaks, and chaos ensue.",
     emoji: "🎵",
     url: "https://musicquiz.gokkehub.com",
-    accentRgb: "29, 185, 84",
-    secondaryRgb: "30, 215, 96",
+    accentRgb: "123, 156, 95",
+    secondaryRgb: "212, 160, 74",
     status: "soon",
   },
   {
@@ -42,8 +42,8 @@ const GAMES: Game[] = [
       "Songs drop one by one — place each on your team's timeline in the right year. Closer is better. Based on Hitster.",
     emoji: "📅",
     url: "https://hitster.gokkehub.com",
-    accentRgb: "255, 107, 0",
-    secondaryRgb: "255, 215, 0",
+    accentRgb: "212, 160, 74",
+    secondaryRgb: "184, 133, 59",
     status: "soon",
   },
   {
@@ -53,8 +53,8 @@ const GAMES: Game[] = [
       "Fastest fingers, sharpest ears. Answer music trivia, rank artists, and climb the leaderboard. No Spotify required.",
     emoji: "🏆",
     url: "https://bezzerwizzer.gokkehub.com",
-    accentRgb: "0, 188, 212",
-    secondaryRgb: "124, 77, 255",
+    accentRgb: "74, 123, 156",
+    secondaryRgb: "212, 160, 74",
     status: "soon",
   },
 ];
@@ -65,26 +65,9 @@ export default function App() {
   return (
     <div
       className="min-h-screen relative overflow-x-hidden"
-      style={{
-        background:
-          "radial-gradient(ellipse at 20% 0%, var(--bg-tint-3) 0%, var(--bg-tint-2) 60%)",
-      }}
+      style={{ background: "var(--bg-tint-1)" }}
     >
-      {/* Ambient orbs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden>
-        <div
-          className="orb absolute w-[600px] h-[600px] -top-40 -left-40"
-          style={{ background: `rgb(var(--color-primary-rgb))` }}
-        />
-        <div
-          className="orb orb-2 absolute w-[500px] h-[500px] top-1/2 -right-32"
-          style={{ background: `rgb(var(--color-secondary-rgb))` }}
-        />
-        <div
-          className="orb orb-3 absolute w-[400px] h-[400px] bottom-0 left-1/3"
-          style={{ background: `rgb(var(--color-primary-dark-rgb))` }}
-        />
-      </div>
+      {/* Ambient orbs removed for v0.2 — solid surfaces only. */}
 
       {/* Nav */}
       <header className="relative z-10 flex items-center justify-between px-6 py-5 max-w-6xl mx-auto">
@@ -121,9 +104,10 @@ export default function App() {
 
         <a
           href="https://partybingo.gokkehub.com"
-          className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl font-semibold text-white text-base glow-primary transition-all hover:scale-105 active:scale-95"
+          className="inline-flex items-center gap-2 px-8 py-4 rounded-md font-bold text-base transition-all active:scale-[0.98]"
           style={{
-            background: `linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))`,
+            background: "rgb(var(--color-primary-rgb))",
+            color:      "rgb(var(--bg-rgb))",
           }}
         >
           Play Grid Challenge
@@ -162,23 +146,22 @@ function GameCard({ game }: { game: Game }) {
     <a
       href={isLive ? game.url : undefined}
       className={[
-        "game-card block rounded-3xl p-6 border relative overflow-hidden",
-        isLive ? "cursor-pointer" : "cursor-default opacity-75",
+        "game-card block rounded-xl p-6 relative overflow-hidden transition-all",
+        isLive ? "cursor-pointer" : "cursor-default opacity-60",
       ].join(" ")}
       style={{
-        background: `linear-gradient(135deg, rgb(${game.accentRgb} / 0.08) 0%, transparent 60%)`,
-        borderColor: `rgb(${game.accentRgb} / 0.2)`,
-        boxShadow: isLive
-          ? `0 4px 32px rgb(${game.accentRgb} / 0.08)`
-          : undefined,
+        background: "rgb(var(--surface-raised-rgb))",
+        border:     "1px solid rgb(var(--border-rgb))",
+        borderTop:  `3px solid rgb(${game.accentRgb})`,
+        boxShadow:  "var(--shadow-card)",
       }}
       aria-label={isLive ? `Play ${game.name}` : `${game.name} — coming soon`}
     >
-      {/* Subtle corner glow */}
+      {/* Subtle corner accent (kept as a soft tint, not a glow) */}
       <div
         className="absolute -top-12 -right-12 w-40 h-40 rounded-full pointer-events-none"
         style={{
-          background: `radial-gradient(circle, rgb(${game.accentRgb} / 0.15) 0%, transparent 70%)`,
+          background: `radial-gradient(circle, rgba(${game.accentRgb}, 0.10) 0%, transparent 70%)`,
         }}
         aria-hidden
       />

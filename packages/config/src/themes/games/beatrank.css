@@ -1,14 +1,9 @@
 /**
  * beatrank (bezzerwizzer.gokkehub.com)
- * Cyan → Indigo — trivia / knowledge / sharp energy
+ * Inherits the platform v0.2 "vinyl liner notes" defaults.
  */
 :root {
-  --color-primary-rgb:         0, 188, 212;   /* #00bcd4 cyan   */
-  --color-primary-light-rgb:  80, 220, 240;
-  --color-primary-dark-rgb:    0, 130, 150;
-  --color-secondary-rgb:     124,  77, 255;   /* #7c4dff indigo */
-
-  --bg-tint-1: #001418;
-  --bg-tint-2: #000a0d;
-  --bg-tint-3: #00181e;
+  --bg-tint-1: #1A1614;
+  --bg-tint-2: #14110F;
+  --bg-tint-3: #221E1B;
 }

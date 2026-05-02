@@ -176,10 +176,7 @@ export default function LobbyPage() {
                 <>
                   Lobby{" "}
                   <span style={{
-                    background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
+                    color:      "rgb(var(--color-primary-rgb))",
                     fontFamily: "var(--font-mono)",
                   }}>
                     {roomId}
@@ -580,8 +577,8 @@ function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: Te
     <Panel
       className="p-4"
       style={{
-        borderTop:    `3px solid rgba(var(--team-${color}-rgb), 0.85)`,
-        background:   `linear-gradient(180deg, rgba(var(--team-${color}-rgb), 0.06) 0%, transparent 60%)`,
+        borderTop:  `3px solid rgb(var(--team-${color}-rgb))`,
+        background: "rgb(var(--surface-raised-rgb))",
       }}
     >
       <div className="flex items-center gap-2 mb-3">
@@ -649,8 +646,8 @@ function SpectatorPanel({ players, myPlayerId, isHost, onTileClick }: SpectatorP
     <Panel
       className="p-4"
       style={{
-        borderTop:  "3px solid rgba(var(--team-spectator-rgb), 0.6)",
-        background: "linear-gradient(180deg, rgba(var(--team-spectator-rgb), 0.06) 0%, transparent 60%)",
+        borderTop:  "3px solid rgb(var(--team-spectator-rgb))",
+        background: "rgb(var(--surface-raised-rgb))",
       }}
     >
       <div className="flex items-center gap-2 mb-3">
@@ -743,8 +740,8 @@ function PlayerTile({ player, color, isMe, clickable, onClick }: PlayerTileProps
         {player.is_host && (
           <span className="text-[9px] font-bold px-1.5 rounded-full uppercase tracking-wider"
             style={{
-              background: "linear-gradient(135deg, rgb(var(--color-primary-rgb)), rgb(var(--color-secondary-rgb)))",
-              color:      "#fff",
+              background: "rgb(var(--color-primary-rgb))",
+              color:      "rgb(var(--bg-rgb))",
             }}>
             Host
           </span>

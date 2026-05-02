@@ -52,6 +52,10 @@ const config: Omit<Config, "content"> = {
         success: "rgb(var(--color-success-rgb) / <alpha-value>)",
         warning: "rgb(var(--color-warning-rgb) / <alpha-value>)",
         danger:  "rgb(var(--color-danger-rgb) / <alpha-value>)",
+
+        // ── New v0.2 helpers ────────────────────────────────────────────────
+        bg:      "rgb(var(--bg-rgb) / <alpha-value>)",
+        border:  "rgb(var(--border-rgb) / <alpha-value>)",
       },
 
       borderRadius: {
@@ -63,8 +67,9 @@ const config: Omit<Config, "content"> = {
       },
 
       fontFamily: {
-        sans: "var(--font-sans)",
-        mono: "var(--font-mono)",
+        sans:    "var(--font-sans)",
+        display: "var(--font-display)",
+        mono:    "var(--font-mono)",
       },
 
       backdropBlur: {
