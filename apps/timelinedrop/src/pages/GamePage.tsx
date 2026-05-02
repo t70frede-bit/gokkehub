@@ -355,22 +355,23 @@ function PlayerFooter({
         const isMe = p.id === myPlayerId;
         return (
           <div key={p.id} className="relative flex flex-col items-center min-w-0" style={{ width: 56 }}>
-            {/* Speech bubbles stacked above the avatar */}
+            {/* Speech bubbles stacked above the avatar — centred over the head */}
             {mine.length > 0 && (
-              <div className="absolute bottom-full mb-1 flex flex-col gap-1 items-center"
-                style={{ minWidth: 90 }}>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 flex flex-col gap-1.5 items-center pointer-events-none"
+                style={{ width: 220 }}>
                 {mine.map(n => {
                   const age = nowMs - n.createdMs;
                   const fade = age < 8000 ? 1 : Math.max(0, 1 - (age - 8000) / 4000);
                   return (
                     <div key={n.id}
-                      className="text-[11px] px-2 py-1 rounded-2xl whitespace-pre-wrap break-words text-center"
+                      className="text-sm font-semibold px-3 py-2 rounded-2xl whitespace-pre-wrap break-words text-center"
                       style={{
-                        background: `rgba(var(--team-${color}-rgb), 0.85)`,
+                        background: `rgba(var(--team-${color}-rgb), 0.92)`,
                         color:      "#fff",
-                        boxShadow:  "0 1px 4px rgba(0,0,0,0.4)",
+                        boxShadow:  "0 2px 10px rgba(0,0,0,0.45)",
                         opacity:    fade,
-                        maxWidth:   140,
+                        maxWidth:   220,
+                        lineHeight: 1.25,
                       }}
                     >
                       {n.content}
@@ -1395,6 +1396,8 @@ export default function GamePage() {
     pingTimestampsRef.current.push(now);
     supabase.from("tl_pings").insert({
       round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, year,
+    }).then(({ error }) => {
+      if (error) console.error("[musix] ping insert failed:", error.message);
     });
   }
 
