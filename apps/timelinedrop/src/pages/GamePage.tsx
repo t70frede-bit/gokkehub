@@ -100,7 +100,6 @@ function Timeline({
   entries, dragCard, isCaptain, isActive, isHost = false, myPlayerId, stagedLeft, stagedRight,
   onStageGap, onPingYear, onDismissPing, pings = [], pending = [],
 }: TimelineProps) {
-  const pingYears = pings.map(p => p.year);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const dragging = useRef(false);
 
@@ -161,46 +160,8 @@ function Timeline({
     onPingYear(year);
   }
 
-  // Compute pin marker positions (% along the rail's year axis)
-  const pinMarkers: Array<{ year: number; pct: number }> = [];
-  if (pingYears.length > 0 && merged.length > 0) {
-    const minYear = merged[0].year;
-    const maxYear = merged[merged.length - 1].year;
-    const span    = Math.max(1, maxYear - minYear);
-    // Add bookend padding (12%) so extremes can be marked too
-    const padded  = span + Math.max(5, Math.round(span * 0.24));
-    const start   = minYear - Math.max(2, Math.round(span * 0.12));
-    for (const year of pingYears) {
-      const pct = ((year - start) / padded) * 100;
-      pinMarkers.push({ year, pct: Math.max(0, Math.min(100, pct)) });
-    }
-  }
-
   return (
     <div>
-      {/* Pin markers on the rail (positioned along the year axis) */}
-      {pinMarkers.length > 0 && (
-        <div className="relative h-7 mb-1">
-          {pinMarkers.map((p, i) => (
-            <div key={i}
-              className="absolute"
-              style={{ left: `${p.pct}%`, transform: "translateX(-50%)" }}>
-              <div className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
-                style={{
-                  background: "rgba(var(--color-secondary-rgb), 0.18)",
-                  color:      "rgb(var(--color-secondary-rgb))",
-                  border:     "1px solid rgba(var(--color-secondary-rgb), 0.45)",
-                  fontFamily: "var(--font-mono)",
-                }}>
-                📍 {p.year}
-              </div>
-              <div className="w-px h-1.5 mx-auto"
-                style={{ background: "rgba(var(--color-secondary-rgb), 0.5)" }} />
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Timeline rail */}
       <div className="timeline-rail">
 
@@ -1388,10 +1349,18 @@ export default function GamePage() {
 
   async function dismissPing(pingId: number) {
     if (!myPlayerId) return;
-    await fetch(`/room/${roomId}/ping`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ ping_id: pingId, player_id: myPlayerId }),
-    });
+    try {
+      const res = await fetch(`/room/${roomId}/ping`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ ping_id: pingId, player_id: myPlayerId }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.error("[musix] ping dismiss failed:", res.status, text.slice(0, 200));
+      }
+    } catch (err) {
+      console.error("[musix] ping dismiss error:", err);
+    }
   }
 
   async function doTurnAction(action: "stop" | "next") {
