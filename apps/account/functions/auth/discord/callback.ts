@@ -95,6 +95,14 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     discord: discordData,
   });
 
+  // Restore Last.fm connection if the user had it linked before logging out
+  const storedLastfm = await env.SESSIONS.get(`lastfm_link:${discordUser.id}`);
+  if (storedLastfm) {
+    await updateSession(env.SESSIONS, sessionId, {
+      lastfm: { username: storedLastfm, linkedAt: Date.now() },
+    });
+  }
+
   // Restore Spotify connection if the user had it linked before logging out
   const storedSpotifyRaw = await env.SESSIONS.get(`spotify_link:${discordUser.id}`);
   if (storedSpotifyRaw) {

@@ -25,4 +25,7 @@ export interface Env {
 
   // Steam Web API
   STEAM_API_KEY: string;
+
+  // Last.fm API (read-only, free tier)
+  LASTFM_API_KEY: string;
 }

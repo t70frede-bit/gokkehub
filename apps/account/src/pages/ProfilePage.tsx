@@ -37,7 +37,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
   const [steamIdValue, setSteamIdValue] = useState(session.steamId ?? "");
   const [savingSteamId, setSavingSteamId] = useState(false);
 
-  const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | null>(null);
+  const [disconnecting, setDisconnecting] = useState<"discord" | "spotify" | "steam" | "lastfm" | null>(null);
 
   /* ── Avatar ── */
 
@@ -104,7 +104,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
 
   /* ── Linked accounts ── */
 
-  const handleDisconnect = async (provider: "discord" | "spotify" | "steam") => {
+  const handleDisconnect = async (provider: "discord" | "spotify" | "steam" | "lastfm") => {
     setDisconnecting(provider);
     try {
       const res = await fetch(`/auth/${provider}`, { method: "DELETE", credentials: "include" });
@@ -271,6 +271,24 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           color="#66c0f4"
           description="View your game library"
         />
+        <LastfmRow
+          username={session.lastfmUsername ?? null}
+          disconnecting={disconnecting === "lastfm"}
+          onSave={async (username) => {
+            const res = await fetch("/auth/lastfm", {
+              method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+              body: JSON.stringify({ username }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({})) as { error?: string };
+              addToast(data.error ?? "Couldn't link Last.fm", "error");
+              return;
+            }
+            onSessionRefresh();
+            addToast("Last.fm connected", "success");
+          }}
+          onDisconnect={() => handleDisconnect("lastfm")}
+        />
 
       </div>
     </div>
@@ -422,6 +440,87 @@ function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconn
         )}
       </div>
     </Panel>
+  );
+}
+
+/* ── Last.fm row (username-based, no OAuth) ── */
+
+interface LastfmRowProps {
+  username:      string | null;
+  disconnecting: boolean;
+  onSave:        (username: string) => Promise<void>;
+  onDisconnect:  () => void;
+}
+
+function LastfmRow({ username, disconnecting, onSave, onDisconnect }: LastfmRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue]     = useState("");
+  const [saving, setSaving]   = useState(false);
+
+  const linked = !!username;
+
+  async function handleSave() {
+    if (!value.trim()) return;
+    setSaving(true);
+    try { await onSave(value.trim()); setEditing(false); setValue(""); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Panel variant="bare">
+      <div className="flex items-center gap-4 p-4">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ background: "#d5101622", color: "#d51016" }}>
+          <LastfmIcon />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>Last.fm</p>
+          {linked ? (
+            <p className="text-sm truncate" style={{ color: "rgba(34,197,94,0.85)" }}>
+              Connected as <strong>{username}</strong>
+            </p>
+          ) : editing ? (
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                value={value}
+                onChange={e => setValue(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleSave()}
+                placeholder="Last.fm username"
+                maxLength={30}
+                autoFocus
+                className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm outline-none"
+                style={{
+                  background: "rgba(var(--surface-raised-rgb),0.5)",
+                  border:     "1px solid rgba(255,255,255,0.1)",
+                  color:      "inherit",
+                }}
+              />
+            </div>
+          ) : (
+            <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Link your Last.fm to get familiar songs in your games
+            </p>
+          )}
+        </div>
+        {linked ? (
+          <ChipButton onClick={onDisconnect} loading={disconnecting} danger>
+            Disconnect
+          </ChipButton>
+        ) : editing ? (
+          <ChipButton onClick={handleSave} loading={saving}>Save</ChipButton>
+        ) : (
+          <ChipButton onClick={() => setEditing(true)}>Connect</ChipButton>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function LastfmIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M11.13 17.16c-2.49 0-4.51-2.02-4.51-4.51 0-2.5 2.02-4.52 4.51-4.52 1.06 0 2.07.36 2.88 1.03l.93-1.39a6.42 6.42 0 0 0-3.81-1.24A6.43 6.43 0 0 0 4.7 12.65a6.43 6.43 0 0 0 6.43 6.43c2.5 0 4.71-1.4 5.81-3.46l-1.46-.95c-.78 1.45-2.31 2.49-4.35 2.49zm6.57 0c-1.4 0-1.7-.65-1.7-1.66V8.7h-1.66v6.95c0 1.97 1.05 3.18 3.36 3.18h.6v-1.67h-.6z"/>
+    </svg>
   );
 }
 

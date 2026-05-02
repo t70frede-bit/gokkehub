@@ -7,10 +7,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  overflow-x: auto;
+  overflow-x: hidden;
   padding: 0.5rem 0.5rem 0.75rem;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
   min-height: 6.5rem;
 }
 .timeline-rail::before {
@@ -63,16 +61,43 @@
 }
 .tl-gap.dropping .tl-gap-dot { display: none; }
 
+/* Hover outline on a node when the captain is positioning the card */
+.tl-gap-interactive {
+  border-radius: var(--radius-md, 12px);
+  align-self: stretch;
+  border: 1.5px dashed transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.tl-gap-interactive:hover {
+  background: rgba(var(--color-primary-rgb), 0.10);
+  border-color: rgba(var(--color-primary-rgb), 0.55);
+}
+.tl-gap-interactive.active {
+  background: rgba(var(--color-primary-rgb), 0.15);
+  border-color: rgba(var(--color-primary-rgb), 0.75);
+}
+
 /* ── Track card (locked) ────────────────────────────────────────────────── */
 .track-card {
-  flex-shrink: 0;
-  width: 84px;
+  flex: 0 1 84px;
+  min-width: 48px;
+  max-width: 84px;
   border-radius: var(--radius-md, 12px);
   overflow: hidden;
   background: rgba(var(--surface-raised-rgb), 0.6);
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+
+/* Compact variant — used inside the inactive team's timeline */
+.timeline-compact .track-card { flex-basis: 56px; max-width: 56px; min-width: 36px; }
+.timeline-compact .question-card { width: 56px; min-width: 36px; }
+.timeline-compact .timeline-rail { min-height: 3.25rem; padding: 0.25rem 0.25rem 0.5rem; }
+.timeline-compact .tl-gap { width: 1rem; }
+
+/* Hide internal scrollbars cosmetically — sections still scroll if barely overflowing */
+.scrollbar-hidden { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-hidden::-webkit-scrollbar { display: none; }
 .track-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-card, 0 8px 24px rgba(0,0,0,0.4));
@@ -84,8 +109,9 @@
   50%       { border-color: rgb(var(--color-primary-rgb)); box-shadow: 0 0 12px rgba(var(--color-primary-rgb), 0.3); }
 }
 .question-card {
-  flex-shrink: 0;
-  width: 84px;
+  flex: 0 1 84px;
+  min-width: 48px;
+  max-width: 84px;
   border-radius: var(--radius-md, 12px);
   overflow: hidden;
   background: rgba(var(--color-primary-rgb), 0.08);

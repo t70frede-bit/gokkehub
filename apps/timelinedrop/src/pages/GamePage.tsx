@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, Panel } from "@gokkehub/ui";
+import { Button, Input, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
-import type { TlTimelineEntry, SpotifyTrack } from "../lib/types";
+import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, JudgeMode } from "../lib/types";
+import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
 
@@ -65,144 +66,274 @@ function TimerRing({ remaining, total = 90 }: { remaining: number; total?: numbe
 // ── Timeline component ────────────────────────────────────────────────────────
 
 interface TimelineProps {
-  entries:    TlTimelineEntry[];
-  dragCard:   SpotifyTrack | null;
-  isCaptain:  boolean;
-  onPlace:    (leftYear: number | null, rightYear: number | null) => void;
-  pingYears?: number[];
-  pending?:   SpotifyTrack[];
+  entries:        TlTimelineEntry[];
+  dragCard:       SpotifyTrack | null;
+  isCaptain:      boolean;
+  stagedLeft:     number | null;
+  stagedRight:    number | null;
+  onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
+  onPingYear?:    (year: number) => void;
+  pingYears?:     number[];
+  pending?:       SpotifyTrack[];
 }
 
-function Timeline({ entries, dragCard, isCaptain, onPlace, pingYears = [], pending = [] }: TimelineProps) {
+interface MergedItem {
+  year:   number;
+  track:  SpotifyTrack;
+  locked: boolean;
+}
+
+function Timeline({
+  entries, dragCard, isCaptain, stagedLeft, stagedRight, onStageGap, onPingYear,
+  pingYears = [], pending = [],
+}: TimelineProps) {
   const [dragOver, setDragOver] = useState<number | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
   const dragging = useRef(false);
 
-  const sorted = [...entries].sort((a, b) => a.year - b.year);
-  const gaps   = sorted.length + 1;
+  // Merge locked + pending into a single ordered list — pending cards form gaps too.
+  const merged: MergedItem[] = [
+    ...entries.map(e => ({ year: e.year, track: e.track, locked: true })),
+    ...pending.map(p => ({ year: p.releaseYear, track: p, locked: false })),
+  ].sort((a, b) => a.year - b.year);
+
+  const gaps = merged.length + 1;
 
   function getYearsForGap(gapIdx: number): [number | null, number | null] {
-    return [sorted[gapIdx - 1]?.year ?? null, sorted[gapIdx]?.year ?? null];
+    return [merged[gapIdx - 1]?.year ?? null, merged[gapIdx]?.year ?? null];
   }
 
-  function confirmPlacement(gapIdx: number) {
-    const [left, right] = getYearsForGap(gapIdx);
-    onPlace(left, right);
-    setSelected(null);
+  // Derive staged gap idx from the synced staged years (matches the gap whose boundaries align).
+  let stagedGap: number | null = null;
+  if (stagedLeft !== null || stagedRight !== null) {
+    for (let i = 0; i < gaps; i++) {
+      const [l, r] = getYearsForGap(i);
+      if (l === stagedLeft && r === stagedRight) { stagedGap = i; break; }
+    }
+  }
+
+  // Compute proportional gap weights (year span between siblings) for visual spacing.
+  // Bookend gaps (before first / after last) always have at least a small drop zone.
+  const minYear = merged.length ? merged[0].year : 1980;
+  const maxYear = merged.length ? merged[merged.length - 1].year : 1980;
+  const totalSpan = Math.max(1, maxYear - minYear);
+  // 12% of the span (or 5y minimum) is reserved for each bookend gap.
+  const bookendSpan = Math.max(5, Math.round(totalSpan * 0.12));
+
+  function gapWeight(idx: number): number {
+    if (merged.length === 0) return 1;
+    if (idx === 0)               return bookendSpan;
+    if (idx === merged.length)   return bookendSpan;
+    return Math.max(1, merged[idx].year - merged[idx - 1].year);
+  }
+
+  function stageGap(gapIdx: number) {
+    if (stagedGap === gapIdx) {
+      // Toggle off
+      onStageGap(null, null, null);
+    } else {
+      const [left, right] = getYearsForGap(gapIdx);
+      onStageGap(gapIdx, left, right);
+    }
+  }
+
+  function pingGap(gapIdx: number) {
+    if (!onPingYear) return;
+    const [l, r] = getYearsForGap(gapIdx);
+    let year: number;
+    if (l !== null && r !== null) year = Math.round((l + r) / 2);
+    else if (l !== null) year = l + 5;
+    else if (r !== null) year = r - 5;
+    else year = new Date().getFullYear() - 25;
+    onPingYear(year);
+  }
+
+  // Compute pin marker positions (% along the rail's year axis)
+  const pinMarkers: Array<{ year: number; pct: number }> = [];
+  if (pingYears.length > 0 && merged.length > 0) {
+    const minYear = merged[0].year;
+    const maxYear = merged[merged.length - 1].year;
+    const span    = Math.max(1, maxYear - minYear);
+    // Add bookend padding (12%) so extremes can be marked too
+    const padded  = span + Math.max(5, Math.round(span * 0.24));
+    const start   = minYear - Math.max(2, Math.round(span * 0.12));
+    for (const year of pingYears) {
+      const pct = ((year - start) / padded) * 100;
+      pinMarkers.push({ year, pct: Math.max(0, Math.min(100, pct)) });
+    }
   }
 
   return (
     <div>
-      {/* Ping year badges */}
-      {pingYears.length > 0 && (
-        <div className="flex gap-1.5 mb-2 flex-wrap">
-          {pingYears.map((y, i) => (
-            <span key={i} className="text-xs px-2 py-0.5 rounded-full"
-              style={{
-                background: "rgba(var(--color-secondary-rgb), 0.12)",
-                color: "rgb(var(--color-secondary-rgb))",
-                border: "1px solid rgba(var(--color-secondary-rgb), 0.2)",
-              }}>
-              📍 {y}
-            </span>
+      {/* Pin markers on the rail (positioned along the year axis) */}
+      {pinMarkers.length > 0 && (
+        <div className="relative h-7 mb-1">
+          {pinMarkers.map((p, i) => (
+            <div key={i}
+              className="absolute"
+              style={{ left: `${p.pct}%`, transform: "translateX(-50%)" }}>
+              <div className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                style={{
+                  background: "rgba(var(--color-secondary-rgb), 0.18)",
+                  color:      "rgb(var(--color-secondary-rgb))",
+                  border:     "1px solid rgba(var(--color-secondary-rgb), 0.45)",
+                  fontFamily: "var(--font-mono)",
+                }}>
+                📍 {p.year}
+              </div>
+              <div className="w-px h-1.5 mx-auto"
+                style={{ background: "rgba(var(--color-secondary-rgb), 0.5)" }} />
+            </div>
           ))}
         </div>
       )}
 
       {/* Timeline rail */}
       <div className="timeline-rail">
-        {Array.from({ length: gaps }).map((_, gapIdx) => {
-          const card   = sorted[gapIdx];
-          const isOver = dragOver === gapIdx;
-          const isSel  = selected === gapIdx;
 
-          return (
-            <div key={gapIdx} className="flex items-center flex-shrink-0">
-              {/* Gap */}
-              {isCaptain && dragCard ? (
-                <div
-                  className={`tl-gap ${isOver ? "dropping" : ""} ${isSel ? "active" : ""}`}
-                  onDragOver={e => { e.preventDefault(); setDragOver(gapIdx); }}
-                  onDragLeave={() => setDragOver(null)}
-                  onDrop={() => { setDragOver(null); confirmPlacement(gapIdx); }}
-                  onClick={() => setSelected(selected === gapIdx ? null : gapIdx)}
-                >
-                  {(isOver || isSel) ? (
-                    <div className="flex flex-col items-center gap-1 p-1">
-                      {isSel ? (
-                        <button onClick={e => { e.stopPropagation(); confirmPlacement(gapIdx); }}
-                          className="text-xs px-2 py-1 rounded-lg font-bold whitespace-nowrap"
-                          style={{ background: "rgb(var(--color-primary-rgb))", color: "#000" }}>
-                          Place here
-                        </button>
-                      ) : (
-                        <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: "16px" }}>↓</span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="tl-gap-dot" />
-                  )}
-                </div>
-              ) : (
-                <div className="tl-gap" style={{ cursor: "default" }}>
-                  <span className="tl-gap-dot" />
-                </div>
-              )}
-
-              {/* Existing locked card */}
-              {card && (
-                <div className="flex-shrink-0 mx-0.5">
-                  <TrackCard entry={card} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Draggable ??? card */}
-        {isCaptain && dragCard && (
+        {/* Mystery card — leftmost when not staged. When staged, it sits in the chosen gap. */}
+        {isCaptain && dragCard && stagedGap === null && (
           <div
             draggable
-            className="flex-shrink-0 mx-2"
             onDragStart={() => { dragging.current = true; }}
             onDragEnd={() => { dragging.current = false; setDragOver(null); }}
+            className="flex-shrink-0 mr-1"
+            style={{ cursor: "grab" }}
+            title="Click a gap or drag this card onto one"
           >
             <QuestionCard track={dragCard} />
           </div>
         )}
 
-        {/* Pending cards */}
-        {pending.length > 0 && (
-          <div className="flex items-center gap-1 flex-shrink-0 ml-2 pl-2"
-            style={{ borderLeft: "1px dashed rgba(var(--color-secondary-rgb), 0.2)" }}>
-            {pending.map((t, i) => (
-              <div key={`${t.id}-${i}`} className="pending-card-wrap flex-shrink-0">
-                <div className="track-card" style={{ opacity: 0.7 }}>
-                  <img src={t.coverUrl} alt="" className="w-full aspect-square object-cover" style={{ opacity: 0.5 }} />
-                  <div className="p-1.5">
-                    <p className="text-xs font-black" style={{ color: "rgb(var(--color-secondary-rgb))" }}>?</p>
-                    <p className="text-xs truncate opacity-70">{t.artist}</p>
-                  </div>
+        {Array.from({ length: gaps }).map((_, gapIdx) => {
+          const item     = merged[gapIdx];
+          const isOver   = dragOver === gapIdx;
+          const isStaged = stagedGap === gapIdx;
+          const showCard = isCaptain && dragCard;
+          const weight   = gapWeight(gapIdx);
+
+          // Same-year adjacent cards don't get a gap between them — they sit flush.
+          const isSameYearGap =
+            gapIdx > 0 && gapIdx < merged.length
+            && merged[gapIdx - 1].year === merged[gapIdx].year;
+
+          return (
+            <Fragment key={gapIdx}>
+              {/* Gap. Same-year adjacent cards skip this entirely so they sit flush. */}
+              {!isSameYearGap && (showCard ? (
+                <div
+                  className={`tl-gap tl-gap-interactive ${isOver ? "dropping" : ""} ${isStaged ? "active" : ""}`}
+                  style={{
+                    flexGrow: weight,
+                    flexShrink: 1,
+                    flexBasis: 0,
+                    minWidth: "2.5rem",
+                    width: "auto",
+                    cursor: "pointer",
+                  }}
+                  onDragOver={e => { e.preventDefault(); setDragOver(gapIdx); }}
+                  onDragLeave={() => setDragOver(null)}
+                  onDrop={() => { setDragOver(null); stageGap(gapIdx); }}
+                  onClick={() => stageGap(gapIdx)}
+                  title={isStaged ? "Selected — click again to clear" : "Click to place card here"}
+                >
+                  {isStaged ? (
+                    <div onClick={e => e.stopPropagation()} className="px-1">
+                      <QuestionCard track={dragCard} />
+                    </div>
+                  ) : isOver ? (
+                    <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 16 }}>↓</span>
+                  ) : (
+                    <span className="tl-gap-dot" />
+                  )}
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ) : (
+                <div className="tl-gap"
+                  style={{
+                    flexGrow: weight,
+                    flexShrink: 1,
+                    flexBasis: 0,
+                    minWidth: "1.5rem",
+                    width: "auto",
+                    cursor: onPingYear ? "pointer" : "default",
+                  }}
+                  onClick={() => pingGap(gapIdx)}
+                  title={onPingYear ? "Click to drop a pin" : ""}
+                >
+                  <span className="tl-gap-dot" />
+                </div>
+              ))}
+
+              {/* Existing card (locked or pending) */}
+              {item && (
+                <div className="flex-shrink-0">
+                  {item.locked ? (
+                    <TrackCard year={item.year} track={item.track} />
+                  ) : (
+                    <PendingCard year={item.year} track={item.track} />
+                  )}
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
+
       </div>
     </div>
   );
 }
 
-function TrackCard({ entry }: { entry: TlTimelineEntry }) {
+function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
   return (
-    <div className="track-card">
-      <img src={entry.track.coverUrl} alt="" className="w-full aspect-square object-cover" />
-      <div className="p-1.5">
-        <p className="text-xs font-black" style={{ color: "rgb(var(--color-secondary-rgb))", fontFamily: "var(--font-mono)" }}>
-          {entry.year}
-        </p>
-        <p className="text-xs truncate opacity-70">{entry.track.artist}</p>
-        <p className="text-xs truncate opacity-45">{entry.track.name}</p>
+    <div className="flex flex-col items-center select-none">
+      <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
+        style={{
+          fontSize: "0.8rem",
+          color:      "#fff",
+          background: "rgba(var(--color-primary-rgb), 0.85)",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.5px",
+        }}>
+        {year}
+      </p>
+      <div className="track-card">
+        <img src={track.coverUrl} alt="" draggable={false}
+          className="w-full aspect-square object-cover pointer-events-none" />
+        <div className="p-1.5">
+          <p className="text-xs truncate opacity-70">{track.artist}</p>
+          <p className="text-xs truncate opacity-45">{track.name}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
+  return (
+    <div className="pending-card-wrap flex-shrink-0 flex flex-col items-center select-none">
+      <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
+        style={{
+          fontSize:   "0.8rem",
+          color:      "#fff",
+          background: "rgba(var(--color-secondary-rgb), 0.85)",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.5px",
+        }}>
+        {year}
+      </p>
+      <div className="track-card"
+        style={{
+          borderStyle: "dashed",
+          borderWidth: "1.5px",
+          borderColor: "rgba(var(--color-secondary-rgb), 0.5)",
+          opacity: 0.85,
+        }}>
+        <img src={track.coverUrl} alt="" draggable={false}
+          className="w-full aspect-square object-cover pointer-events-none"
+          style={{ opacity: 0.6 }} />
+        <div className="p-1.5">
+          <p className="text-xs truncate opacity-60">{track.artist}</p>
+          <p className="text-[10px] uppercase tracking-wider opacity-40">pending</p>
+        </div>
       </div>
     </div>
   );
@@ -210,8 +341,8 @@ function TrackCard({ entry }: { entry: TlTimelineEntry }) {
 
 function QuestionCard(_: { track: SpotifyTrack }) {
   return (
-    <div className="question-card">
-      <div className="w-full aspect-square flex items-center justify-center"
+    <div className="question-card select-none">
+      <div className="w-full aspect-square flex items-center justify-center pointer-events-none"
         style={{ background: "rgba(255,255,255,0.04)" }}>
         <span className="text-2xl">🎵</span>
       </div>
@@ -226,31 +357,32 @@ function QuestionCard(_: { track: SpotifyTrack }) {
 // ── Audio Player ──────────────────────────────────────────────────────────────
 
 interface AudioPlayerProps {
-  isDJ:        boolean;
-  isMyTurn:    boolean;
-  trackUri:    string | null;
+  isDJ:         boolean;
+  isMyTurn:     boolean;
+  trackUri:     string | null;
   playingSince: number | null;
-  pausedAtMs:  number | null;
-  onPlay:      (uri: string) => void;
-  onPause:     () => void;
-  onSeek:      (ms: number) => void;
-  volume:      number;
-  onVolume:    (v: number) => void;
-  durationMs:  number;
-  positionMs:  number;
-  djReady:     boolean;
-  onCapture:   () => void;
-  streaming:   boolean;
+  pausedAtMs:   number | null;
+  djPlaying:    boolean;        // local SDK state — used for immediate DJ button feedback
+  onPlay:       (uri: string) => void;
+  onPause:      () => void;
+  onSeek:       (ms: number) => void;
+  volume:       number;
+  onVolume:     (v: number) => void;
+  durationMs:   number;
+  positionMs:   number;
+  djReady:      boolean;
   listenerConnected: boolean;
 }
 
 function AudioPlayerUI(props: AudioPlayerProps) {
   const {
-    isDJ, trackUri, onPlay, onPause, onSeek, volume, onVolume,
-    durationMs, positionMs, djReady, onCapture, streaming, listenerConnected,
+    isDJ, djPlaying, trackUri, onPlay, onPause, onSeek, volume, onVolume,
+    durationMs, positionMs, djReady, listenerConnected,
   } = props;
 
-  const playing = props.playingSince !== null && props.pausedAtMs === null;
+  // DJ uses the local SDK state for instant feedback; listeners derive from realtime room state.
+  const playing = isDJ ? djPlaying : (props.playingSince !== null && props.pausedAtMs === null);
+  const [volOpen, setVolOpen] = useState(false);
 
   function fmt(ms: number) {
     const s = Math.floor(ms / 1000);
@@ -260,171 +392,392 @@ function AudioPlayerUI(props: AudioPlayerProps) {
   const pct = durationMs > 0 ? (positionMs / durationMs) * 100 : 0;
 
   return (
-    <Panel className="p-4 space-y-3">
+    <div className="flex-shrink-0 flex items-center gap-3 px-3 py-2 rounded-lg w-full"
+      style={{
+        background:     "linear-gradient(180deg, rgba(var(--surface-raised-rgb), 0.6), rgba(var(--surface-overlay-rgb), 0.85))",
+        border:         "1px solid rgba(var(--color-primary-rgb), 0.25)",
+        backdropFilter: "blur(8px)",
+      }}>
 
-      {isDJ && !streaming && (
-        <div className="text-center">
-          <p className="text-xs opacity-60 mb-2">Share your tab audio so everyone can hear. Chrome required.</p>
-          <Button size="sm" variant="ghost" onClick={onCapture}>🎧 Share tab audio</Button>
+      {/* Now-playing label (left side, like Spotify's track info) */}
+      <div className="flex items-center gap-2 flex-shrink-0 min-w-[120px]">
+        <div className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0"
+          style={{ background: "rgba(var(--color-primary-rgb), 0.15)", border: "1px solid rgba(var(--color-primary-rgb), 0.35)" }}>
+          <span className="text-base">🎵</span>
+        </div>
+        <div className="hidden sm:block min-w-0">
+          <p className="text-xs font-semibold opacity-80 truncate">Now playing</p>
+          <p className="text-[10px] opacity-50 truncate">{trackUri ? "Mystery track" : "—"}</p>
+        </div>
+      </div>
+
+      {/* Play/pause (DJ) or wave/idle (listener) */}
+      {isDJ ? (
+        playing ? (
+          <button onClick={onPause}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0"
+            style={{ background: "rgb(var(--color-primary-rgb))", color: "#000" }}>
+            ⏸
+          </button>
+        ) : (
+          <button onClick={() => trackUri && onPlay(trackUri)}
+            disabled={!djReady || !trackUri}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0 disabled:opacity-30"
+            style={{ background: "rgb(var(--color-primary-rgb))", color: "#000" }}>
+            ▶
+          </button>
+        )
+      ) : playing ? (
+        <div className="wave-bars flex-shrink-0">
+          {Array.from({ length: 5 }).map((_, i) => <span key={i} className="wave-bar" />)}
+        </div>
+      ) : (
+        <div className="w-9 h-9 flex items-center justify-center flex-shrink-0 opacity-40">
+          <span className="text-sm">🎵</span>
         </div>
       )}
+
+      {/* Progress bar */}
+      <div className="flex-1 min-w-0 relative h-1.5 rounded-full overflow-hidden cursor-pointer"
+        style={{ background: "rgba(255,255,255,0.08)" }}
+        onClick={e => {
+          if (!isDJ || durationMs === 0) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          onSeek(Math.floor(((e.clientX - rect.left) / rect.width) * durationMs));
+        }}>
+        <div className="absolute left-0 top-0 h-full rounded-full"
+          style={{ width: `${pct}%`, background: "rgb(var(--color-primary-rgb))" }} />
+      </div>
+
+      {/* Time */}
+      <span className="text-xs opacity-50 flex-shrink-0 font-mono whitespace-nowrap"
+        style={{ fontVariantNumeric: "tabular-nums" }}>
+        {fmt(positionMs)} / {fmt(durationMs)}
+      </span>
+
+      {/* Volume — collapsed behind icon */}
+      <div className="relative flex-shrink-0">
+        <button
+          onClick={() => setVolOpen(v => !v)}
+          className="w-7 h-7 flex items-center justify-center rounded opacity-60 hover:opacity-100"
+          title="Volume"
+        >
+          {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
+        </button>
+        {volOpen && (
+          <div className="absolute right-0 top-full mt-1 z-10 px-3 py-2 rounded-lg flex items-center gap-2"
+            style={{
+              background: "rgba(var(--surface-raised-rgb), 0.95)",
+              border:     "1px solid rgba(255,255,255,0.1)",
+              backdropFilter: "blur(8px)",
+            }}>
+            <input type="range" min="0" max="1" step="0.05" value={volume}
+              onChange={e => onVolume(Number(e.target.value))}
+              className="orange-range w-32" />
+          </div>
+        )}
+      </div>
 
       {!isDJ && !listenerConnected && (
-        <p className="text-xs text-center opacity-50">Waiting for host audio…</p>
+        <span className="text-xs opacity-40 flex-shrink-0">…</span>
       )}
-
-      {/* Playback row */}
-      <div className="flex items-center gap-3">
-        {/* Play/pause — DJ only */}
-        {isDJ ? (
-          playing ? (
-            <button onClick={onPause}
-              className="w-10 h-10 rounded-full flex items-center justify-center text-lg flex-shrink-0"
-              style={{ background: "rgb(var(--color-primary-rgb))", color: "#000" }}>
-              ⏸
-            </button>
-          ) : (
-            <button onClick={() => trackUri && onPlay(trackUri)}
-              disabled={!djReady || !trackUri}
-              className="w-10 h-10 rounded-full flex items-center justify-center text-lg flex-shrink-0 disabled:opacity-30"
-              style={{ background: "rgb(var(--color-primary-rgb))", color: "#000" }}>
-              ▶
-            </button>
-          )
-        ) : (
-          /* Listener waveform / idle indicator */
-          playing ? (
-            <div className="wave-bars flex-shrink-0">
-              {Array.from({ length: 7 }).map((_, i) => <span key={i} className="wave-bar" />)}
-            </div>
-          ) : (
-            <div className="flex gap-0.5 items-end flex-shrink-0" style={{ height: 20 }}>
-              {[10, 16, 20, 14, 18, 12, 8].map((h, i) => (
-                <span key={i} className="block w-[3px] rounded-[1.5px]"
-                  style={{ height: h, background: "rgba(255,255,255,0.1)" }} />
-              ))}
-            </div>
-          )
-        )}
-
-        {/* Progress bar + waveform (DJ has waveform when playing) */}
-        <div className="flex-1 space-y-1.5">
-          {isDJ && playing && (
-            <div className="wave-bars">
-              {Array.from({ length: 7 }).map((_, i) => <span key={i} className="wave-bar" />)}
-            </div>
-          )}
-          <div className="relative h-1.5 rounded-full overflow-hidden cursor-pointer"
-            style={{ background: "rgba(255,255,255,0.08)" }}
-            onClick={e => {
-              if (!isDJ || durationMs === 0) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              onSeek(Math.floor(((e.clientX - rect.left) / rect.width) * durationMs));
-            }}>
-            <div className="absolute left-0 top-0 h-full rounded-full"
-              style={{ width: `${pct}%`, background: "rgb(var(--color-primary-rgb))" }} />
-          </div>
-        </div>
-
-        {/* Time */}
-        <div className="text-right text-xs opacity-40 flex-shrink-0" style={{ fontFamily: "var(--font-mono)" }}>
-          <div>{fmt(positionMs)}</div>
-          <div>{fmt(durationMs)}</div>
-        </div>
-      </div>
-
-      {/* Volume + streaming status */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs opacity-40">🔈</span>
-        <input type="range" min="0" max="1" step="0.05" value={volume}
-          onChange={e => onVolume(Number(e.target.value))}
-          className="flex-1 orange-range" />
-        <span className="text-xs opacity-40">🔊</span>
-        {isDJ && streaming && (
-          <span className="ml-2 text-xs" style={{ color: "rgb(var(--color-success-rgb, 40,180,60))" }}>● live</span>
-        )}
-      </div>
-    </Panel>
+    </div>
   );
 }
 
 // ── Reveal overlay ────────────────────────────────────────────────────────────
 
 interface RevealProps {
-  track:        SpotifyTrack;
-  outcome:      "correct" | "incorrect";
-  actualYear:   number;
-  isActiveTeam: boolean;
-  pendingCount: number;
-  tokens:       number;
-  onStop:       () => void;
-  onToken:      () => void;
-  onNext:       () => void;
+  round:                TlRound;
+  judgeMode:            JudgeMode;
+  voteTimerSeconds:     number;
+  isActiveTeam:         boolean;
+  isCaptain:            boolean;
+  isJudgeEligible:      boolean;
+  myPlayerId:           string;
+  totalEligibleVoters:  number;
+  pendingCount:         number;
+  onJudge:              (kind: "artist" | "songname", verdict: boolean) => Promise<void>;
+  onFinalize:           () => Promise<void>;
+  onStop:               () => void;
+  onNext:               () => void;
 }
 
-function RevealOverlay({ track, outcome, actualYear, isActiveTeam, pendingCount, tokens, onStop, onToken, onNext }: RevealProps) {
-  const isCorrect = outcome === "correct";
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(10px)" }}>
-      <div className="w-full max-w-sm text-center space-y-4">
+function RevealOverlay({
+  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible,
+  myPlayerId, totalEligibleVoters, pendingCount,
+  onJudge, onFinalize, onStop, onNext,
+}: RevealProps) {
+  const isCorrect      = round.outcome === "correct";
+  // hasGuess: did the captain type any artist/song name with the placement?
+  const hasGuess       = (round.artist_guess?.trim() ?? "") !== "" || (round.songname_guess?.trim() ?? "") !== "";
+  const isVoteMode     = judgeMode === "vote-all";
+  const finalized      = !hasGuess
+    ? true
+    : (isVoteMode ? round.judging_finalized : (round.artist_correct !== null && round.songname_correct !== null));
+  const bonusEligible  = hasGuess && round.artist_correct === true && round.songname_correct === true;
 
-        <img src={track.coverUrl} alt=""
-          className="w-20 h-20 rounded-xl object-cover mx-auto"
-          style={{ opacity: 0.7 }} />
+  // Vote timer (vote-all mode only): client-side countdown driven by judging_started_at.
+  const startedAtMs = round.judging_started_at ? Date.parse(round.judging_started_at) : 0;
+  const expiresAtMs = startedAtMs + voteTimerSeconds * 1000;
+  const [now, setNow] = useState<number>(Date.now());
+  useEffect(() => {
+    if (!isVoteMode || !startedAtMs || finalized) return;
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [isVoteMode, startedAtMs, finalized]);
+  const remainingSec = Math.max(0, Math.ceil((expiresAtMs - now) / 1000));
 
-        {/* Year stamp */}
-        <div className="stamp-in">
-          <div className="inline-block px-6 py-3 rounded-xl"
-            style={{
-              background: isCorrect ? "rgba(var(--color-success-rgb, 40,180,60), 0.1)" : "rgba(var(--color-danger-rgb, 220,60,60), 0.1)",
-              border: `2px solid ${isCorrect ? "rgba(40,180,60,0.5)" : "rgba(220,60,60,0.5)"}`,
-            }}>
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: "36px", fontWeight: 700,
-              color: isCorrect ? "rgb(40,180,60)" : "rgb(220,60,60)", lineHeight: 1 }}>
-              {actualYear}
-            </p>
+  // When the timer expires, fire finalize once (any client triggers; server is idempotent).
+  const finalizeFiredRef = useRef(false);
+  useEffect(() => {
+    if (!isVoteMode || finalized || !startedAtMs) return;
+    if (remainingSec === 0 && !finalizeFiredRef.current) {
+      finalizeFiredRef.current = true;
+      onFinalize();
+    }
+  }, [isVoteMode, finalized, startedAtMs, remainingSec, onFinalize]);
+
+  // ── INCORRECT placement ─────────────────────────────────────────────────────
+  if (!isCorrect) {
+    return (
+      <Backdrop>
+        <div className="w-full max-w-sm text-center space-y-4">
+          <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" style={{ opacity: 0.6 }} />
+
+          <YearStamp year={round.track.releaseYear} variant="wrong" />
+
+          <div>
+            <p className="font-bold text-lg">{round.track.name}</p>
+            <p className="text-sm opacity-60">{round.track.artist}</p>
           </div>
-        </div>
 
-        <div>
-          <p className="font-bold text-lg">{track.name}</p>
-          <p className="text-sm opacity-60">{track.artist}</p>
-        </div>
-
-        {!isCorrect && (
           <div className="rounded-xl p-3"
             style={{ background: "rgba(220,60,60,0.1)", border: "1px solid rgba(220,60,60,0.2)" }}>
             <p className="text-sm font-semibold text-red-400">
-              Wrong placement — {pendingCount > 0 ? `${pendingCount} pending card${pendingCount > 1 ? "s" : ""} lost` : "turn ends"}
+              Wrong placement — {pendingCount > 0 ? `${pendingCount} pending card${pendingCount > 1 ? "s" : ""} lost. Turn ends.` : "Turn ends."}
             </p>
+          </div>
+
+          {isCaptain ? (
+            <Button onClick={onStop} className="w-full">Continue → next team</Button>
+          ) : (
+            <p className="text-xs opacity-50">Waiting for captain to continue…</p>
+          )}
+        </div>
+      </Backdrop>
+    );
+  }
+
+  // ── CORRECT placement: full reveal (+ judge if guesses were submitted) ─────
+  return (
+    <Backdrop>
+      <div className="w-full max-w-md space-y-4">
+        <div className="text-center space-y-3">
+          <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" />
+          <YearStamp year={round.track.releaseYear} variant="right" />
+          <div>
+            <p className="font-bold text-lg">{round.track.name}</p>
+            <p className="text-sm opacity-60">{round.track.artist}</p>
+          </div>
+        </div>
+
+        {hasGuess && (
+          <Panel className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-wider opacity-50">Your guess</p>
+              {isVoteMode && !finalized && startedAtMs > 0 && (
+                <p className="text-xs font-mono"
+                  style={{ color: remainingSec <= 5 ? "rgb(220,60,60)" : "rgb(var(--color-secondary-rgb))" }}>
+                  ⏱ {remainingSec}s
+                </p>
+              )}
+            </div>
+
+            <JudgeRow
+              label="Song name"
+              guess={round.songname_guess ?? ""}
+              actual={round.track.name}
+              verdict={round.songname_correct}
+              canJudge={isJudgeEligible}
+              onJudge={(v) => onJudge("songname", v)}
+              voteMode={isVoteMode}
+              finalized={finalized}
+              votes={round.songname_votes}
+              myPlayerId={myPlayerId}
+              totalVoters={totalEligibleVoters}
+            />
+            <JudgeRow
+              label="Artist"
+              guess={round.artist_guess ?? ""}
+              actual={round.track.artist}
+              verdict={round.artist_correct}
+              canJudge={isJudgeEligible}
+              onJudge={(v) => onJudge("artist", v)}
+              voteMode={isVoteMode}
+              finalized={finalized}
+              votes={round.artist_votes}
+              myPlayerId={myPlayerId}
+              totalVoters={totalEligibleVoters}
+            />
+
+            {!isJudgeEligible && !finalized && (
+              <p className="text-xs text-center opacity-50">{judgePendingMessage(judgeMode)}</p>
+            )}
+          </Panel>
+        )}
+
+        {finalized && bonusEligible && (
+          <div className="text-center text-sm font-semibold py-2 rounded-lg"
+            style={{
+              background: "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.18), rgba(var(--color-secondary-rgb), 0.18))",
+              border: "1px solid rgba(var(--color-primary-rgb), 0.35)",
+              color: "rgb(var(--color-secondary-rgb))",
+            }}>
+            🪙 +1 Token earned (ready next turn)
           </div>
         )}
 
-        {isCorrect && isActiveTeam && (
+        {isCaptain && (
           <div className="space-y-2">
-            <p className="text-sm opacity-60">{pendingCount} card{pendingCount !== 1 ? "s" : ""} this turn</p>
-            <div className="grid grid-cols-3 gap-2">
+            <p className="text-sm opacity-60 text-center">
+              {pendingCount} pending card{pendingCount !== 1 ? "s" : ""} this turn
+              {!finalized && <span className="text-xs opacity-60"> · Judging not finalized — no token bonus</span>}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
               <Button onClick={onStop} variant="ghost" size="sm" className="flex-col gap-0.5 py-3">
                 <span className="text-lg">🛑</span>
                 <span className="text-xs">Stop & lock</span>
-              </Button>
-              <Button onClick={onToken} variant="ghost" size="sm" disabled={tokens <= 0}
-                className="flex-col gap-0.5 py-3">
-                <span className="text-lg">🪙</span>
-                <span className="text-xs">Token ({tokens})</span>
               </Button>
               <Button onClick={onNext} size="sm" className="flex-col gap-0.5 py-3">
                 <span className="text-lg">▶</span>
                 <span className="text-xs">Next song</span>
               </Button>
             </div>
-            <p className="text-xs opacity-40">
-              Token: lock cards + skip song · Next: risk losing all {pendingCount} cards
+            <p className="text-xs opacity-40 text-center">
+              Next: risk losing all {pendingCount} card{pendingCount !== 1 ? "s" : ""} if you place wrong
             </p>
           </div>
         )}
+        {!isCaptain && (
+          <p className="text-xs opacity-50 text-center">Waiting for captain to choose…</p>
+        )}
       </div>
+    </Backdrop>
+  );
+}
+
+function judgePendingMessage(mode: JudgeMode): string {
+  if (mode === "host")              return "Waiting for the host to judge…";
+  if (mode === "team-captain")      return "Waiting for your captain to judge…";
+  if (mode === "next-team-captain") return "Waiting for the next team's captain to judge…";
+  return "Cast your vote above (waiting on others)…";
+}
+
+function Backdrop({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
+      style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(10px)" }}>
+      {children}
+    </div>
+  );
+}
+
+function YearStamp({ year, variant }: { year: number; variant: "right" | "wrong" }) {
+  const ok = variant === "right";
+  return (
+    <div className="stamp-in">
+      <div className="inline-block px-6 py-3 rounded-xl"
+        style={{
+          background: ok ? "rgba(40,180,60,0.1)" : "rgba(220,60,60,0.1)",
+          border:    `2px solid ${ok ? "rgba(40,180,60,0.5)" : "rgba(220,60,60,0.5)"}`,
+        }}>
+        <p style={{
+          fontFamily: "var(--font-mono)", fontSize: 36, fontWeight: 700,
+          color: ok ? "rgb(40,180,60)" : "rgb(220,60,60)", lineHeight: 1,
+        }}>
+          {year}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function JudgeRow({
+  label, guess, actual, verdict, canJudge, onJudge,
+  voteMode = false, finalized = false, votes = {}, myPlayerId = "", totalVoters = 0,
+}: {
+  label:        string;
+  guess:        string;
+  actual:       string;
+  verdict:      boolean | null;
+  canJudge:     boolean;
+  onJudge:      (v: boolean) => void;
+  voteMode?:    boolean;
+  finalized?:   boolean;
+  votes?:       Record<string, boolean>;
+  myPlayerId?:  string;
+  totalVoters?: number;
+}) {
+  // In vote-mode pre-finalize, "verdict" comes from MY vote, not the final verdict.
+  let myVote: boolean | null = null;
+  let yesCount = 0, noCount = 0;
+  if (voteMode) {
+    for (const v of Object.values(votes)) v ? yesCount++ : noCount++;
+    if (myPlayerId in votes) myVote = votes[myPlayerId];
+  }
+  const showVerdict     = !voteMode || finalized;
+  const highlightVerdict = showVerdict ? verdict : myVote;
+
+  return (
+    <div className="rounded-lg p-3"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+      <p className="text-xs uppercase tracking-wider opacity-50 mb-1">{label}</p>
+      <div className="flex items-baseline gap-2 mb-2 flex-wrap">
+        <p className="text-sm">
+          <span className="opacity-50">Guess:</span>{" "}
+          <span className="font-semibold">{guess || <span className="opacity-40 italic">—</span>}</span>
+        </p>
+        <p className="text-sm">
+          <span className="opacity-50">Actual:</span>{" "}
+          <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actual}</span>
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => canJudge && onJudge(true)}
+          disabled={!canJudge}
+          className="text-xs font-bold py-1.5 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1"
+          style={{
+            background: highlightVerdict === true ? "rgba(40,180,60,0.2)" : "transparent",
+            border:    `1px solid ${highlightVerdict === true ? "rgba(40,180,60,0.6)" : "rgba(255,255,255,0.12)"}`,
+            color:      highlightVerdict === true ? "rgb(40,180,60)" : "rgb(var(--text-muted-rgb))",
+            opacity:    canJudge ? 1 : 0.7,
+          }}
+        >
+          ✓ Correct
+          {voteMode && !finalized && <span className="opacity-60 font-mono">{yesCount}</span>}
+        </button>
+        <button
+          onClick={() => canJudge && onJudge(false)}
+          disabled={!canJudge}
+          className="text-xs font-bold py-1.5 rounded transition-all disabled:cursor-default flex items-center justify-center gap-1"
+          style={{
+            background: highlightVerdict === false ? "rgba(220,60,60,0.2)" : "transparent",
+            border:    `1px solid ${highlightVerdict === false ? "rgba(220,60,60,0.6)" : "rgba(255,255,255,0.12)"}`,
+            color:      highlightVerdict === false ? "rgb(220,60,60)" : "rgb(var(--text-muted-rgb))",
+            opacity:    canJudge ? 1 : 0.7,
+          }}
+        >
+          ✗ Wrong
+          {voteMode && !finalized && <span className="opacity-60 font-mono">{noCount}</span>}
+        </button>
+      </div>
+      {voteMode && !finalized && totalVoters > 0 && (
+        <p className="text-[10px] opacity-50 text-center mt-1.5">
+          {yesCount + noCount}/{totalVoters} voted
+        </p>
+      )}
     </div>
   );
 }
@@ -441,10 +794,50 @@ export default function GamePage() {
   const [noteText,   setNoteText]   = useState("");
   const [pingYear,   setPingYear]   = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [revealData, setRevealData] = useState<{ outcome: "correct" | "incorrect"; year: number } | null>(null);
 
-  const [djStream,  setDjStream]  = useState<MediaStream | null>(null);
-  const [streaming, setStreaming] = useState(false);
+  // Lifted guess inputs so chat-pull buttons can write into them.
+  const [guessArtist,   setGuessArtist]   = useState("");
+  const [guessSongname, setGuessSongname] = useState("");
+
+  // Anti-spam cooldown for pings (per-client, in-memory).
+  const pingTimestampsRef = useRef<number[]>([]);
+
+  // Host-only management menu.
+  const [hostMenuOpen, setHostMenuOpen] = useState(false);
+
+  // Player-leave notifications (transient).
+  const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
+
+  // Optimistic local staging so the captain sees instant feedback even if the server is slow.
+  // Server-driven values (broadcast via realtime) are the source of truth for everyone else.
+  const [optimisticStaged, setOptimisticStaged] = useState<{ left: number | null; right: number | null } | null>(null);
+  // Clear optimistic state when round changes
+  useEffect(() => { setOptimisticStaged(null); }, [state?.round?.id]);
+
+  // Staging POSTs to the server; server pushes to all clients via realtime.
+  async function stageGap(_gapIdx: number | null, leftYear: number | null, rightYear: number | null) {
+    if (!state?.round) return;
+    setOptimisticStaged({ left: leftYear, right: rightYear });
+    try {
+      const res = await fetch(`/room/${roomId}/round?action=stage`, {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          round_id:          state.round.id,
+          player_id:         myPlayerId,
+          staged_left_year:  leftYear,
+          staged_right_year: rightYear,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.error("[musix] stage failed:", res.status, txt);
+      }
+    } catch (err) {
+      console.error("[musix] stage error:", err);
+    }
+  }
 
   const onDJStateChange = useCallback((playing: boolean, positionMs: number) => {
     if (!roomId) return;
@@ -457,20 +850,81 @@ export default function GamePage() {
   const listenAudio = useListenerAudio();
 
   const isDJ       = state?.myPlayer?.is_host ?? false;
+  const isHost     = state?.myPlayer?.is_host ?? false;
   const isMyTurn   = !!(state?.room.active_team_id && state.myPlayer?.team_id === state.room.active_team_id);
   const iAmCaptain = state?.myPlayer?.is_captain ?? false;
 
-  useDJWebRTC(isDJ ? roomId : undefined, isDJ ? myPlayerId : undefined, djStream);
-  useListenerWebRTC(!isDJ ? roomId : undefined, !isDJ ? myPlayerId : undefined, listenAudio.setStream);
+  async function kickPlayer(targetId: string) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/kick`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, target_id: targetId }),
+    });
+  }
+
+  async function makeCaptain(targetPlayer: { id: string; team_id: number | null; is_captain: boolean }) {
+    if (!targetPlayer.team_id) return;
+    if (targetPlayer.is_captain) {
+      // Toggle off — useful for host to un-captain themselves.
+      await supabase.from("tl_players").update({ is_captain: false }).eq("id", targetPlayer.id);
+    } else {
+      // Transfer: clear other captains on this team, then set target as captain.
+      const teammates = state?.players.filter(p => p.team_id === targetPlayer.team_id) ?? [];
+      for (const p of teammates) {
+        if (p.is_captain) {
+          await supabase.from("tl_players").update({ is_captain: false }).eq("id", p.id);
+        }
+      }
+      await supabase.from("tl_players").update({ is_captain: true }).eq("id", targetPlayer.id);
+    }
+  }
+
+  // WebRTC tab-share relay is parked — players use Discord for shared audio.
+  // The hooks stay no-op (no MediaStream wired up) per the design decision.
+  useDJWebRTC(undefined, undefined, null);
+  useListenerWebRTC(undefined, undefined, listenAudio.setStream);
 
   useEffect(() => {
     if (state?.room.status === "finished") navigate(`/end/${roomId}`);
   }, [state?.room.status, roomId, navigate]);
 
-  async function handleCapture() {
-    const stream = await djAudio.captureStream();
-    if (stream) { setDjStream(stream); setStreaming(true); }
-  }
+  // Reset guess inputs whenever the round changes.
+  useEffect(() => {
+    setGuessArtist("");
+    setGuessSongname("");
+  }, [state?.round?.id]);
+
+  // Detect player departures and surface a toast.
+  const prevPlayersRef = useRef<TlPlayer[]>([]);
+  useEffect(() => {
+    const prev = prevPlayersRef.current;
+    const curr = state?.players ?? [];
+    if (prev.length > 0) {
+      const left = prev.filter(p => !curr.some(c => c.id === p.id));
+      for (const p of left) {
+        const id = `${p.id}-${Date.now()}`;
+        setLeaveToasts(t => [...t, { id, name: p.name }]);
+        setTimeout(() => setLeaveToasts(t => t.filter(x => x.id !== id)), 4000);
+      }
+    }
+    prevPlayersRef.current = curr;
+  }, [state?.players]);
+
+  // Auto-play the round's track on the DJ's side whenever a new placement-phase round starts.
+  // Captain doesn't have to manually click play after Next song / Continue / token.
+  const lastAutoPlayedRoundRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isDJ || !djAudio.ready) return;
+    if (!state?.round || state.round.outcome !== null) return;
+    if (state.room.status !== "playing") return;
+    if (lastAutoPlayedRoundRef.current === state.round.id) return;
+    lastAutoPlayedRoundRef.current = state.round.id;
+    djAudio.play(state.round.track.uri).catch(err => {
+      console.error("[musix] auto-play failed:", err);
+    });
+  }, [isDJ, djAudio.ready, state?.round?.id, state?.round?.outcome, state?.room.status]);
 
   const onTimerExpire = useCallback(async () => {
     if (!isMyTurn || !iAmCaptain || !state?.round || state.round.outcome !== null) return;
@@ -489,26 +943,59 @@ export default function GamePage() {
   const activeTeam = teams.find(t => t.id === room.active_team_id);
   const pingYears  = pings.map(p => p.year);
 
-  async function submitPlacement(leftYear: number | null, rightYear: number | null) {
+  async function confirmGuess() {
     if (!round || submitting) return;
+    // Prefer optimistic local stage (instant captain feedback) over the server-synced value
+    // so confirms work even if the realtime/migration is lagging.
+    const stagedL = optimisticStaged ? optimisticStaged.left  : (round.staged_left_year  ?? null);
+    const stagedR = optimisticStaged ? optimisticStaged.right : (round.staged_right_year ?? null);
+    if (stagedL === null && stagedR === null) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/room/${roomId}/round?action=place`, {
+      await fetch(`/room/${roomId}/round?action=place`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ round_id: round.id, left_year: leftYear, right_year: rightYear, player_id: myPlayerId }),
+        body: JSON.stringify({
+          round_id:       round.id,
+          left_year:      stagedL,
+          right_year:     stagedR,
+          artist_guess:   guessArtist.trim(),
+          songname_guess: guessSongname.trim(),
+          player_id:      myPlayerId,
+        }),
       });
-      const data = await res.json() as { outcome: "correct" | "incorrect"; actual_year: number };
-      setRevealData({ outcome: data.outcome, year: data.actual_year });
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function doTurnAction(action: "stop" | "token" | "next") {
-    setRevealData(null);
+  async function judge(kind: "artist" | "songname", verdict: boolean) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=judge`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, kind, verdict }),
+    });
+  }
+
+  async function doTurnAction(action: "stop" | "next") {
     await fetch(`/room/${roomId}/round?action=turn`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ action, player_id: myPlayerId }),
+    });
+  }
+
+  async function useToken() {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=usetoken`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
+    });
+  }
+
+  async function finalizeJudgment() {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=finalize`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
     });
   }
 
@@ -520,102 +1007,196 @@ export default function GamePage() {
     setNoteText("");
   }
 
+  // Drop a ping at a specific year, throttled to prevent spam.
+  // Cooldown: 0.5s between pings; if 5+ pings in the last 3.5s, escalates to 2s.
+  function pingAtYear(year: number) {
+    if (!round || !myPlayer) return;
+    if (year < 1900 || year > 2030) return;
+
+    const now = Date.now();
+    pingTimestampsRef.current = pingTimestampsRef.current.filter(ts => now - ts < 3500);
+    const recent  = pingTimestampsRef.current;
+    const lastTs  = recent[recent.length - 1] ?? 0;
+    const cooldown = recent.length >= 5 ? 2000 : 500;
+    if (now - lastTs < cooldown) return; // silently throttle
+
+    pingTimestampsRef.current.push(now);
+    supabase.from("tl_pings").insert({
+      round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, year,
+    });
+  }
+
   async function sendPing() {
     const yr = parseInt(pingYear, 10);
-    if (isNaN(yr) || yr < 1900 || yr > 2025 || !round || !myPlayer) return;
-    await supabase.from("tl_pings").insert({
-      round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, year: yr,
-    });
+    if (isNaN(yr)) return;
+    pingAtYear(yr);
     setPingYear("");
   }
 
   return (
-    <div className="flex-1 flex flex-col p-3 gap-3 max-w-4xl mx-auto w-full">
+    <div className="flex-1 flex flex-col p-2 gap-1 w-full min-h-0">
 
-      {/* ── Turn banner ───────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between rounded-xl px-4 py-2.5"
+      {/* ── Header bar: turn info · tokens · timer · host menu ───────── */}
+      <div className="flex-shrink-0 flex items-center gap-3 rounded-lg px-3 py-1 relative"
         style={{
           background: isMyTurn ? "rgba(var(--color-primary-rgb), 0.12)" : "rgba(var(--surface-raised-rgb), 0.3)",
           border: `1px solid ${isMyTurn ? "rgba(var(--color-primary-rgb), 0.35)" : "rgba(255,255,255,0.06)"}`,
         }}>
-        <div>
-          <p className="text-xs opacity-50">{isMyTurn ? "Your turn!" : `${activeTeam?.name ?? "…"}'s turn`}</p>
-          <p className="font-bold text-sm">{activeTeam?.name}</p>
+        <div className="flex-shrink-0 min-w-0">
+          <p className="text-[10px] opacity-50 leading-tight">{isMyTurn ? "Your turn" : "Active"}</p>
+          <p className="font-bold text-sm leading-tight truncate">{activeTeam?.name ?? "—"}</p>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
           {teams.map(t => (
-            <div key={t.id} className="flex items-center gap-1 text-xs opacity-60">
-              <span className="font-semibold">{t.name.slice(0, 8)}</span>
+            <div key={t.id} className="flex items-center gap-1 text-xs opacity-60"
+              title={`${t.tokens} ready · ${t.tokens_pending ?? 0} pending`}>
+              <span className="font-semibold hidden sm:inline">{t.name.slice(0, 8)}</span>
               <span>{"🪙".repeat(t.tokens)}</span>
+              {(t.tokens_pending ?? 0) > 0 && (
+                <span style={{ opacity: 0.45 }}>{"⊕".repeat(t.tokens_pending)}</span>
+              )}
             </div>
           ))}
           {timerStartedAt && <TimerRing remaining={remaining} />}
+
+          {/* Host management menu */}
+          {isHost && (
+            <div className="relative">
+              <button
+                onClick={() => setHostMenuOpen(v => !v)}
+                className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                style={{
+                  background: hostMenuOpen
+                    ? "rgba(var(--color-primary-rgb),0.2)"
+                    : "rgba(var(--surface-raised-rgb),0.5)",
+                  border:     "1px solid rgba(var(--color-primary-rgb),0.3)",
+                  color:      "rgb(var(--color-primary-rgb))",
+                }}
+                title="Host controls"
+              >
+                ⚙ Manage
+              </button>
+              {hostMenuOpen && (
+                <>
+                  {/* Click-outside closer */}
+                  <div className="fixed inset-0 z-30" onClick={() => setHostMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-40 rounded-lg p-3 w-72 max-h-[60vh] overflow-y-auto scrollbar-hidden"
+                    style={{
+                      background:     "linear-gradient(135deg, rgba(var(--surface-raised-rgb),0.95), rgba(var(--surface-overlay-rgb),0.95))",
+                      border:         "1px solid rgba(var(--color-primary-rgb),0.4)",
+                      backdropFilter: "blur(12px)",
+                      boxShadow:      "var(--shadow-card)",
+                    }}>
+                    <p className="text-xs uppercase tracking-wider opacity-50 mb-2">Captain transfer</p>
+                    <div className="space-y-3">
+                      {teams.map(team => {
+                        const teammates = state.players.filter(p => p.team_id === team.id && !p.is_spectator);
+                        return (
+                          <div key={team.id}>
+                            <p className="text-xs font-semibold mb-1.5 opacity-70">{team.name}</p>
+                            {teammates.length === 0 ? (
+                              <p className="text-xs italic opacity-40 pl-2">No players</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {teammates.map(p => (
+                                  <div key={p.id} className="flex items-center justify-between gap-2">
+                                    <span className="text-sm flex items-center gap-1.5">
+                                      {p.is_captain && "👑"}
+                                      {p.name}
+                                      {p.is_host && <span className="text-[9px] opacity-50">(host)</span>}
+                                    </span>
+                                    <div className="flex gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => makeCaptain(p)}
+                                        className="text-[10px] px-2 py-0.5 rounded font-bold transition-colors"
+                                        style={{
+                                          background: p.is_captain ? "rgba(220,60,60,0.18)" : "rgba(var(--color-primary-rgb),0.18)",
+                                          border:     `1px solid ${p.is_captain ? "rgba(220,60,60,0.4)" : "rgba(var(--color-primary-rgb),0.4)"}`,
+                                          color:      p.is_captain ? "rgb(220,60,60)" : "rgb(var(--color-primary-rgb))",
+                                        }}>
+                                        {p.is_captain ? "Un-captain" : "Make captain"}
+                                      </button>
+                                      {!p.is_host && (
+                                        <button
+                                          onClick={() => kickPlayer(p.id)}
+                                          className="text-[10px] px-2 py-0.5 rounded opacity-60 hover:opacity-100"
+                                          style={{ border: "1px solid rgba(255,255,255,0.15)" }}>
+                                          Kick
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Audio player ─────────────────────────────────────────────────── */}
-      <AudioPlayerUI
-        isDJ={isDJ}
-        isMyTurn={isMyTurn}
-        trackUri={round?.track.uri ?? null}
-        playingSince={room.playing_since}
-        pausedAtMs={room.paused_at_ms}
-        onPlay={djAudio.play}
-        onPause={djAudio.pause}
-        onSeek={djAudio.seek}
-        volume={isDJ ? djAudio.volume : listenAudio.volume}
-        onVolume={isDJ ? djAudio.setVolume : listenAudio.setVolume}
-        durationMs={djAudio.durationMs}
-        positionMs={djAudio.positionMs}
-        djReady={djAudio.ready}
-        onCapture={handleCapture}
-        streaming={streaming}
-        listenerConnected={listenAudio.connected}
-      />
-
-      {/* ── Current song ─────────────────────────────────────────────────── */}
-      {round && (
-        <div className="flex items-center gap-3 rounded-xl p-3"
-          style={{ background: "rgba(var(--surface-raised-rgb), 0.3)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          {round.outcome === null ? (
-            <div className="w-12 h-12 rounded-lg flex-shrink-0 flex items-center justify-center"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-              <span className="text-xl">🎵</span>
+      {/* ── Player-leave toasts (top-right, fade out) ─────────────────────── */}
+      {leaveToasts.length > 0 && (
+        <div className="fixed top-3 right-3 z-50 flex flex-col gap-1 pointer-events-none">
+          {leaveToasts.map(t => (
+            <div key={t.id} className="text-sm px-3 py-1.5 rounded-lg shadow-lg animate-slide-in"
+              style={{
+                background: "rgba(220,60,60,0.18)",
+                border:     "1px solid rgba(220,60,60,0.45)",
+                color:      "rgb(255,200,200)",
+                backdropFilter: "blur(8px)",
+              }}>
+              👋 <strong>{t.name}</strong> left the game
             </div>
-          ) : (
-            <img src={round.track.coverUrl} alt=""
-              className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
-          )}
-          <div className="flex-1 min-w-0">
-            {round.outcome === null ? (
-              <p className="text-sm opacity-50 italic">Listen and guess the year…</p>
-            ) : (
-              <>
-                <p className="font-bold" style={{ color: "rgb(var(--color-secondary-rgb))", fontFamily: "var(--font-mono)" }}>
-                  {round.track.releaseYear}
-                </p>
-                <p className="font-semibold truncate">{round.track.artist} — {round.track.name}</p>
-              </>
-            )}
-          </div>
-          {round.outcome === null && isMyTurn && !iAmCaptain && (
-            <p className="text-xs opacity-50 flex-shrink-0">Waiting for captain…</p>
-          )}
+          ))}
         </div>
       )}
 
-      {/* ── Teams' timelines ─────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        {teams.map(team => {
+      {/* ── Teams' timelines (opponents top, audio center, my team just above chat) ─ */}
+      {(() => {
+        const myTeamId    = myPlayer?.team_id ?? null;
+        const otherTeams  = teams.filter(t => t.id !== myTeamId);
+        const myTeam      = teams.find(t => t.id === myTeamId);
+        // Compact rendering for opponent panels — saves vertical space.
+        const renderTeam  = (team: typeof teams[number], variant: "mine" | "other") => {
           const tl           = timelines[team.id] ?? [];
           const isActive     = team.id === room.active_team_id;
           const pending      = team.pending_tracks ?? [];
           const showDragCard = isActive && round && round.outcome === null;
-          const isMyTeam     = myPlayer?.team_id === team.id;
+          const isMyTeam     = variant === "mine";
 
           return (
-            <Panel key={team.id} className="p-3">
-              <div className="flex items-center gap-2 mb-2">
+            <Panel
+              key={team.id}
+              className={`${isMyTeam ? "p-3" : "p-2"} flex flex-col`}
+              style={{
+                flex:        "1 1 0",
+                minHeight:   0,
+                minWidth:    0,
+                overflow:    "hidden",
+                borderColor: isActive
+                  ? "rgba(var(--color-primary-rgb), 0.7)"
+                  : isMyTeam
+                    ? "rgba(var(--color-primary-rgb), 0.35)"
+                    : "rgba(255,255,255,0.08)",
+                borderWidth: isMyTeam ? 2 : 1,
+                background: isMyTeam
+                  ? "linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.06), rgba(var(--surface-overlay-rgb), 0.8))"
+                  : undefined,
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className="text-xs uppercase tracking-wider font-semibold"
+                  style={{ color: isMyTeam ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))" }}>
+                  {isMyTeam ? "Your team" : "Opponent"} ·
+                </span>
                 <p className="font-semibold text-sm">{team.name}</p>
                 {isActive && (
                   <span className="text-xs px-1.5 py-0.5 rounded-full font-bold"
@@ -629,35 +1210,193 @@ export default function GamePage() {
                 </span>
               </div>
 
+              {/* Team roster — only on my-team panel. Host manages opponents via the ⚙ menu. */}
+              {isMyTeam && (
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                {state.players.filter(p => p.team_id === team.id && !p.is_spectator).map(p => {
+                  // Host can click anyone — toggles captaincy. Others see read-only chips.
+                  const hostCanToggle = isHost;
+                  const titleText = hostCanToggle
+                    ? (p.is_captain ? "Click to remove captain" : "Make captain")
+                    : (p.is_captain ? "Captain" : p.name);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => hostCanToggle && makeCaptain(p)}
+                      disabled={!hostCanToggle}
+                      title={titleText}
+                      className="text-xs px-2 py-0.5 rounded-full transition-all disabled:cursor-default"
+                      style={{
+                        background: p.is_captain
+                          ? "rgba(var(--color-primary-rgb),0.18)"
+                          : (hostCanToggle ? "rgba(255,255,255,0.04)" : "transparent"),
+                        border: p.is_captain
+                          ? "1px solid rgba(var(--color-primary-rgb),0.5)"
+                          : "1px solid rgba(255,255,255,0.08)",
+                        color: p.is_captain
+                          ? "rgb(var(--color-primary-rgb))"
+                          : "rgb(var(--text-muted-rgb))",
+                      }}
+                    >
+                      {p.is_captain && "👑 "}{p.name}
+                    </button>
+                  );
+                })}
+              </div>
+              )}
+
               {tl.length === 0 && !showDragCard ? (
                 <p className="text-xs opacity-30 italic">No cards yet</p>
               ) : (
                 <Timeline
                   entries={tl}
-                  dragCard={showDragCard && isMyTeam && iAmCaptain ? round.track : null}
+                  dragCard={showDragCard && isActive ? round!.track : null}
                   isCaptain={iAmCaptain && isMyTeam && isActive}
-                  onPlace={submitPlacement}
-                  pingYears={isMyTeam ? pingYears : []}
+                  stagedLeft={isActive
+                    ? (optimisticStaged ? optimisticStaged.left : (round?.staged_left_year ?? null))
+                    : null}
+                  stagedRight={isActive
+                    ? (optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null))
+                    : null}
+                  onStageGap={stageGap}
+                  // Anyone can click any active timeline gap to drop a pin.
+                  onPingYear={isActive ? pingAtYear : undefined}
+                  pingYears={isActive ? pingYears : []}
                   pending={pending as SpotifyTrack[]}
                 />
               )}
+
             </Panel>
           );
-        })}
-      </div>
+        };
 
-      {/* ── Round chat ────────────────────────────────────────────────────── */}
-      <Panel className="p-3 space-y-3">
-        <p className="text-xs font-semibold opacity-50 uppercase tracking-wider">Round chat</p>
+        return (
+          <>
+            {/* Opponents — single horizontal row so multiple teams don't stack vertically. */}
+            {otherTeams.length > 0 && (
+              <div className={`min-h-0 overflow-hidden flex flex-row gap-1 ${isMyTurn ? "timeline-compact" : ""}`}
+                style={{ flex: isMyTurn ? "1 1 0" : "2.5 1 0" }}>
+                {otherTeams.map(t => renderTeam(t, "other"))}
+              </div>
+            )}
 
-        <div className="space-y-1 max-h-36 overflow-y-auto">
+            {/* (Audio player moved into the top header bar.) */}
+
+            {/* My team — fills proportionally. Bigger when it's my turn. */}
+            {myTeam && (
+              <div className={`min-h-0 overflow-hidden flex flex-col ${isMyTurn ? "" : "timeline-compact"}`}
+                style={{ flex: isMyTurn ? "2.5 1 0" : "1 1 0" }}>
+                {renderTeam(myTeam, "mine")}
+              </div>
+            )}
+            {/* Spectators see all teams stacked */}
+            {!myTeam && (
+              <div className="min-h-0 overflow-hidden flex flex-col gap-1"
+                style={{ flex: "2 1 0" }}>
+                {teams.map(t => renderTeam(t, "other"))}
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {/* ── Bottom panel: guess form for active captain, chat for everyone else ── */}
+      {iAmCaptain && isMyTurn && round && round.outcome === null ? (
+        <Panel className="flex-shrink-0 p-3 space-y-2"
+          style={{ borderColor: "rgba(var(--color-primary-rgb), 0.35)" }}>
+          <p className="text-xs uppercase tracking-wider opacity-50">Your guess</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <Input
+              label="Song name"
+              value={guessSongname}
+              onChange={e => setGuessSongname(e.target.value)}
+              placeholder="What's it called?"
+              maxLength={120}
+            />
+            <Input
+              label="Artist"
+              value={guessArtist}
+              onChange={e => setGuessArtist(e.target.value)}
+              placeholder="Who's playing?"
+              maxLength={120}
+            />
+          </div>
+          <p className="text-[11px] opacity-40">
+            Click a gap to place the year. Artist & song are optional — get both right for a 🪙 token bonus. No penalty if wrong.
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            {(() => {
+              const stagedL = optimisticStaged ? optimisticStaged.left  : (round?.staged_left_year  ?? null);
+              const stagedR = optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null);
+              const isStaged = stagedL !== null || stagedR !== null;
+              return (
+                <Button
+                  onClick={confirmGuess}
+                  loading={submitting}
+                  disabled={!isStaged}
+                  className="flex-1 min-w-[160px]"
+                >
+                  {!isStaged ? "Click a gap to place the card" : "✓ Confirm guess"}
+                </Button>
+              );
+            })()}
+            {(activeTeam?.tokens ?? 0) > 0 && (
+              <Button onClick={useToken} variant="ghost" size="sm" className="flex-shrink-0">
+                🪙 Use token ({activeTeam!.tokens})
+              </Button>
+            )}
+          </div>
+        </Panel>
+      ) : (
+      <Panel className="flex-shrink-0 p-2.5 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold opacity-50 uppercase tracking-wider">Chat</p>
+          {pingYears.length > 0 && (
+            <p className="text-[10px] opacity-50">📍 {pingYears.length} pin{pingYears.length !== 1 ? "s" : ""}</p>
+          )}
+        </div>
+
+        <div className="space-y-1 max-h-24 overflow-y-auto">
           {notes.length === 0 && <p className="text-xs opacity-30 italic">No notes yet…</p>}
-          {notes.map(n => (
-            <div key={n.id} className="note-enter text-sm">
-              <span className="font-semibold opacity-70">{n.player_name}: </span>
-              <span>{n.content}</span>
-            </div>
-          ))}
+          {notes.map(n => {
+            const showPullButtons =
+              iAmCaptain && isMyTurn && round?.outcome === "correct"
+              && round.artist_guess === null;
+            return (
+              <div key={n.id} className="note-enter flex items-baseline gap-2">
+                <p className="text-sm flex-1 min-w-0 break-words">
+                  <span className="font-semibold opacity-70">{n.player_name}: </span>
+                  <span>{n.content}</span>
+                </p>
+                {showPullButtons && (
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => setGuessSongname(n.content)}
+                      title="Use as song name"
+                      className="text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb),0.15)",
+                        color:      "rgb(var(--color-primary-rgb))",
+                        border:     "1px solid rgba(var(--color-primary-rgb),0.3)",
+                      }}>
+                      → Song
+                    </button>
+                    <button
+                      onClick={() => setGuessArtist(n.content)}
+                      title="Use as artist"
+                      className="text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap"
+                      style={{
+                        background: "rgba(var(--color-secondary-rgb),0.15)",
+                        color:      "rgb(var(--color-secondary-rgb))",
+                        border:     "1px solid rgba(var(--color-secondary-rgb),0.3)",
+                      }}>
+                      → Artist
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="flex gap-2">
@@ -682,15 +1421,15 @@ export default function GamePage() {
         </div>
 
         <div className="flex gap-2 items-center">
-          <span className="text-xs opacity-40">📍 Pin a year:</span>
+          <span className="text-xs opacity-40 flex-shrink-0">📍</span>
           <input
             type="number"
             value={pingYear}
             onChange={e => setPingYear(e.target.value)}
             onKeyDown={e => e.key === "Enter" && sendPing()}
-            placeholder="e.g. 1991"
+            placeholder="Pin year (e.g. 1991)"
             min={1900} max={2025}
-            className="w-24 rounded-lg px-2 py-1 text-sm outline-none"
+            className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm outline-none"
             style={{
               background: "rgba(var(--surface-raised-rgb),0.5)",
               border:     "1px solid rgba(255,255,255,0.1)",
@@ -699,31 +1438,80 @@ export default function GamePage() {
             }}
           />
           <button onClick={sendPing}
-            className="px-2 py-1 rounded text-xs font-bold"
-            style={{ background: "rgba(var(--color-secondary-rgb),0.15)", color: "rgb(var(--color-secondary-rgb))" }}>
-            Pin
+            className="px-3 py-1 rounded text-xs font-bold flex-shrink-0"
+            style={{
+              background: "rgba(var(--color-secondary-rgb),0.2)",
+              color:      "rgb(var(--color-secondary-rgb))",
+              border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
+            }}>
+            📍 Pin year
           </button>
         </div>
       </Panel>
+      )}
 
-      {/* Reveal overlay */}
-      {revealData && round && (
-        <RevealOverlay
-          track={round.track}
-          outcome={revealData.outcome}
-          actualYear={revealData.year}
-          isActiveTeam={isMyTurn}
-          pendingCount={activeTeam?.pending_tracks?.length ?? 0}
-          tokens={activeTeam?.tokens ?? 0}
-          onStop={() => doTurnAction("stop")}
-          onToken={() => doTurnAction("token")}
-          onNext={() => doTurnAction("next")}
+      {/* ── Spotify-style audio bar at the very bottom (captain only) ──────── */}
+      {iAmCaptain && (
+        <AudioPlayerUI
+          isDJ={isDJ}
+          isMyTurn={isMyTurn}
+          trackUri={round?.track.uri ?? null}
+          playingSince={room.playing_since}
+          pausedAtMs={room.paused_at_ms}
+          djPlaying={djAudio.playing}
+          onPlay={djAudio.play}
+          onPause={djAudio.pause}
+          onSeek={djAudio.seek}
+          volume={isDJ ? djAudio.volume : listenAudio.volume}
+          onVolume={isDJ ? djAudio.setVolume : listenAudio.setVolume}
+          durationMs={djAudio.durationMs}
+          positionMs={djAudio.positionMs}
+          djReady={djAudio.ready}
+          listenerConnected={listenAudio.connected}
         />
       )}
 
-      {revealData?.outcome === "incorrect" && (
-        <AutoDismiss onDismiss={() => setRevealData(null)} ms={3000} />
-      )}
+      {/* Reveal overlay — driven by round.outcome (Supabase realtime) */}
+      {round && round.outcome !== null && (() => {
+        const settings  = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
+        const judgeMode: JudgeMode = settings.judgeMode;
+
+        // Determine if this viewer is eligible to judge under the current mode
+        let isJudgeEligible = false;
+        if (myPlayer && !myPlayer.is_spectator) {
+          if (judgeMode === "host")              isJudgeEligible = myPlayer.id === room.host_id;
+          else if (judgeMode === "team-captain") isJudgeEligible = myPlayer.is_captain && myPlayer.team_id === room.active_team_id;
+          else if (judgeMode === "next-team-captain") {
+            const sorted   = [...teams].sort((a, b) => a.sort_order - b.sort_order);
+            const activeIx = sorted.findIndex(t => t.id === room.active_team_id);
+            if (activeIx !== -1) {
+              const nextTeam = sorted[(activeIx + 1) % sorted.length];
+              isJudgeEligible = myPlayer.is_captain && myPlayer.team_id === nextTeam.id;
+            }
+          }
+          else if (judgeMode === "vote-all") isJudgeEligible = true;
+        }
+
+        const totalEligibleVoters = state.players.filter(p => !p.is_spectator).length;
+
+        return (
+          <RevealOverlay
+            round={round}
+            judgeMode={judgeMode}
+            voteTimerSeconds={settings.voteTimerSeconds}
+            isActiveTeam={isMyTurn}
+            isCaptain={iAmCaptain && isMyTurn}
+            isJudgeEligible={isJudgeEligible}
+            myPlayerId={myPlayerId ?? ""}
+            totalEligibleVoters={totalEligibleVoters}
+            pendingCount={activeTeam?.pending_tracks?.length ?? 0}
+            onJudge={judge}
+            onFinalize={finalizeJudgment}
+            onStop={() => doTurnAction("stop")}
+            onNext={() => doTurnAction("next")}
+          />
+        );
+      })()}
 
       {/* Hidden audio element — required for WebRTC stream playback on listener clients */}
       {!isDJ && <audio ref={listenAudio.audioRef} style={{ display: "none" }} />}
@@ -731,10 +1519,3 @@ export default function GamePage() {
   );
 }
 
-function AutoDismiss({ onDismiss, ms }: { onDismiss: () => void; ms: number }) {
-  useEffect(() => {
-    const t = setTimeout(onDismiss, ms);
-    return () => clearTimeout(t);
-  }, [onDismiss, ms]);
-  return null;
-}

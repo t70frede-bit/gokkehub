@@ -37,6 +37,10 @@ export interface SessionData {
     displayName: string | null;
     avatarUrl:   string | null;
   };
+  lastfm?: {
+    username:    string;        // Last.fm username (just a string — no OAuth)
+    linkedAt:    number;        // Unix ms when first set
+  };
 
   createdAt: number;   // Unix ms — when the session was created
   expiresAt: number;   // Unix ms — when the session expires (7 days)
@@ -45,16 +49,18 @@ export interface SessionData {
 // ── What the client receives (safe subset — no tokens) ───────────────────────
 
 export interface PublicSessionData {
-  userId:        string;
-  email:         string | null;
-  displayName:   string | null;
-  avatarUrl:     string | null;
-  steamId?:      string | null;
-  spotifyScopes?: string;  // scopes granted at last Spotify auth (space-separated)
+  userId:           string;
+  email:            string | null;
+  displayName:      string | null;
+  avatarUrl:        string | null;
+  steamId?:         string | null;
+  spotifyScopes?:   string;  // scopes granted at last Spotify auth (space-separated)
+  lastfmUsername?:  string | null;
   linked: {
     spotify: boolean;
     discord: boolean;
     steam:   boolean;
+    lastfm:  boolean;
   };
 }
 
