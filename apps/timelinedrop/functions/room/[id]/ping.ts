@@ -1,7 +1,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, getRound, getPlayers } from "../../_supabase";
+import { getRoom, getPlayers } from "../../_supabase";
 import type { DismissPingRequest } from "../../../src/lib/types";
 
 // DELETE /room/:id/ping  — captain (or host in single-screen mode) dismisses a single ping
@@ -32,11 +32,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const isHost          = me.is_host || room.host_id === player_id;
     const captainOfActive = !!(room.active_team_id && me.team_id === room.active_team_id && me.is_captain);
 
-    // Need to fetch the ping to check ownership (and to scope deletion to this room's round).
-    const round = room.current_round_id ? await getRound(env, room.current_round_id) : null;
-    if (!round) return json({ error: "No active round" }, 400, req);
-
-    const lookupUrl = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}&round_id=eq.${round.id}&select=player_id`;
+    // Look up the ping by id only — round_id can be stale across round transitions
+    // and ping ids are globally unique (SERIAL PK).
+    const lookupUrl = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}&select=player_id`;
     const lookup = await fetch(lookupUrl, {
       headers: {
         "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
@@ -46,14 +44,17 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!lookup.ok) return json({ error: `Lookup failed: ${lookup.status}` }, 500, req);
     const rows = await lookup.json() as Array<{ player_id: string }>;
     const target = rows[0];
-    if (!target) return json({ error: "Ping not found" }, 404, req);
+    if (!target) {
+      // Already gone — treat as success so concurrent dismisses don't error.
+      return json({ ok: true, alreadyGone: true }, 200, req);
+    }
 
     const isOwnPing = target.player_id === player_id;
     if (!isHost && !captainOfActive && !isOwnPing) {
       return json({ error: "Only the captain, host, or the ping's author can dismiss it" }, 403, req);
     }
 
-    const url = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}&round_id=eq.${round.id}`;
+    const url = `${env.SUPABASE_URL}/rest/v1/tl_pings?id=eq.${ping_id}`;
     const res = await fetch(url, {
       method:  "DELETE",
       headers: {

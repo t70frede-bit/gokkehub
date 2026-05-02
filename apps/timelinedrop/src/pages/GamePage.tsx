@@ -298,16 +298,60 @@ function Timeline({
                 </div>
               ))}
 
-              {/* Existing card (locked or pending) */}
-              {item && (
-                <div className="flex-shrink-0">
-                  {item.locked ? (
-                    <TrackCard year={item.year} track={item.track} />
-                  ) : (
-                    <PendingCard year={item.year} track={item.track} />
-                  )}
-                </div>
-              )}
+              {/* Existing card (locked or pending) — clickable to ping the same
+                  year (handy when the year is already filled). */}
+              {item && (() => {
+                const cardPings = pings.filter(p => p.year === item.year);
+                const canCardPing = !!onPingYear && isActive && !isCaptain;
+                const canCardDismiss = !!onDismissPing && cardPings.some(p =>
+                  isCaptain || isHost || p.player_id === myPlayerId
+                );
+                const cardClickable = canCardPing || canCardDismiss;
+
+                const handleCardClick = () => {
+                  if (canCardPing && onPingYear) onPingYear(item.year);
+                };
+                const handleCardRightClick = (e: React.MouseEvent) => {
+                  if (!onDismissPing) return;
+                  const removable = cardPings.filter(p =>
+                    isCaptain || isHost || p.player_id === myPlayerId
+                  );
+                  if (removable.length === 0) return;
+                  e.preventDefault();
+                  onDismissPing(removable[removable.length - 1].id);
+                };
+
+                return (
+                  <div
+                    className="flex-shrink-0 relative"
+                    onClick={cardClickable ? handleCardClick : undefined}
+                    onContextMenu={canCardDismiss ? handleCardRightClick : undefined}
+                    style={{
+                      cursor: cardClickable ? "pointer" : "default",
+                      position: "relative",
+                    }}
+                    title={
+                      canCardPing
+                        ? "Click to suggest this year · right-click to clear yours"
+                        : ""
+                    }
+                  >
+                    {item.locked ? (
+                      <TrackCard year={item.year} track={item.track} />
+                    ) : (
+                      <PendingCard year={item.year} track={item.track} />
+                    )}
+                    {cardPings.length > 0 && (
+                      <PingBubbles
+                        pings={cardPings}
+                        myPlayerId={myPlayerId}
+                        canDismissAny={isCaptain || isHost}
+                        onDismiss={onDismissPing}
+                      />
+                    )}
+                  </div>
+                );
+              })()}
             </Fragment>
           );
         })}
