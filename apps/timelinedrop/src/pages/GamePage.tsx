@@ -153,7 +153,9 @@ function Timeline({
     if (!onPingYear) return;
     const [l, r] = getYearsForGap(gapIdx);
     let year: number;
-    if (l !== null && r !== null) year = Math.round((l + r) / 2);
+    // Use the raw midpoint (not rounded) so 1-year-wide gaps get .5 fractions
+    // and don't collide with adjacent card years (which are always integers).
+    if (l !== null && r !== null) year = (l + r) / 2;
     else if (l !== null) year = l + 5;
     else if (r !== null) year = r - 5;
     else year = new Date().getFullYear() - 25;
@@ -503,7 +505,7 @@ function PingBubbles({
 
 function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
   return (
-    <div className="flex flex-col items-center select-none">
+    <div className="flex flex-col items-center select-none" style={{ width: 88 }}>
       <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
         style={{
           fontSize: "0.8rem",
@@ -517,10 +519,12 @@ function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
       <div className="track-card">
         <img src={track.coverUrl} alt="" draggable={false}
           className="w-full aspect-square object-cover pointer-events-none" />
-        <div className="p-1.5">
-          <p className="text-xs truncate opacity-70">{track.artist}</p>
-          <p className="text-xs truncate opacity-45">{track.name}</p>
-        </div>
+      </div>
+      <div className="mt-1 w-full text-center">
+        <p className="text-xs font-semibold truncate" title={track.name}>{track.name}</p>
+        <p className="text-[11px] truncate" style={{ color: "rgb(var(--text-muted-rgb))" }} title={track.artist}>
+          {track.artist}
+        </p>
       </div>
     </div>
   );
@@ -528,7 +532,7 @@ function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
 
 function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
   return (
-    <div className="pending-card-wrap flex-shrink-0 flex flex-col items-center select-none">
+    <div className="pending-card-wrap flex-shrink-0 flex flex-col items-center select-none" style={{ width: 88 }}>
       <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
         style={{
           fontSize:   "0.8rem",
@@ -549,10 +553,10 @@ function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
         <img src={track.coverUrl} alt="" draggable={false}
           className="w-full aspect-square object-cover pointer-events-none"
           style={{ opacity: 0.6 }} />
-        <div className="p-1.5">
-          <p className="text-xs truncate opacity-60">{track.artist}</p>
-          <p className="text-[10px] uppercase tracking-wider opacity-40">pending</p>
-        </div>
+      </div>
+      <div className="mt-1 w-full text-center">
+        <p className="text-xs font-semibold truncate opacity-80" title={track.name}>{track.name}</p>
+        <p className="text-[10px] uppercase tracking-wider opacity-50">pending · {track.artist}</p>
       </div>
     </div>
   );
@@ -1335,8 +1339,9 @@ export default function GamePage() {
   const activeTeam = teams.find(t => t.id === room.active_team_id);
   // Pings persist on the timeline until dismissed (right-click / × button).
   // Players can dismiss their own; captain & host can dismiss any.
+  // Coerce year to Number — Supabase may serialise NUMERIC as a string.
   const persistentPings = pings.map(p => ({
-    id: p.id, year: p.year, player_name: p.player_name, player_id: p.player_id,
+    id: p.id, year: Number(p.year), player_name: p.player_name, player_id: p.player_id,
   }));
   // Notes for the per-player speech bubbles (last 12s) — feeds PlayerFooter.
   const chatTickMs = Date.now();
@@ -1453,8 +1458,11 @@ export default function GamePage() {
     if (now - lastTs < 200) return;
     pingTimestampsRef.current.push(now);
 
-    // Already pinged this year? → toggle off via the dismiss endpoint.
-    const existing = state?.pings.find(p => p.player_id === myPlayer.id && p.year === year);
+    // Already pinged this slot? → toggle off via the dismiss endpoint.
+    // Use a small epsilon since gap-pings may carry .5 fractions.
+    const existing = state?.pings.find(p =>
+      p.player_id === myPlayer.id && Math.abs(Number(p.year) - year) < 0.01
+    );
     if (existing) {
       dismissPing(existing.id);
       return;
