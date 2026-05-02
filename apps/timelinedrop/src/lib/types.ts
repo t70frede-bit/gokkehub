@@ -33,6 +33,7 @@ export interface TlRoomSettings {
   difficulty?:         Difficulty;
   playlistMode?:       PlaylistMode;
   skipRecentlyHeard?:  boolean;       // 14-day blacklist toggle
+  singleScreenMode?:   boolean;       // host plays for every team on one device
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -45,6 +46,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   difficulty:        "medium",
   playlistMode:      "as-is",
   skipRecentlyHeard: true,
+  singleScreenMode:  false,
 };
 
 export interface TlRoom {
@@ -114,6 +116,12 @@ export interface TlRound {
   players_who_know_it: string[];   // discord ids
   lastfm_name:         string | null;
   artist_name:         string | null;
+  // Year correction flow (any player can propose; host approves; on approval
+  // corrected_year overrides track.releaseYear for placement & timeline)
+  corrected_year:                 number | null;
+  year_correction_proposed:       number | null;
+  year_correction_proposed_by:    string | null;
+  year_correction_proposed_name:  string | null;
 }
 
 export interface StageRequest {
@@ -124,11 +132,12 @@ export interface StageRequest {
 }
 
 export interface TlTimelineEntry {
-  team_id:  number;
-  track_id: string;
-  year:     number;
-  position: number;
-  track:    SpotifyTrack;
+  team_id:        number;
+  track_id:       string;
+  year:           number;             // year used for ordering — Spotify default or corrected
+  position:       number;
+  track:          SpotifyTrack;
+  corrected_year: number | null;      // host-approved correction, if any
 }
 
 export interface TlPing {
@@ -272,8 +281,25 @@ export interface GuessRequest {
 export interface JudgeRequest {
   round_id:  number;
   player_id: string;
-  kind:      "artist" | "songname";
+  kind:      "artist" | "songname" | "combined";
   verdict:   boolean;
+}
+
+export interface ProposeYearCorrectionRequest {
+  round_id:  number;
+  player_id: string;
+  year:      number;
+}
+
+export interface ApproveYearCorrectionRequest {
+  round_id:  number;
+  player_id: string;     // host
+  approve:   boolean;
+}
+
+export interface DismissPingRequest {
+  ping_id:   number;
+  player_id: string;     // captain or host
 }
 
 export interface FinalizeJudgmentRequest {

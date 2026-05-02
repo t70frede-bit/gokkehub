@@ -358,6 +358,7 @@ export default function LobbyPage() {
                     { key: "hideSpectators",    on: "👁️ Spectators hidden",     off: "👁️ Show spectators" },
                     { key: "teamSwapEnabled",   on: "🔄 Team swap ON",          off: "🔄 Team swap OFF" },
                     { key: "skipRecentlyHeard", on: "🆕 Skip recently heard ON", off: "🆕 Skip recently heard OFF" },
+                    { key: "singleScreenMode",  on: "🎮 Single-screen ON",      off: "🎮 Single-screen OFF" },
                   ] as const).map(({ key, on, off }) => {
                     const val = !!settings[key];
                     return (

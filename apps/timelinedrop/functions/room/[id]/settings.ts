@@ -28,6 +28,7 @@ function sanitize(input: unknown): TlRoomSettings {
     out.playlistMode = s.playlistMode;
   }
   if (typeof s.skipRecentlyHeard === "boolean") out.skipRecentlyHeard = s.skipRecentlyHeard;
+  if (typeof s.singleScreenMode === "boolean")  out.singleScreenMode  = s.singleScreenMode;
   return out;
 }
 

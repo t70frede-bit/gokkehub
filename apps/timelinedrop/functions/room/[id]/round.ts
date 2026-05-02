@@ -8,16 +8,19 @@ import {
 import type {
   PlacementRequest, TurnActionRequest, GuessRequest, JudgeRequest,
   FinalizeJudgmentRequest, UseTokenRequest, StageRequest,
-  TlRound, TlTeam, TlPlayer, JudgeMode,
+  ProposeYearCorrectionRequest, ApproveYearCorrectionRequest,
+  TlRoom, TlRound, TlTeam, TlPlayer, JudgeMode,
 } from "../../../src/lib/types";
 
 // POST /room/:id/round — sub-actions via ?action= query param
-//   ?action=place      — captain submits placement (left_year / right_year)
-//   ?action=guess      — captain submits artist/songname guess
-//   ?action=judge      — eligible player marks artist or songname correct/incorrect
-//   ?action=finalize   — finalize vote-all judging when timer expires
-//   ?action=usetoken   — captain spends a token mid-round (no placement, lock pending, end turn)
-//   ?action=turn       — captain ends/continues turn (stop | next)
+//   ?action=place           — captain submits placement (left_year / right_year)
+//   ?action=guess           — captain submits artist/songname guess
+//   ?action=judge           — eligible player marks the guess correct/incorrect
+//   ?action=finalize        — finalize vote-all judging when timer expires
+//   ?action=usetoken        — captain spends a token mid-round (no placement, lock pending, end turn)
+//   ?action=turn            — captain ends/continues turn (stop | next)
+//   ?action=propose-year    — any player suggests a year correction for the current track
+//   ?action=approve-year    — host accepts/rejects the proposed year correction
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -28,15 +31,25 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   const roomId = params.id as string;
   const action = new URL(req.url).searchParams.get("action");
 
-  if (action === "place")    return handlePlace(req, roomId, env);
-  if (action === "stage")    return handleStage(req, roomId, env);
-  if (action === "guess")    return handleGuess(req, roomId, env);
-  if (action === "judge")    return handleJudge(req, roomId, env);
-  if (action === "finalize") return handleFinalize(req, roomId, env);
-  if (action === "usetoken") return handleUseToken(req, roomId, env);
-  if (action === "turn")     return handleTurnAction(req, roomId, env);
+  if (action === "place")        return handlePlace(req, roomId, env);
+  if (action === "stage")        return handleStage(req, roomId, env);
+  if (action === "guess")        return handleGuess(req, roomId, env);
+  if (action === "judge")        return handleJudge(req, roomId, env);
+  if (action === "finalize")     return handleFinalize(req, roomId, env);
+  if (action === "usetoken")     return handleUseToken(req, roomId, env);
+  if (action === "turn")         return handleTurnAction(req, roomId, env);
+  if (action === "propose-year") return handleProposeYear(req, roomId, env);
+  if (action === "approve-year") return handleApproveYear(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
+
+// In single-screen mode the host stands in for every team's captain (so one
+// device can drive the whole game). This helper centralises the check.
+function actsAsCaptain(room: TlRoom, captain: TlPlayer | undefined, playerId: string): boolean {
+  if (captain && captain.id === playerId) return true;
+  if (room.settings?.singleScreenMode && room.host_id === playerId) return true;
+  return false;
+}
 
 // ── Stage (live staging — captain's tentative placement) ────────────────────
 
@@ -51,7 +64,7 @@ async function handleStage(req: Request, roomId: string, env: Env) {
   if (round.outcome !== null) return json({ error: "Round already resolved" }, 409, req);
 
   const captain = players.find(p => p.team_id === room.active_team_id && p.is_captain);
-  if (captain && captain.id !== player_id) {
+  if (!actsAsCaptain(room, captain, player_id)) {
     return json({ error: "Only the captain can stage placement" }, 403, req);
   }
 
@@ -75,9 +88,12 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
   if (round.outcome !== null) return json({ error: "Round already resolved" }, 409, req);
 
   const captain = players.find(p => p.team_id === room.active_team_id && p.is_captain);
-  if (captain && captain.id !== player_id) return json({ error: "Only the team captain can place" }, 403, req);
+  if (!actsAsCaptain(room, captain, player_id)) {
+    return json({ error: "Only the team captain can place" }, 403, req);
+  }
 
-  const actualYear = round.track.releaseYear;
+  // Use host-approved corrected year when present (overrides Spotify default).
+  const actualYear = round.corrected_year ?? round.track.releaseYear;
   const correct =
     (left_year === null || left_year <= actualYear) &&
     (right_year === null || actualYear <= right_year);
@@ -134,7 +150,7 @@ async function handleGuess(req: Request, roomId: string, env: Env) {
   if (round.outcome !== "correct") return json({ error: "Cannot guess on this round" }, 400, req);
 
   const captain = players.find(p => p.team_id === room.active_team_id && p.is_captain);
-  if (!captain || captain.id !== player_id) {
+  if (!actsAsCaptain(room, captain, player_id)) {
     return json({ error: "Only the team captain can submit guesses" }, 403, req);
   }
 
@@ -153,8 +169,8 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
   const body = await req.json() as JudgeRequest;
   const { round_id, player_id, kind, verdict } = body;
 
-  if (kind !== "artist" && kind !== "songname") {
-    return json({ error: "kind must be 'artist' or 'songname'" }, 400, req);
+  if (kind !== "artist" && kind !== "songname" && kind !== "combined") {
+    return json({ error: "kind must be 'artist', 'songname', or 'combined'" }, 400, req);
   }
 
   const [room, round, players, teams] = await Promise.all([
@@ -172,33 +188,94 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
   if (!eligible) return json({ error: "Not eligible to judge in this mode" }, 403, req);
 
   if (judgeMode === "vote-all") {
-    // Vote: append/update player's vote, possibly auto-finalize.
-    const votes = kind === "artist"
-      ? { ...(round.artist_votes ?? {}), [player_id]: verdict }
-      : { ...(round.songname_votes ?? {}), [player_id]: verdict };
-
-    const update: Partial<TlRound> = kind === "artist"
-      ? { artist_votes: votes as never }
-      : { songname_votes: votes as never };
-
-    await updateRound(env, round_id, update);
-
-    // Auto-finalize if all eligible voters have voted on both kinds.
-    const merged: TlRound = {
-      ...round,
-      artist_votes:    kind === "artist"   ? (votes as never) : round.artist_votes,
-      songname_votes:  kind === "songname" ? (votes as never) : round.songname_votes,
-    };
-    await maybeAutoFinalize(env, merged, players);
+    // Vote: combined verdict counts for both fields. artist|songname kinds
+    // remain supported for compatibility but UI now only sends "combined".
+    const newArtist   = kind === "artist"   || kind === "combined" ? { ...(round.artist_votes   ?? {}), [player_id]: verdict } : round.artist_votes;
+    const newSongname = kind === "songname" || kind === "combined" ? { ...(round.songname_votes ?? {}), [player_id]: verdict } : round.songname_votes;
+    await updateRound(env, round_id, {
+      artist_votes:   newArtist   as never,
+      songname_votes: newSongname as never,
+    });
+    await maybeAutoFinalize(env, { ...round, artist_votes: newArtist as never, songname_votes: newSongname as never }, players);
   } else {
     // Direct verdict from the single eligible judge.
     const update: Partial<TlRound> = {};
-    if (kind === "artist")   update.artist_correct   = verdict;
-    if (kind === "songname") update.songname_correct = verdict;
+    if (kind === "artist"   || kind === "combined") update.artist_correct   = verdict;
+    if (kind === "songname" || kind === "combined") update.songname_correct = verdict;
     await updateRound(env, round_id, update);
   }
 
   return json({ ok: true }, 200, req);
+}
+
+// ── Year correction (player proposes; host approves) ────────────────────────
+
+async function handleProposeYear(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as ProposeYearCorrectionRequest;
+  const { round_id, player_id, year } = body;
+
+  if (!Number.isInteger(year) || year < 1900 || year > 2100) {
+    return json({ error: "Year must be between 1900 and 2100" }, 400, req);
+  }
+
+  const [room, round, players] = await Promise.all([
+    getRoom(env, roomId), getRound(env, round_id), getPlayers(env, roomId),
+  ]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+
+  const me = players.find(p => p.id === player_id);
+  if (!me) return json({ error: "Not in room" }, 403, req);
+
+  // Host applies immediately; everyone else proposes for host approval.
+  if (me.is_host || room.host_id === player_id) {
+    await applyYearCorrection(env, round, year);
+    return json({ ok: true, applied: true }, 200, req);
+  }
+
+  await updateRound(env, round_id, {
+    year_correction_proposed:      year,
+    year_correction_proposed_by:   player_id,
+    year_correction_proposed_name: me.name,
+  } as Partial<TlRound>);
+  return json({ ok: true, proposed: year }, 200, req);
+}
+
+async function handleApproveYear(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as ApproveYearCorrectionRequest;
+  const { round_id, player_id, approve } = body;
+
+  const [room, round] = await Promise.all([getRoom(env, roomId), getRound(env, round_id)]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  if (room.host_id !== player_id) return json({ error: "Only the host can approve" }, 403, req);
+  if (round.year_correction_proposed === null) return json({ error: "No pending correction" }, 400, req);
+
+  if (approve) {
+    await applyYearCorrection(env, round, round.year_correction_proposed);
+  }
+  // Clear the proposal either way
+  await updateRound(env, round_id, {
+    year_correction_proposed:      null,
+    year_correction_proposed_by:   null,
+    year_correction_proposed_name: null,
+  } as Partial<TlRound>);
+  return json({ ok: true, approved: approve }, 200, req);
+}
+
+// Update the round's corrected_year and (if already locked) the timeline entry's year too.
+async function applyYearCorrection(env: Env, round: TlRound, year: number) {
+  await updateRound(env, round.id, { corrected_year: year } as Partial<TlRound>);
+  // Patch the timeline entry if this track has been locked already.
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_timeline?track_id=eq.${round.track.id}&team_id=eq.${round.team_id}`;
+  await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type":  "application/json",
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Prefer":        "return=minimal",
+    },
+    body: JSON.stringify({ corrected_year: year, year }),
+  });
 }
 
 // ── Finalize (vote-all timer expiry) ─────────────────────────────────────────
@@ -251,7 +328,7 @@ async function handleUseToken(req: Request, roomId: string, env: Env) {
   if (!activeTeam) return json({ error: "No active team" }, 400, req);
 
   const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
-  if (!captain || captain.id !== player_id) {
+  if (!actsAsCaptain(room, captain, player_id)) {
     return json({ error: "Only the captain can use a token" }, 403, req);
   }
   if (activeTeam.tokens <= 0) {
@@ -297,7 +374,9 @@ async function handleTurnAction(req: Request, roomId: string, env: Env) {
   if (!activeTeam) return json({ error: "No active team" }, 400, req);
 
   const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
-  if (captain && captain.id !== player_id) return json({ error: "Only the team captain can act" }, 403, req);
+  if (!actsAsCaptain(room, captain, player_id)) {
+    return json({ error: "Only the team captain can act" }, 403, req);
+  }
 
   // Award token bonus on the round being closed if eligible (idempotent).
   const currentRound = room.current_round_id ? await getRound(env, room.current_round_id) : null;
