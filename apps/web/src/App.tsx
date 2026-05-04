@@ -94,40 +94,64 @@ function Catalogue() {
       </header>
 
       {/* Hero */}
-      <section className="relative z-10 text-center px-6 pt-16 pb-20 max-w-3xl mx-auto">
+      <section className="relative z-10 text-center px-6 pt-16 pb-16 max-w-3xl mx-auto">
         <div className="inline-flex items-center gap-2 text-sm text-content-muted border border-white/10 rounded-full px-4 py-1.5 mb-8">
           <span
-            className="w-2 h-2 rounded-full animate-pulse"
-            style={{ background: `rgb(var(--color-secondary-rgb))` }}
+            className="w-2 h-2 rounded-full"
+            style={{ background: "rgb(var(--color-primary-rgb))" }}
           />
           Party games for groups
         </div>
 
-        <h1 className="text-5xl sm:text-7xl font-black tracking-tight leading-none mb-6">
-          <span className="text-content-primary">Games for </span>
-          <span className="text-gradient">the crew</span>
-        </h1>
-
-        <p className="text-content-secondary text-lg sm:text-xl max-w-xl mx-auto mb-10 leading-relaxed">
-          Pick a game, share a code, split into teams. No app install. Works on
-          any phone. Built for living rooms, not leaderboards.
-        </p>
-
-        <a
-          href="https://partybingo.gokkehub.com"
-          className="inline-flex items-center gap-2 px-8 py-4 rounded-md font-bold text-base transition-all active:scale-[0.98]"
+        <h1
+          className="font-extrabold tracking-tight leading-[1.05] mb-4"
           style={{
-            background: "rgb(var(--color-primary-rgb))",
-            color:      "rgb(var(--bg-rgb))",
+            fontFamily: "var(--font-display)",
+            fontSize:   "clamp(40px, 8vw, var(--text-display))",
+            color:      "rgb(var(--text-primary-rgb))",
+            letterSpacing: "-0.02em",
           }}
         >
-          Play Grid Challenge
-          <span aria-hidden>→</span>
-        </a>
+          Join a game
+        </h1>
+
+        <p
+          className="mx-auto mb-8"
+          style={{
+            color:    "rgb(var(--text-secondary-rgb))",
+            fontSize: "var(--text-lg)",
+            maxWidth: 560,
+          }}
+        >
+          Got a code from your host? Drop it in. We'll send you to the right game.
+        </p>
+
+        <HeroJoinForm />
+
+        <p
+          className="mt-8"
+          style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
+        >
+          …or{" "}
+          <a
+            href="#games"
+            className="font-semibold underline-offset-4 hover:underline"
+            style={{ color: "rgb(var(--color-primary-rgb))" }}
+          >
+            host your own game
+          </a>
+          {" "}— pick one below.
+        </p>
       </section>
 
-      {/* Game cards */}
-      <section className="relative z-10 px-4 pb-24 max-w-6xl mx-auto">
+      {/* Game cards — anchor target for "host your own game" */}
+      <section id="games" className="relative z-10 px-4 pb-24 max-w-6xl mx-auto scroll-mt-12">
+        <h2
+          className="font-bold mb-6 tracking-tight"
+          style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
+        >
+          Host your own
+        </h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-2 gap-4">
           {GAMES.map((game) => (
             <GameCard key={game.name} game={game} />
@@ -231,6 +255,59 @@ function GameCard({ game }: { game: Game }) {
         </div>
       )}
     </a>
+  );
+}
+
+// ── Hero join form — inline code input on the front page ───────────────────
+// Submitting just navigates to /join?room=CODE; the JoinRedirect view below
+// handles the actual lookup + forward to the matching game.
+
+function HeroJoinForm() {
+  const [code, setCode] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return;
+    window.location.href = `/join?room=${encodeURIComponent(trimmed)}`;
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mx-auto flex flex-col sm:flex-row gap-2 sm:gap-2 items-stretch"
+      style={{ maxWidth: 480 }}
+    >
+      <input
+        value={code}
+        onChange={(e) => setCode(e.target.value.toUpperCase())}
+        placeholder="ABC123"
+        maxLength={12}
+        aria-label="Room code"
+        className="flex-1 rounded-md px-4 py-3 text-center font-bold outline-none transition-all"
+        style={{
+          background:    "rgb(var(--surface-input-rgb))",
+          border:        "1px solid rgb(var(--border-rgb))",
+          color:         "rgb(var(--color-primary-rgb))",
+          fontFamily:    "var(--font-mono)",
+          fontSize:      "var(--text-xl)",
+          letterSpacing: "0.18em",
+          caretColor:    "rgb(var(--color-primary-rgb))",
+        }}
+      />
+      <button
+        type="submit"
+        disabled={!code.trim()}
+        className="rounded-md px-6 py-3 font-bold transition-all active:scale-[0.98] disabled:opacity-45 disabled:cursor-not-allowed"
+        style={{
+          background: "rgb(var(--color-primary-rgb))",
+          color:      "rgb(var(--bg-rgb))",
+          fontSize:   "var(--text-base)",
+        }}
+      >
+        Continue →
+      </button>
+    </form>
   );
 }
 
