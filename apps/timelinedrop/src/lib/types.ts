@@ -90,6 +90,18 @@ export interface TlPlayer {
 
 export type Confidence = "known" | "likely" | "stretch" | "wild";
 
+export interface TlTeamToken {
+  id:             number;
+  room_id:        string;
+  team_id:        number;
+  type:           string;       // TokenType from lib/tokens.ts
+  granted_at:     string;
+  granted_round:  number | null;
+  used_at:        string | null;
+  used_round:     number | null;
+  pending:        boolean;      // earned this turn, ready when team plays next
+}
+
 export interface TlRound {
   id:                  number;
   room_id:             string;
@@ -100,6 +112,12 @@ export interface TlRound {
   staged_left_year:    number | null;
   staged_right_year:   number | null;
   outcome:             "correct" | "incorrect" | null;
+  // Token-state flags (migration 009)
+  skipped:             boolean;
+  cover_revealed:      boolean;
+  year_tolerance:      number;
+  more_or_less_card_id: string | null;
+  recovery_armed:      boolean;
   artist_guess:        string | null;
   songname_guess:      string | null;
   artist_correct:      boolean | null;
@@ -168,6 +186,7 @@ export interface GameState {
   timelines:    Record<number, TlTimelineEntry[]>; // teamId → sorted entries
   notes:        TlNote[];
   pings:        TlPing[];
+  tokens:       Record<number, TlTeamToken[]>; // teamId → tokens (granted, not yet used)
   myPlayer:     TlPlayer | null;
 }
 

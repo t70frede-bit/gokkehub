@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import type {
   TlRoom, TlTeam, TlPlayer, TlRound,
-  TlTimelineEntry, TlNote, TlPing, GameState,
+  TlTimelineEntry, TlNote, TlPing, TlTeamToken, GameState,
 } from "../lib/types";
 
 export function useRoom(roomId: string | undefined, myPlayerId: string | undefined) {
@@ -27,16 +27,21 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
 
       // Load timeline for all teams
       const teamIds = (teamsRes.data as TlTeam[]).map(t => t.id);
-      const timelineRes = await supabase
-        .from("tl_timeline")
-        .select("*")
-        .in("team_id", teamIds)
-        .order("position");
+      const [timelineRes, tokensRes] = await Promise.all([
+        supabase.from("tl_timeline").select("*").in("team_id", teamIds).order("position"),
+        supabase.from("tl_team_tokens").select("*").eq("room_id", roomId).is("used_at", null),
+      ]);
 
       const timelines: Record<number, TlTimelineEntry[]> = {};
       for (const t of teamIds) timelines[t] = [];
       for (const entry of (timelineRes.data ?? []) as TlTimelineEntry[]) {
         timelines[entry.team_id] = [...(timelines[entry.team_id] ?? []), entry];
+      }
+
+      const tokens: Record<number, TlTeamToken[]> = {};
+      for (const t of teamIds) tokens[t] = [];
+      for (const tk of (tokensRes.data ?? []) as TlTeamToken[]) {
+        tokens[tk.team_id] = [...(tokens[tk.team_id] ?? []), tk];
       }
 
       // Load current round
@@ -68,6 +73,7 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
         timelines,
         notes,
         pings,
+        tokens,
         myPlayer: ((playersRes.data ?? []) as TlPlayer[]).find(p => p.id === myPlayerId) ?? null,
       });
     }
@@ -154,6 +160,17 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           if (typeof removedId !== "number") return s;
           return { ...s, pings: s.pings.filter(p => p.id !== removedId) };
         }))
+      .on("postgres_changes", { event: "*", schema: "public", table: "tl_team_tokens", filter: `room_id=eq.${roomId}` },
+        () => supabase.from("tl_team_tokens").select("*").eq("room_id", roomId).is("used_at", null)
+          .then(r => setState(s => {
+            if (!s) return s;
+            const tokens: Record<number, TlTeamToken[]> = {};
+            for (const t of s.teams) tokens[t.id] = [];
+            for (const tk of (r.data ?? []) as TlTeamToken[]) {
+              tokens[tk.team_id] = [...(tokens[tk.team_id] ?? []), tk];
+            }
+            return { ...s, tokens };
+          })))
       .subscribe();
 
     channelRef.current = channel;

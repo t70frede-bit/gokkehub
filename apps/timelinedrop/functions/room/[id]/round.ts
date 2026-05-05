@@ -331,20 +331,22 @@ async function handleUseToken(req: Request, roomId: string, env: Env) {
   if (!actsAsCaptain(room, captain, player_id)) {
     return json({ error: "Only the captain can use a token" }, 403, req);
   }
-  if (activeTeam.tokens <= 0) {
-    return json({ error: "No ready tokens available" }, 400, req);
+
+  // Find an available song_skipper token for the active team and burn it.
+  const tokenId = await findAndUseToken(env, activeTeam.id, "song_skipper", round.id);
+  if (!tokenId) {
+    return json({ error: "No Song Skipper token available" }, 400, req);
   }
 
-  // Lock pending tracks, deduct token, mark this round as a no-op skip, advance turn.
+  // Lock pending, mark round as a friendly skip (year still revealed), advance turn.
   await lockPendingTracks(env, activeTeam.id,
     (activeTeam.pending_tracks ?? []) as Array<{ id: string; releaseYear: number; [k: string]: unknown }>);
   await updateTeam(env, activeTeam.id, {
-    tokens:         activeTeam.tokens - 1,
+    tokens:         Math.max(0, activeTeam.tokens - 1),
     pending_tracks: [],
   });
-  // Mark round as resolved (no outcome — counted as skip)
   await updateRound(env, round.id, {
-    outcome:     "incorrect", // not awarded; treat as turn end without a placement
+    skipped:     true,
     revealed_at: new Date().toISOString(),
   });
 
@@ -358,6 +360,42 @@ async function handleUseToken(req: Request, roomId: string, env: Env) {
   await advanceTurn(env, roomId, room, teams);
   return json({ ok: true }, 200, req);
 }
+
+// Find an unused token of the given type for this team and mark it used.
+// Returns the token id on success, null when none available.
+async function findAndUseToken(
+  env: Env, teamId: number, type: string, roundId: number,
+): Promise<number | null> {
+  const lookupUrl = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?team_id=eq.${teamId}&type=eq.${encodeURIComponent(type)}&used_at=is.null&pending=eq.false&select=id&limit=1`;
+  const lookup = await fetch(lookupUrl, {
+    headers: {
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+  if (!lookup.ok) return null;
+  const rows = await lookup.json() as Array<{ id: number }>;
+  if (rows.length === 0) return null;
+  const id = rows[0].id;
+
+  const updateUrl = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?id=eq.${id}`;
+  await fetch(updateUrl, {
+    method: "PATCH",
+    headers: {
+      "Content-Type":  "application/json",
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Prefer":        "return=minimal",
+    },
+    body: JSON.stringify({
+      used_at:    new Date().toISOString(),
+      used_round: roundId,
+    }),
+  });
+  return id;
+}
+
+export { findAndUseToken };
 
 // ── Turn action (stop | next) ────────────────────────────────────────────────
 
@@ -380,7 +418,7 @@ async function handleTurnAction(req: Request, roomId: string, env: Env) {
 
   // Award token bonus on the round being closed if eligible (idempotent).
   const currentRound = room.current_round_id ? await getRound(env, room.current_round_id) : null;
-  activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam) ?? activeTeam;
+  activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam, roomId) ?? activeTeam;
 
   if (action === "next") {
     const nextTrack = room.track_pool[room.track_cursor];
@@ -474,16 +512,67 @@ async function awardBonusIfEligible(
   env: Env,
   round: TlRound | null,
   team: TlTeam,
+  roomId: string,
 ): Promise<TlTeam | null> {
   if (!round || round.bonus_awarded) return null;
   if (round.outcome !== "correct") return null;
   if (round.artist_correct !== true || round.songname_correct !== true) return null;
 
-  // Token earned this turn — pending until the team's NEXT turn starts.
+  // Pick a random implemented token type and grant it as a pending row.
+  // Pending tokens become ready when the team's next turn starts.
+  // Keep this in sync with TOKEN_CATALOG.implemented in src/lib/tokens.ts.
+  const earnable = ["song_skipper", "cover_reveal", "more_or_less"];
+  const type = earnable[Math.floor(Math.random() * earnable.length)];
+  await insertTeamToken(env, {
+    room_id: roomId,
+    team_id: team.id,
+    type,
+    granted_round: round.id,
+    pending: true,
+  });
+
+  await updateRound(env, round.id, { bonus_awarded: true });
+  // Mirror to legacy int counter for any UI still reading it.
   const nextPending = (team.tokens_pending ?? 0) + 1;
   await updateTeam(env, team.id, { tokens_pending: nextPending });
-  await updateRound(env, round.id, { bonus_awarded: true });
   return { ...team, tokens_pending: nextPending };
+}
+
+async function insertTeamToken(env: Env, row: {
+  room_id: string; team_id: number; type: string;
+  granted_round?: number; pending?: boolean;
+}) {
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens`;
+  await fetch(url, {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Prefer":        "return=minimal",
+    },
+    body: JSON.stringify({
+      room_id:       row.room_id,
+      team_id:       row.team_id,
+      type:          row.type,
+      pending:       row.pending ?? true,
+      granted_round: row.granted_round ?? null,
+    }),
+  });
+}
+
+async function promotePendingTokens(env: Env, teamId: number) {
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?team_id=eq.${teamId}&pending=eq.true`;
+  await fetch(url, {
+    method:  "PATCH",
+    headers: {
+      "Content-Type":  "application/json",
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Prefer":        "return=minimal",
+    },
+    body: JSON.stringify({ pending: false }),
+  });
 }
 
 async function lockPendingTracks(
@@ -516,7 +605,9 @@ async function advanceTurn(
   const nextTeam    = sortedTeams[(currentIdx + 1) % sortedTeams.length];
 
   // Promote pending tokens — they're now ready for the team that's about to play.
+  await promotePendingTokens(env, nextTeam.id);
   if ((nextTeam.tokens_pending ?? 0) > 0) {
+    // Mirror to legacy int counter
     await updateTeam(env, nextTeam.id, {
       tokens:         (nextTeam.tokens ?? 0) + (nextTeam.tokens_pending ?? 0),
       tokens_pending: 0,

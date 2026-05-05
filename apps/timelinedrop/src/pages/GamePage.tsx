@@ -1,12 +1,25 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, Input, Panel } from "@gokkehub/ui";
+import { Button, Input, Modal, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
-import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, JudgeMode } from "../lib/types";
+import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, JudgeMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
+import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
+
+function tokenSpec(type: string): TokenSpec {
+  return TOKEN_CATALOG[type as TokenType] ?? {
+    type: type as TokenType,
+    category: "anytime",
+    name:  type,
+    short: type,
+    description: "",
+    icon: "🎟",
+    implemented: false,
+  };
+}
 
 // Team colour mapping by sort_order — matches LobbyPage.
 type TeamColor = "red" | "blue" | "green" | "yellow";
@@ -77,6 +90,7 @@ interface TimelinePing { id: number; year: number; player_name: string; player_i
 interface TimelineProps {
   entries:        TlTimelineEntry[];
   dragCard:       SpotifyTrack | null;
+  coverRevealed?: boolean;       // cover_reveal token effect
   isCaptain:      boolean;
   isActive:       boolean;       // is this the active team's timeline?
   isHost?:        boolean;
@@ -86,6 +100,8 @@ interface TimelineProps {
   onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
   onPingYear?:    (year: number) => void;
   onDismissPing?: (pingId: number) => void;   // server enforces: captain, host, or ping author
+  onCardClick?:   (entry: TlTimelineEntry) => void;  // more-or-less etc
+  cardClickHint?: string;
   pings?:         TimelinePing[];
   pending?:       SpotifyTrack[];
 }
@@ -97,8 +113,9 @@ interface MergedItem {
 }
 
 function Timeline({
-  entries, dragCard, isCaptain, isActive, isHost = false, myPlayerId, stagedLeft, stagedRight,
-  onStageGap, onPingYear, onDismissPing, pings = [], pending = [],
+  entries, dragCard, coverRevealed, isCaptain, isActive, isHost = false, myPlayerId,
+  stagedLeft, stagedRight, onStageGap, onPingYear, onDismissPing,
+  onCardClick, cardClickHint, pings = [], pending = [],
 }: TimelineProps) {
   const [dragOver, setDragOver] = useState<number | null>(null);
 
@@ -241,7 +258,7 @@ function Timeline({
                 >
                   {isStaged && dragCard ? (
                     <div onClick={e => isCaptain && e.stopPropagation()} className="px-1">
-                      <QuestionCard track={dragCard} />
+                      <QuestionCard track={dragCard} coverRevealed={coverRevealed} />
                     </div>
                   ) : isOver ? (
                     <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 16 }}>↓</span>
@@ -294,9 +311,12 @@ function Timeline({
                 const canCardDismiss = !!onDismissPing && cardPings.some(p =>
                   isCaptain || isHost || p.player_id === myPlayerId
                 );
-                const cardClickable = canCardPing || canCardDismiss;
+                const lockedEntry = item.locked ? entries.find(e => e.track_id === item.track.id) : null;
+                const canCardSelect = !!onCardClick && !!lockedEntry;
+                const cardClickable = canCardSelect || canCardPing || canCardDismiss;
 
                 const handleCardClick = () => {
+                  if (canCardSelect && lockedEntry && onCardClick) { onCardClick(lockedEntry); return; }
                   if (canCardPing && onPingYear) onPingYear(item.year);
                 };
                 const handleCardRightClick = (e: React.MouseEvent) => {
@@ -317,11 +337,13 @@ function Timeline({
                     style={{
                       cursor: cardClickable ? "pointer" : "default",
                       position: "relative",
+                      outline: canCardSelect ? "2px solid rgba(var(--color-primary-rgb), 0.7)" : undefined,
+                      borderRadius: canCardSelect ? 8 : undefined,
                     }}
                     title={
-                      canCardPing
-                        ? "Click to suggest this year · right-click to clear yours"
-                        : ""
+                      canCardSelect ? (cardClickHint ?? "Click to pick this card")
+                      : canCardPing  ? "Click to suggest this year · right-click to clear yours"
+                      : ""
                     }
                   >
                     {item.locked ? (
@@ -577,16 +599,25 @@ function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
   );
 }
 
-function QuestionCard(_: { track: SpotifyTrack }) {
+function QuestionCard({ track, coverRevealed }: { track: SpotifyTrack; coverRevealed?: boolean }) {
   return (
     <div className="question-card select-none">
-      <div className="w-full aspect-square flex items-center justify-center pointer-events-none"
-        style={{ background: "rgba(255,255,255,0.04)" }}>
-        <span className="text-2xl">🎵</span>
-      </div>
+      {coverRevealed && track.coverUrl ? (
+        <img
+          src={track.coverUrl}
+          alt=""
+          draggable={false}
+          className="w-full aspect-square object-cover pointer-events-none"
+        />
+      ) : (
+        <div className="w-full aspect-square flex items-center justify-center pointer-events-none"
+          style={{ background: "rgba(255,255,255,0.04)" }}>
+          <span className="text-2xl">🎵</span>
+        </div>
+      )}
       <div className="p-1.5">
         <p className="text-sm font-black" style={{ color: "rgb(var(--color-primary-rgb))", fontFamily: "var(--font-mono)" }}>???</p>
-        <p className="text-xs opacity-30">Place your guess</p>
+        <p className="text-xs opacity-30">{coverRevealed ? "Cover revealed" : "Place your guess"}</p>
       </div>
     </div>
   );
@@ -782,6 +813,45 @@ function RevealOverlay({
       onFinalize();
     }
   }, [isVoteMode, finalized, startedAtMs, remainingSec, onFinalize]);
+
+  // ── SKIPPED (Song Skipper token) ────────────────────────────────────────
+  if (round.skipped) {
+    return (
+      <Backdrop>
+        <div className="w-full max-w-sm text-center space-y-4">
+          <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" />
+
+          <YearStamp year={displayYear} variant="right" />
+
+          <div>
+            <p className="font-bold text-lg">{round.track.name}</p>
+            <p className="text-sm opacity-60">{round.track.artist}</p>
+          </div>
+
+          <YearCorrectionWidget
+            round={round}
+            isHost={isHost}
+            myPlayerId={myPlayerId}
+            onPropose={onProposeYear}
+            onApprove={onApproveYear}
+          />
+
+          <div className="rounded-xl p-3"
+            style={{ background: "rgba(212,160,74,0.10)", border: "1px solid rgba(212,160,74,0.4)" }}>
+            <p className="text-sm font-semibold" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+              ⏭ Turn skipped — pending cards locked in.
+            </p>
+          </div>
+
+          {isCaptain ? (
+            <Button onClick={onStop} className="w-full">Continue → next team</Button>
+          ) : (
+            <p className="text-xs opacity-50">Waiting for captain to continue…</p>
+          )}
+        </div>
+      </Backdrop>
+    );
+  }
 
   // ── INCORRECT placement ─────────────────────────────────────────────────────
   if (!isCorrect) {
@@ -1195,6 +1265,11 @@ export default function GamePage() {
   // Player-leave notifications (transient).
   const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
 
+  // Token tray: open the menu of the captain's available tokens.
+  const [tokenTrayOpen, setTokenTrayOpen] = useState(false);
+  // More-or-less is interactive — once armed, the captain has to pick a card.
+  const [moreOrLessArmed, setMoreOrLessArmed] = useState(false);
+
   // Tick every 500ms so the recent-ping bubbles fade out and disappear after 5s.
   const [, setPingTick] = useState(0);
   useEffect(() => {
@@ -1426,12 +1501,42 @@ export default function GamePage() {
     });
   }
 
-  async function useToken() {
+  async function useSongSkipperToken() {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=usetoken`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
     });
+  }
+
+  // Use a typed token via the /token endpoint. Effects vary by type.
+  async function useTypedToken(type: TokenType, payload?: Record<string, unknown>) {
+    if (!round) return;
+    if (type === "song_skipper") return useSongSkipperToken();
+    if (type === "more_or_less") {
+      // Two-phase: first click opens the "pick a card" mode, the actual POST
+      // happens when the captain clicks a timeline card.
+      if (!payload?.card_id) {
+        setMoreOrLessArmed(true);
+        setTokenTrayOpen(false);
+        return;
+      }
+    }
+    const apiType =
+      type === "cover_reveal" ? "cover_reveal" :
+      type === "more_or_less" ? "more_or_less" :
+      type === "recovery"     ? "recovery_arm" :
+      type;
+    const res = await fetch(`/room/${roomId}/token`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, type: apiType, payload }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("[musix] token use failed:", res.status, text.slice(0, 200));
+    }
+    setTokenTrayOpen(false);
+    setMoreOrLessArmed(false);
   }
 
   async function finalizeJudgment() {
@@ -1500,17 +1605,31 @@ export default function GamePage() {
         </div>
 
         <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
-          {teams.map(t => (
-            <div key={t.id} className="flex items-center gap-1"
-              style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))" }}
-              title={`${t.tokens} ready · ${t.tokens_pending ?? 0} pending`}>
-              <span className="font-semibold hidden sm:inline">{t.name.slice(0, 8)}</span>
-              <span>{"🪙".repeat(t.tokens)}</span>
-              {(t.tokens_pending ?? 0) > 0 && (
-                <span style={{ opacity: 0.45 }}>{"⊕".repeat(t.tokens_pending)}</span>
-              )}
-            </div>
-          ))}
+          {teams.map(t => {
+            const teamTokens = state.tokens?.[t.id] ?? [];
+            const ready   = teamTokens.filter(tk => !tk.pending);
+            const pending = teamTokens.filter(tk => tk.pending);
+            return (
+              <div
+                key={t.id}
+                className="flex items-center gap-1"
+                style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))" }}
+                title={`${t.name} — ${ready.length} ready · ${pending.length} pending`}
+              >
+                <span className="font-semibold hidden sm:inline">{t.name.slice(0, 8)}</span>
+                {ready.map(tk => (
+                  <span key={tk.id} title={tokenSpec(tk.type).name}>
+                    {tokenSpec(tk.type).icon}
+                  </span>
+                ))}
+                {pending.map(tk => (
+                  <span key={tk.id} title={`${tokenSpec(tk.type).name} (pending)`} style={{ opacity: 0.45 }}>
+                    {tokenSpec(tk.type).icon}
+                  </span>
+                ))}
+              </div>
+            );
+          })}
           {timerStartedAt && <TimerRing remaining={remaining} />}
 
           {/* Host management menu */}
@@ -1685,6 +1804,7 @@ export default function GamePage() {
                   <Timeline
                     entries={tl}
                     dragCard={showDragCard && isActive ? round!.track : null}
+                    coverRevealed={isActive && !!round?.cover_revealed}
                     isCaptain={iAmCaptain && isMyTeam && isActive}
                     isActive={isActive}
                     stagedLeft={isActive
@@ -1696,6 +1816,8 @@ export default function GamePage() {
                     onStageGap={stageGap}
                     onPingYear={isActive ? pingAtYear : undefined}
                     onDismissPing={isActive ? dismissPing : undefined}
+                    onCardClick={isActive && isMyTeam && moreOrLessArmed ? (entry) => useTypedToken("more_or_less", { card_id: entry.track_id }) : undefined}
+                    cardClickHint={moreOrLessArmed ? "Pick this card to compare years" : undefined}
                     isHost={isHost}
                     myPlayerId={myPlayerId}
                     pings={isActive ? persistentPings : []}
@@ -1847,11 +1969,22 @@ export default function GamePage() {
                 </Button>
               );
             })()}
-            {(activeTeam?.tokens ?? 0) > 0 && (
-              <Button onClick={useToken} variant="ghost" size="sm" className="flex-shrink-0">
-                🪙 Use token ({activeTeam!.tokens})
-              </Button>
-            )}
+            {(() => {
+              const tokens = (activeTeam ? state.tokens?.[activeTeam.id] : []) ?? [];
+              const ready  = tokens.filter(t => !t.pending);
+              if (ready.length === 0) return null;
+              return (
+                <Button
+                  onClick={() => setTokenTrayOpen(true)}
+                  variant="ghost"
+                  size="sm"
+                  className="flex-shrink-0"
+                  title="Use a token"
+                >
+                  🎟 Tokens ({ready.length})
+                </Button>
+              );
+            })()}
           </div>
         </Panel>
       ) : (
@@ -1903,8 +2036,8 @@ export default function GamePage() {
         />
       )}
 
-      {/* Reveal overlay — driven by round.outcome (Supabase realtime) */}
-      {round && round.outcome !== null && (() => {
+      {/* Reveal overlay — driven by round.outcome OR round.skipped (realtime) */}
+      {round && (round.outcome !== null || round.skipped) && (() => {
         const settings  = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
         const judgeMode: JudgeMode = settings.judgeMode;
 
@@ -1950,7 +2083,171 @@ export default function GamePage() {
 
       {/* Hidden audio element — required for WebRTC stream playback on listener clients */}
       {!isDJ && <audio ref={listenAudio.audioRef} style={{ display: "none" }} />}
+
+      {/* ── Token tray ─────────────────────────────────────────────────── */}
+      {tokenTrayOpen && activeTeam && (
+        <TokenTray
+          tokens={(state.tokens?.[activeTeam.id] ?? []).filter(t => !t.pending)}
+          onClose={() => setTokenTrayOpen(false)}
+          onUse={(t) => useTypedToken(t.type as TokenType)}
+        />
+      )}
+
+      {/* ── More-or-less hint (after the captain picks a card) ─────────── */}
+      {round && round.more_or_less_card_id && (() => {
+        const target = (timelines[activeTeam?.id ?? -1] ?? [])
+          .find(e => e.track_id === round.more_or_less_card_id);
+        if (!target) return null;
+        const cardYear = target.corrected_year ?? target.year;
+        const songYear = round.corrected_year ?? round.track.releaseYear;
+        const verdict = songYear < cardYear ? "older" : "newer or same year";
+        return (
+          <div
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-md flex items-center gap-2 animate-fade-in"
+            style={{
+              background: "rgb(var(--surface-overlay-rgb))",
+              border:     "1px solid rgba(var(--color-primary-rgb), 0.4)",
+              fontSize:   "var(--text-sm)",
+              boxShadow:  "var(--shadow-elevated)",
+            }}
+          >
+            <span>↕️</span>
+            <span>
+              The current song is{" "}
+              <strong style={{ color: "rgb(var(--color-primary-rgb))" }}>{verdict}</strong>
+              {" "}than <em>{target.track.name}</em> ({cardYear})
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* ── More-or-less arming overlay ────────────────────────────────── */}
+      {moreOrLessArmed && (
+        <div
+          className="fixed top-1/4 left-1/2 -translate-x-1/2 z-40 px-4 py-3 rounded-md animate-fade-in"
+          style={{
+            background: "rgb(var(--surface-overlay-rgb))",
+            border:     "1px solid rgba(var(--color-primary-rgb), 0.55)",
+            boxShadow:  "var(--shadow-elevated)",
+          }}
+        >
+          <p className="text-sm" style={{ color: "rgb(var(--text-primary-rgb))" }}>
+            ↕️ Pick a card on your timeline to compare years.
+          </p>
+          <button
+            onClick={() => setMoreOrLessArmed(false)}
+            className="mt-1 text-xs underline"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Token tray modal ──────────────────────────────────────────────────────
+function TokenTray({
+  tokens, onClose, onUse,
+}: {
+  tokens: TlTeamToken[];
+  onClose: () => void;
+  onUse:   (token: TlTeamToken) => void;
+}) {
+  // Group by category for a clearer layout.
+  const groups: Record<string, TlTeamToken[]> = {};
+  for (const t of tokens) {
+    const spec = TOKEN_CATALOG[t.type as TokenType];
+    const cat = spec?.category ?? "anytime";
+    (groups[cat] ?? (groups[cat] = [])).push(t);
+  }
+  const order: Array<keyof typeof groups> = ["before_song", "during_listen", "before_pass", "opponent_turn", "anytime"];
+
+  return (
+    <Modal open onClose={onClose} maxWidth="440px">
+      <h2
+        className="font-extrabold mb-1"
+        style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
+      >
+        Your tokens
+      </h2>
+      <p
+        className="mb-4"
+        style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
+      >
+        Tokens are earned by getting both song name + artist right. Pick one to spend.
+      </p>
+      {tokens.length === 0 ? (
+        <p style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+          No tokens to spend yet.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {order.flatMap(cat => {
+            const list = groups[cat];
+            if (!list?.length) return [];
+            const meta = CATEGORY_META[cat as TokenCategory];
+            return [(
+              <div key={cat}>
+                <p
+                  className="uppercase mb-1 flex items-center gap-1.5"
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    letterSpacing: "0.15em",
+                    color: "rgb(var(--text-muted-rgb))",
+                  }}
+                >
+                  <span>{meta.icon}</span>
+                  {meta.label}
+                </p>
+                <div className="flex flex-col gap-2">
+                  {list.map(t => {
+                    const spec = TOKEN_CATALOG[t.type as TokenType];
+                    if (!spec) return null;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => spec.implemented && onUse(t)}
+                        disabled={!spec.implemented}
+                        className="text-left rounded-md p-3 transition-all disabled:cursor-not-allowed"
+                        style={{
+                          background: spec.implemented ? "rgb(var(--surface-raised-rgb))" : "transparent",
+                          border:     `1px solid rgba(var(--color-primary-rgb), ${spec.implemented ? 0.4 : 0.15})`,
+                          opacity:    spec.implemented ? 1 : 0.55,
+                        }}
+                      >
+                        <p className="font-bold flex items-center gap-2" style={{ fontSize: "var(--text-base)" }}>
+                          <span>{spec.icon}</span> {spec.name}
+                          {!spec.implemented && (
+                            <span
+                              className="ml-auto text-[10px] uppercase tracking-wider"
+                              style={{ color: "rgb(var(--text-muted-rgb))" }}
+                            >
+                              soon
+                            </span>
+                          )}
+                        </p>
+                        <p style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-secondary-rgb))" }}>
+                          {spec.description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )];
+          })}
+        </div>
+      )}
+      <button
+        onClick={onClose}
+        className="mt-4 w-full text-center"
+        style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
+      >
+        Close
+      </button>
+    </Modal>
   );
 }
 
