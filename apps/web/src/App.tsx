@@ -313,13 +313,20 @@ function HeroJoinForm() {
 
 // ── /join — looks up a room code and forwards to the right game ────────────
 
+// Game subdomains used as the fallback picker when the lookup endpoint is
+// unavailable. Keep in sync with apps/web/functions/api/find-room.ts.
+const GAME_SUBDOMAINS = [
+  { label: "musix",         subdomain: "musix.gokkehub.com"      },
+  { label: "gridchallenge", subdomain: "partybingo.gokkehub.com" },
+] as const;
+
 function JoinRedirect() {
   const initialCode = typeof window !== "undefined"
     ? (new URLSearchParams(window.location.search).get("room") ?? "").toUpperCase().trim()
     : "";
 
   const [code,  setCode]  = useState(initialCode);
-  const [state, setState] = useState<"idle" | "looking" | "notfound" | "error">(
+  const [state, setState] = useState<"idle" | "looking" | "notfound" | "error" | "fallback">(
     initialCode ? "looking" : "idle",
   );
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -329,13 +336,27 @@ function JoinRedirect() {
     setErrMsg(null);
     try {
       const res = await fetch(`/api/find-room?code=${encodeURIComponent(target)}`);
+      // Detect SPA fallback / HTML error pages. The Function should always
+      // return JSON; anything else means the deploy hasn't routed correctly
+      // and we should show a manual game picker instead of a parse error.
+      const ct = res.headers.get("Content-Type") ?? "";
+      if (!ct.includes("application/json")) {
+        setState("fallback");
+        setErrMsg("Lookup service is offline — pick your game below.");
+        return;
+      }
       if (res.status === 404) { setState("notfound"); return; }
-      if (!res.ok) { setState("error"); setErrMsg(`Lookup failed (${res.status})`); return; }
+      if (!res.ok) {
+        setState("fallback");
+        setErrMsg(`Lookup failed (${res.status}).`);
+        return;
+      }
       const data = await res.json() as { url?: string };
       if (data.url) { window.location.replace(data.url); return; }
       setState("notfound");
     } catch (err) {
-      setState("error");
+      // Network error or JSON parse fail — fall back to manual picker.
+      setState("fallback");
       setErrMsg(err instanceof Error ? err.message : "Network error");
     }
   }
@@ -431,6 +452,41 @@ function JoinRedirect() {
           >
             Couldn't reach the lookup service. {errMsg && `(${errMsg})`}
           </p>
+        )}
+
+        {/* Fallback: manual game picker. Shown when /api/find-room is offline
+            so players can still get into the game by picking the right one. */}
+        {state === "fallback" && code.trim() && (
+          <div className="mt-4">
+            <p
+              className="text-sm mb-2 px-3 py-2 rounded-md"
+              style={{
+                background: "rgba(212,160,74,0.10)",
+                border:     "1px solid rgba(212,160,74,0.35)",
+                color:      "rgb(var(--color-primary-rgb))",
+              }}
+            >
+              {errMsg ?? "Lookup unavailable."} Pick your game:
+            </p>
+            <div className="flex flex-col gap-2">
+              {GAME_SUBDOMAINS.map(g => (
+                <a
+                  key={g.subdomain}
+                  href={`https://${g.subdomain}/join?room=${encodeURIComponent(code.trim().toUpperCase())}`}
+                  className="rounded-md px-4 py-2.5 font-bold transition-all active:scale-[0.98] flex items-center justify-between"
+                  style={{
+                    background: "rgb(var(--surface-overlay-rgb))",
+                    border:     "1px solid rgb(var(--border-rgb))",
+                    color:      "rgb(var(--text-primary-rgb))",
+                    fontSize:   "var(--text-base)",
+                  }}
+                >
+                  <span>{g.label}</span>
+                  <span style={{ color: "rgb(var(--color-primary-rgb))" }}>→</span>
+                </a>
+              ))}
+            </div>
+          </div>
         )}
 
         <a
