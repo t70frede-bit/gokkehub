@@ -1586,7 +1586,7 @@ export default function GamePage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col p-2 gap-1 w-full min-h-0">
+    <div className="flex-1 flex flex-col p-2 gap-2 w-full">
 
       {/* ── In-game sub-header: turn info · tokens · timer · host menu ──── */}
       {/* Room code + copy-invite live in the global GameHeader at the top. */}
@@ -1748,11 +1748,9 @@ export default function GamePage() {
 
           return (
             <Panel
-              className="p-4 flex flex-col h-full"
+              className="p-4 flex flex-col"
               style={{
-                minHeight:    0,
                 minWidth:     0,
-                overflow:     "hidden",
                 borderTop:    `3px solid rgb(var(--team-${color}-rgb))`,
                 borderRight:  "1px solid rgb(var(--border-rgb))",
                 borderLeft:   "1px solid rgb(var(--border-rgb))",
@@ -1796,8 +1794,9 @@ export default function GamePage() {
                 </span>
               </div>
 
-              {/* The big timeline */}
-              <div className="flex-1 min-h-0 overflow-auto pt-1">
+              {/* The big timeline — horizontally scrollable when many cards;
+                  vertically auto-sized so the panel matches its content. */}
+              <div className="overflow-x-auto overflow-y-hidden pt-1">
                 {tl.length === 0 && !showDragCard ? (
                   <p className="text-sm opacity-40 italic text-center py-8">No cards on the timeline yet</p>
                 ) : (
@@ -1845,16 +1844,19 @@ export default function GamePage() {
           const pending  = team.pending_tracks ?? [];
           const isMyTeam = team.id === myTeamId;
           const color    = getTeamColor(team.sort_order);
+          const teamPlayers = state.players.filter(p => p.team_id === team.id && !p.is_spectator);
 
+          // Opponents only show a summary — name, score, avatars. The actual
+          // cards are hidden until their turn so the active team's timeline
+          // gets the full canvas.
           return (
             <Panel
               key={team.id}
-              className="p-2 flex flex-col timeline-compact"
+              className="p-3 flex flex-col"
               style={{
                 flex:         "1 1 0",
                 minHeight:    0,
                 minWidth:     0,
-                overflow:     "hidden",
                 borderTop:    `2px solid rgb(var(--team-${color}-rgb))`,
                 borderRight:  "1px solid rgb(var(--border-rgb))",
                 borderLeft:   "1px solid rgb(var(--border-rgb))",
@@ -1862,43 +1864,36 @@ export default function GamePage() {
                 background:   "rgb(var(--surface-raised-rgb))",
               }}
             >
-              <div className="flex items-center gap-1.5 mb-1.5 flex-shrink-0">
+              <div className="flex items-center gap-2 mb-2 flex-shrink-0">
                 <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                   style={{ background: `rgb(var(--team-${color}-rgb))` }}
                 />
-                <p className="font-bold text-xs truncate">{team.name}</p>
+                <p className="font-bold truncate" style={{ fontSize: "var(--text-sm)" }}>{team.name}</p>
                 {isMyTeam && (
-                  <span className="text-[8px] font-bold uppercase opacity-60 px-1 rounded"
-                    style={{ background: "rgba(255,255,255,0.08)" }}>
+                  <span className="font-bold uppercase opacity-60 px-1.5 rounded"
+                    style={{ background: "rgba(255,255,255,0.08)", fontSize: 9, letterSpacing: "0.06em" }}>
                     you
                   </span>
                 )}
-                <span className="text-[10px] opacity-50 ml-auto whitespace-nowrap">
-                  {tl.length}{pending.length > 0 ? ` (+${pending.length})` : ""}
+                <span
+                  className="ml-auto whitespace-nowrap font-mono font-bold"
+                  style={{
+                    fontSize: "var(--text-base)",
+                    color:    `rgb(var(--team-${color}-rgb))`,
+                  }}
+                >
+                  {tl.length}
+                  {pending.length > 0 && (
+                    <span style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
+                      {" +"}{pending.length}
+                    </span>
+                  )}
                 </span>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
-                {tl.length === 0 ? (
-                  <p className="text-[10px] opacity-30 italic">No cards</p>
-                ) : (
-                  <Timeline
-                    entries={tl}
-                    dragCard={null}
-                    isCaptain={false}
-                    isActive={false}
-                    stagedLeft={null}
-                    stagedRight={null}
-                    onStageGap={() => {}}
-                    pending={pending as SpotifyTrack[]}
-                  />
-                )}
-              </div>
-
-              {/* Compact avatars at bottom (smaller, no name) */}
               <PlayerFooter
-                players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
+                players={teamPlayers}
                 notes={footerNotes}
                 color={color}
                 myPlayerId={myPlayerId}
@@ -1910,18 +1905,16 @@ export default function GamePage() {
 
         return (
           <>
-            {/* Compact strip — all non-spotlight teams stack horizontally up top */}
+            {/* Compact strip — opponent summaries (name + score + avatars) */}
             {compactTeams.length > 0 && (
-              <div className="min-h-0 overflow-hidden flex flex-row gap-1 flex-shrink-0"
-                style={{ maxHeight: "22vh", flex: "0 0 auto" }}>
+              <div className="flex flex-row gap-2 flex-shrink-0">
                 {compactTeams.map(t => renderCompact(t))}
               </div>
             )}
 
-            {/* Spotlight team — fills the remaining vertical space */}
+            {/* Spotlight team — sizes to its content (no flex-1 stretching). */}
             {spotlightTeam && (
-              <div className="min-h-0 overflow-hidden flex flex-col"
-                style={{ flex: "1 1 0" }}>
+              <div className="flex flex-col flex-shrink-0">
                 {renderSpotlight(spotlightTeam)}
               </div>
             )}
