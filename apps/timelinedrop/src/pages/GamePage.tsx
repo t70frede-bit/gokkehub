@@ -1391,6 +1391,34 @@ export default function GamePage() {
     return () => clearInterval(id);
   }, []);
 
+  // Lock the body to the viewport while the game is mounted. The shared
+  // base.css gives <body> a 20px padding which causes the page to scroll
+  // past the audio bar; this useEffect zeroes that out for /game routes
+  // only and restores on unmount.
+  useEffect(() => {
+    const body = document.body;
+    const html = document.documentElement;
+    const prev = {
+      bodyPadding:    body.style.padding,
+      bodyOverflow:   body.style.overflow,
+      bodyHeight:     body.style.height,
+      htmlOverflow:   html.style.overflow,
+      htmlHeight:     html.style.height,
+    };
+    body.style.padding  = "0";
+    body.style.overflow = "hidden";
+    body.style.height   = "100dvh";
+    html.style.overflow = "hidden";
+    html.style.height   = "100dvh";
+    return () => {
+      body.style.padding  = prev.bodyPadding;
+      body.style.overflow = prev.bodyOverflow;
+      body.style.height   = prev.bodyHeight;
+      html.style.overflow = prev.htmlOverflow;
+      html.style.height   = prev.htmlHeight;
+    };
+  }, []);
+
   // Optimistic local staging so the captain sees instant feedback even if the server is slow.
   // Server-driven values (broadcast via realtime) are the source of truth for everyone else.
   const [optimisticStaged, setOptimisticStaged] = useState<{ left: number | null; right: number | null } | null>(null);
@@ -1700,7 +1728,16 @@ export default function GamePage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col p-2 gap-2 w-full">
+    <div
+      className="flex flex-col p-2 gap-2 w-full"
+      style={{
+        // Account for the 56px shared GameHeader at the top. The body is
+        // pinned to 100dvh by the effect above, so we never overflow.
+        height: "calc(100dvh - var(--header-height, 56px))",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
 
       {/* ── In-game sub-header: turn info · tokens · timer · host menu ──── */}
       {/* Room code + copy-invite live in the global GameHeader at the top. */}
@@ -2030,9 +2067,10 @@ export default function GamePage() {
               </div>
             )}
 
-            {/* Spotlight team — sizes to its content (no flex-1 stretching). */}
+            {/* Spotlight team — fills the remaining vertical space and scrolls
+                its inner content (Timeline + footer) if it exceeds height. */}
             {spotlightTeam && (
-              <div className="flex flex-col flex-shrink-0">
+              <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
                 {renderSpotlight(spotlightTeam)}
               </div>
             )}
