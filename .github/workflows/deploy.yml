@@ -39,23 +39,38 @@ jobs:
           retention-days: 1
 
   # ── Deploy web (gokkehub.com) ─────────────────────────────────────────────────
+  # web now has Pages Functions (apps/web/functions/api/find-room.ts), so we
+  # deploy with `workingDirectory: apps/web` and `pages deploy dist`. Wrangler
+  # auto-detects `apps/web/functions/` next to the working directory and
+  # bundles those routes. A bare `pages deploy apps/web/dist` from repo root
+  # skips Functions entirely (which is why the lookup was 404'ing into the SPA
+  # fallback).
   deploy-web:
     name: Deploy web
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download build artefacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          name: build-output
-          path: apps
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build --workspace=apps/web
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/web/dist --project-name=web --branch=main
+          workingDirectory: apps/web
+          command: pages deploy dist --project-name=web --branch=main
 
   # ── Deploy account (account.gokkehub.com) ────────────────────────────────────
   # account has Pages Functions that import workspace packages (@gokkehub/auth, @gokkehub/db)
