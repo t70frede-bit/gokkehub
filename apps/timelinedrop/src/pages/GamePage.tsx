@@ -371,12 +371,106 @@ function Timeline({
   );
 }
 
+// ── TokenStrip ─────────────────────────────────────────────────────────────
+// Visual stack of typed-token icons for one team. Spotlight = larger, clickable
+// when it's your team & you're the captain (opens the tray). Compact = small.
+function TokenStrip({
+  tokens, color, compact, onClick,
+}: {
+  tokens:   TlTeamToken[];
+  color:    TeamColor | "spectator";
+  compact?: boolean;
+  onClick?: () => void;
+}) {
+  const ready   = tokens.filter(t => !t.pending);
+  const pending = tokens.filter(t => t.pending);
+  const sizePx  = compact ? 22 : 30;
+  const titleSize = compact ? 12 : 16;
+
+  if (ready.length === 0 && pending.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={!onClick}
+        className="rounded-md transition-all disabled:cursor-default"
+        style={{
+          padding: compact ? "2px 8px" : "6px 10px",
+          background: "transparent",
+          border: `1px dashed rgba(var(--team-${color}-rgb), 0.35)`,
+          color: "rgb(var(--text-muted-rgb))",
+          fontSize: compact ? "var(--text-xs)" : "var(--text-sm)",
+          letterSpacing: "0.05em",
+          cursor: onClick ? "pointer" : "default",
+        }}
+        title="No tokens yet"
+      >
+        No tokens
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className="flex items-center rounded-md transition-all disabled:cursor-default"
+      style={{
+        padding: compact ? "2px 6px" : "4px 8px",
+        gap: compact ? 3 : 4,
+        background: `rgba(var(--team-${color}-rgb), 0.08)`,
+        border: `1px solid rgba(var(--team-${color}-rgb), 0.32)`,
+        cursor: onClick ? "pointer" : "default",
+      }}
+      title={onClick ? "Spend a token" : "Tokens"}
+    >
+      {ready.map(t => (
+        <span
+          key={t.id}
+          className="inline-flex items-center justify-center rounded-full"
+          style={{
+            width: sizePx,
+            height: sizePx,
+            fontSize: titleSize,
+            background: `rgba(var(--team-${color}-rgb), 0.85)`,
+            border: `1px solid rgba(var(--team-${color}-rgb), 1)`,
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+          }}
+          title={tokenSpec(t.type).name}
+        >
+          {tokenSpec(t.type).icon}
+        </span>
+      ))}
+      {pending.map(t => (
+        <span
+          key={t.id}
+          className="inline-flex items-center justify-center rounded-full"
+          style={{
+            width: sizePx,
+            height: sizePx,
+            fontSize: titleSize,
+            background: "transparent",
+            border: `1px dashed rgba(var(--team-${color}-rgb), 0.55)`,
+            color: "rgb(var(--text-muted-rgb))",
+            opacity: 0.7,
+          }}
+          title={`${tokenSpec(t.type).name} (pending — ready next turn)`}
+        >
+          {tokenSpec(t.type).icon}
+        </span>
+      ))}
+    </button>
+  );
+}
+
 // Avatar row at the bottom of each team panel. Recent chat messages (last 12s)
 // appear as speech bubbles directly above each player's avatar.
 interface FooterNote { id: number; player_id: string; content: string; createdMs: number }
 
 function PlayerFooter({
   players, notes, color, myPlayerId, nowMs, onMakeCaptain, isHost,
+  bare = false, compact = false,
 }: {
   players:        TlPlayer[];
   notes:          FooterNote[];
@@ -385,16 +479,29 @@ function PlayerFooter({
   nowMs:          number;
   onMakeCaptain?: (p: TlPlayer) => void;
   isHost?:        boolean;
+  /** Drop the dashed top border + outer padding. Use when the parent
+   *  already provides them. */
+  bare?:          boolean;
+  /** Smaller avatars + no name labels (for the minimised opponent header). */
+  compact?:       boolean;
 }) {
   if (players.length === 0) return null;
+  const avatarSize = compact ? 28 : 40;
+  const tileWidth  = compact ? 36 : 56;
   return (
-    <div className="flex flex-wrap items-end gap-2 sm:gap-3 pt-2 mt-1"
-      style={{ borderTop: `1px dashed rgba(var(--team-${color}-rgb), 0.18)` }}>
+    <div
+      className={`flex flex-wrap items-end ${compact ? "gap-1.5" : "gap-2 sm:gap-3"}`}
+      style={bare ? undefined : {
+        paddingTop: 8,
+        marginTop:  4,
+        borderTop:  `1px dashed rgba(var(--team-${color}-rgb), 0.18)`,
+      }}
+    >
       {players.map(p => {
         const mine = notes.filter(n => n.player_id === p.id && (nowMs - n.createdMs) < 12000).slice(-3);
         const isMe = p.id === myPlayerId;
         return (
-          <div key={p.id} className="relative flex flex-col items-center min-w-0" style={{ width: 56 }}>
+          <div key={p.id} className="relative flex flex-col items-center min-w-0" style={{ width: tileWidth }}>
             {/* Speech bubbles stacked above the avatar — centred over the head */}
             {mine.length > 0 && (
               <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 flex flex-col gap-1.5 items-center pointer-events-none"
@@ -426,8 +533,11 @@ function PlayerFooter({
               onClick={onMakeCaptain && isHost ? () => onMakeCaptain(p) : undefined}
               disabled={!onMakeCaptain || !isHost}
               title={isHost ? (p.is_captain ? "Click to remove captain" : "Make captain") : p.name}
-              className="relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-extrabold disabled:cursor-default"
+              className="relative rounded-full flex items-center justify-center font-extrabold disabled:cursor-default"
               style={{
+                width:      avatarSize,
+                height:     avatarSize,
+                fontSize:   compact ? 11 : 14,
                 background: `rgba(var(--team-${color}-rgb), 0.55)`,
                 color:      "#fff",
                 border:     `2px solid rgba(var(--team-${color}-rgb), 0.85)`,
@@ -436,10 +546,12 @@ function PlayerFooter({
             >
               {(p.name.trim()[0] ?? "?").toUpperCase()}
               {p.is_captain && (
-                <span className="absolute -top-1 -right-1 text-[10px]"
+                <span className="absolute -top-1 -right-1"
                   style={{
                     background: "linear-gradient(135deg, #facc15, #b45309)",
-                    width: 18, height: 18,
+                    width:      compact ? 13 : 18,
+                    height:     compact ? 13 : 18,
+                    fontSize:   compact ? 8  : 10,
                     borderRadius: "50%",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     boxShadow: "0 0 6px rgba(250,204,21,0.55)",
@@ -448,11 +560,13 @@ function PlayerFooter({
                 </span>
               )}
             </button>
-            {/* Name */}
-            <span className="text-[10px] mt-0.5 truncate max-w-full"
-              style={{ color: isMe ? "#fff" : "rgb(var(--text-muted-rgb))" }}>
-              {p.name.split(" ")[0]}{isMe && " (you)"}
-            </span>
+            {/* Name (hidden in compact) */}
+            {!compact && (
+              <span className="text-[10px] mt-0.5 truncate max-w-full"
+                style={{ color: isMe ? "#fff" : "rgb(var(--text-muted-rgb))" }}>
+                {p.name.split(" ")[0]}{isMe && " (you)"}
+              </span>
+            )}
           </div>
         );
       })}
@@ -1605,31 +1719,8 @@ export default function GamePage() {
         </div>
 
         <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
-          {teams.map(t => {
-            const teamTokens = state.tokens?.[t.id] ?? [];
-            const ready   = teamTokens.filter(tk => !tk.pending);
-            const pending = teamTokens.filter(tk => tk.pending);
-            return (
-              <div
-                key={t.id}
-                className="flex items-center gap-1"
-                style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))" }}
-                title={`${t.name} — ${ready.length} ready · ${pending.length} pending`}
-              >
-                <span className="font-semibold hidden sm:inline">{t.name.slice(0, 8)}</span>
-                {ready.map(tk => (
-                  <span key={tk.id} title={tokenSpec(tk.type).name}>
-                    {tokenSpec(tk.type).icon}
-                  </span>
-                ))}
-                {pending.map(tk => (
-                  <span key={tk.id} title={`${tokenSpec(tk.type).name} (pending)`} style={{ opacity: 0.45 }}>
-                    {tokenSpec(tk.type).icon}
-                  </span>
-                ))}
-              </div>
-            );
-          })}
+          {/* Token overview moved to each team panel — sub-header keeps only
+              turn info, timer, and the host menu so it stays compact. */}
           {timerStartedAt && <TimerRing remaining={remaining} />}
 
           {/* Host management menu */}
@@ -1825,16 +1916,29 @@ export default function GamePage() {
                 )}
               </div>
 
-              {/* Player avatars footer — chat messages float above each head */}
-              <PlayerFooter
-                players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
-                notes={footerNotes}
-                color={color}
-                myPlayerId={myPlayerId}
-                nowMs={chatTickMs}
-                onMakeCaptain={isHost ? makeCaptain : undefined}
-                isHost={isHost}
-              />
+              {/* Bottom row: tokens (left) + player avatars (right) */}
+              <div
+                className="flex items-end gap-3 pt-2 mt-1"
+                style={{ borderTop: `1px dashed rgba(var(--team-${color}-rgb), 0.18)` }}
+              >
+                <TokenStrip
+                  tokens={state.tokens?.[team.id] ?? []}
+                  color={color}
+                  onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
+                />
+                <div className="ml-auto">
+                  <PlayerFooter
+                    players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
+                    notes={footerNotes}
+                    color={color}
+                    myPlayerId={myPlayerId}
+                    nowMs={chatTickMs}
+                    onMakeCaptain={isHost ? makeCaptain : undefined}
+                    isHost={isHost}
+                    bare
+                  />
+                </div>
+              </div>
             </Panel>
           );
         };
@@ -1846,13 +1950,12 @@ export default function GamePage() {
           const color    = getTeamColor(team.sort_order);
           const teamPlayers = state.players.filter(p => p.team_id === team.id && !p.is_spectator);
 
-          // Opponents only show a summary — name, score, avatars. The actual
-          // cards are hidden until their turn so the active team's timeline
-          // gets the full canvas.
+          // Opponents only show a summary — tokens, name, score, avatars in
+          // one row. Cards are hidden until that team is on the spot.
           return (
             <Panel
               key={team.id}
-              className="p-3 flex flex-col"
+              className="px-3 py-2 flex flex-col"
               style={{
                 flex:         "1 1 0",
                 minHeight:    0,
@@ -1864,7 +1967,15 @@ export default function GamePage() {
                 background:   "rgb(var(--surface-raised-rgb))",
               }}
             >
-              <div className="flex items-center gap-2 mb-2 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Tokens at the very left */}
+                <TokenStrip
+                  tokens={state.tokens?.[team.id] ?? []}
+                  color={color}
+                  compact
+                />
+
+                {/* Team name + you badge */}
                 <span
                   className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                   style={{ background: `rgb(var(--team-${color}-rgb))` }}
@@ -1876,8 +1987,10 @@ export default function GamePage() {
                     you
                   </span>
                 )}
+
+                {/* Score */}
                 <span
-                  className="ml-auto whitespace-nowrap font-mono font-bold"
+                  className="whitespace-nowrap font-mono font-bold"
                   style={{
                     fontSize: "var(--text-base)",
                     color:    `rgb(var(--team-${color}-rgb))`,
@@ -1890,15 +2003,20 @@ export default function GamePage() {
                     </span>
                   )}
                 </span>
-              </div>
 
-              <PlayerFooter
-                players={teamPlayers}
-                notes={footerNotes}
-                color={color}
-                myPlayerId={myPlayerId}
-                nowMs={chatTickMs}
-              />
+                {/* Avatars at the right */}
+                <div className="ml-auto">
+                  <PlayerFooter
+                    players={teamPlayers}
+                    notes={footerNotes}
+                    color={color}
+                    myPlayerId={myPlayerId}
+                    nowMs={chatTickMs}
+                    bare
+                    compact
+                  />
+                </div>
+              </div>
             </Panel>
           );
         };
