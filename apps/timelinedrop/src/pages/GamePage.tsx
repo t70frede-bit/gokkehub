@@ -1357,6 +1357,8 @@ export default function GamePage() {
   const [tokenTrayOpen, setTokenTrayOpen] = useState(false);
   // More-or-less is interactive — once armed, the captain has to pick a card.
   const [moreOrLessArmed, setMoreOrLessArmed] = useState(false);
+  // Cover-reveal floating thumbnail: click to enlarge.
+  const [coverEnlarged, setCoverEnlarged] = useState(false);
 
   // Tick every 500ms so the recent-ping bubbles fade out and disappear after 5s.
   const [, setPingTick] = useState(0);
@@ -2249,6 +2251,60 @@ export default function GamePage() {
           onClose={() => setTokenTrayOpen(false)}
           onUse={(t) => useTypedToken(t.type as TokenType)}
         />
+      )}
+
+      {/* ── Cover Reveal floating thumbnail (bottom-right) ──────────────── */}
+      {/* Visible to every active-team member (the audio bar is captain-only,
+          and the spotlight header thumbnail can scroll out of view). Click to
+          enlarge into a modal; click off / on it to dismiss. */}
+      {round && round.cover_revealed && round.track.coverUrl && isMyTurn && (
+        <>
+          <button
+            type="button"
+            onClick={() => setCoverEnlarged(true)}
+            className="fixed z-30 rounded-md overflow-hidden transition-all active:scale-[0.96]"
+            style={{
+              right:        16,
+              bottom:       16,
+              width:        56,
+              height:       56,
+              border:       "1px solid rgba(var(--color-primary-rgb), 0.55)",
+              boxShadow:    "0 6px 18px rgba(0,0,0,0.55)",
+              background:   "rgb(var(--surface-overlay-rgb))",
+              cursor:       "pointer",
+            }}
+            title="Tap to enlarge the cover"
+          >
+            <img
+              src={round.track.coverUrl}
+              alt="Album cover (tap to enlarge)"
+              draggable={false}
+              className="w-full h-full object-cover"
+            />
+          </button>
+
+          {coverEnlarged && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center p-6 cursor-zoom-out"
+              style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)" }}
+              onClick={() => setCoverEnlarged(false)}
+            >
+              <img
+                src={round.track.coverUrl}
+                alt="Album cover"
+                draggable={false}
+                onClick={() => setCoverEnlarged(false)}
+                style={{
+                  maxWidth:  "min(80vw, 80vh)",
+                  maxHeight: "min(80vw, 80vh)",
+                  borderRadius: 12,
+                  boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
+                  border:    "2px solid rgba(var(--color-primary-rgb), 0.6)",
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Before-or-After hint (after the captain picks a card) ──────── */}
