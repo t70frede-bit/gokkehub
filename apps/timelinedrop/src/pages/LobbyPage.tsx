@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, PlaylistMode } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Map a team's sort_order (0-3) to a colour token from the design system.
@@ -27,10 +27,11 @@ export default function LobbyPage() {
   const [addingPlaylist, setAddingPlaylist] = useState(false);
   const [playlistError,  setPlaylistError]  = useState<string | null>(null);
   const [playlistMsg,    setPlaylistMsg]    = useState<string | null>(null);
-  const [generating,     setGenerating]     = useState(false);
   const [starting,       setStarting]       = useState(false);
   const [startError,     setStartError]     = useState<string | null>(null);
   const [copied,         setCopied]         = useState(false);
+  // "Advanced settings" collapse on the host's settings panel
+  const [advancedOpen,   setAdvancedOpen]   = useState(false);
   // Action sheet state — tap a player tile to open
   const [selectedPlayer, setSelectedPlayer] = useState<TlPlayer | null>(null);
   // Manual-artists editor state
@@ -125,27 +126,8 @@ export default function LobbyPage() {
     });
   }
 
-  async function generateBatch() {
-    if (!myPlayerId) return;
-    setGenerating(true); setPlaylistError(null); setPlaylistMsg(null);
-    try {
-      const res = await fetch(`/room/${roomId}/curate?action=generate-batch`, {
-        method:      "POST",
-        headers:     { "Content-Type": "application/json" },
-        credentials: "include",
-        body:        JSON.stringify({ player_id: myPlayerId }),
-      });
-      const data = await res.json() as { added: number; total: number; warning?: string; error?: string };
-      if (!res.ok) { setPlaylistError(data.error ?? "Could not generate"); return; }
-      setPlaylistMsg(
-        `Generated ${data.added} songs (${data.total} total)${data.warning ? ` — ${data.warning}` : ""}`,
-      );
-    } catch {
-      setPlaylistError("Network error");
-    } finally {
-      setGenerating(false);
-    }
-  }
+  // Songs from group taste are now auto-generated when the host clicks Start.
+  // (The standalone /curate endpoint still exists for refilling mid-game.)
 
   async function startGame() {
     setStarting(true); setStartError(null);
@@ -201,39 +183,31 @@ export default function LobbyPage() {
               <h2 className="font-bold text-lg mb-4">Game Settings</h2>
               <div className="flex flex-col gap-4">
 
-                {/* Cards to win */}
-                <div className="flex items-center gap-3">
-                  <label className="text-sm font-medium" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-                    Cards to win:
-                  </label>
-                  <select
-                    value={room.win_target}
-                    onChange={async (e) => {
-                      const v = Number(e.target.value);
-                      await supabase.from("tl_rooms").update({ win_target: v }).eq("id", roomId);
-                    }}
-                    className="rounded-lg px-3 py-1.5 text-sm"
-                    style={{
-                      background: "rgba(var(--surface-raised-rgb),0.5)",
-                      border:     "1px solid rgba(255,255,255,0.1)",
-                      color:      "inherit",
-                    }}>
-                    {[5, 7, 10, 12, 15].map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                </div>
-
-                {/* Late join */}
+                {/* Cards to win — pill row replaces the dropdown */}
                 <div>
-                  <p className="text-sm font-medium mb-2">Late join</p>
-                  <Toggle
-                    options={[
-                      { value: "open",            label: "Open" },
-                      { value: "spectator-only",  label: "Spectators only" },
-                      { value: "closed",          label: "Closed" },
-                    ]}
-                    value={settings.lateJoinMode}
-                    onChange={v => saveSettings({ lateJoinMode: v as LateJoinMode })}
-                  />
+                  <p className="text-sm font-medium mb-2">Cards to win</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {[5, 7, 10, 12, 15].map(n => {
+                      const active = room.win_target === n;
+                      return (
+                        <button
+                          key={n}
+                          onClick={async () => {
+                            await supabase.from("tl_rooms").update({ win_target: n }).eq("id", roomId);
+                          }}
+                          className="px-4 py-1.5 rounded-md text-sm font-bold transition-all border"
+                          style={{
+                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                            background:  active ? "rgba(var(--color-primary-rgb),0.18)" : "transparent",
+                            color:       active ? "rgb(var(--color-primary-rgb))" : "inherit",
+                            fontFamily:  "var(--font-mono)",
+                          }}
+                        >
+                          {n}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Judging mode */}
@@ -290,79 +264,63 @@ export default function LobbyPage() {
                   )}
                 </div>
 
-                {/* Difficulty (curation engine) */}
+                {/* Advanced settings — collapsed by default. Most rooms never
+                    touch these. Difficulty + skipRecentlyHeard moved into the
+                    Songs panel since they only apply to group-taste mode. */}
                 <div>
-                  <p className="text-sm font-medium mb-2">Difficulty</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {([
-                      { value: "easy",    label: "🟢 Easy",    hint: "Songs everyone knows" },
-                      { value: "medium",  label: "🟡 Medium",  hint: "Mix of known + similar" },
-                      { value: "hard",    label: "🟠 Hard",    hint: "Rare picks from your taste" },
-                      { value: "hardest", label: "🔴 Hardest", hint: "Genre-matched unknowns" },
-                    ] as const).map(({ value, label, hint }) => {
-                      const active = settings.difficulty === value;
-                      return (
-                        <button
-                          key={value}
-                          onClick={() => saveSettings({ difficulty: value as Difficulty })}
-                          title={hint}
-                          className="text-left rounded-lg p-2.5 transition-all border"
-                          style={{
-                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
-                            background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
-                          }}
-                        >
-                          <p className="text-sm font-semibold">{label}</p>
-                          <p className="text-[10px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                  <button
+                    onClick={() => setAdvancedOpen(o => !o)}
+                    className="text-sm font-semibold flex items-center gap-2"
+                    style={{ color: "rgb(var(--text-secondary-rgb))" }}
+                  >
+                    <span style={{ display: "inline-block", transition: "transform 120ms ease", transform: advancedOpen ? "rotate(90deg)" : "none" }}>▸</span>
+                    Advanced settings
+                  </button>
 
-                {/* Playlist mode */}
-                <div>
-                  <p className="text-sm font-medium mb-2">Playlist source</p>
-                  <Toggle
-                    options={[
-                      { value: "as-is",        label: "Use as-is" },
-                      { value: "inspiration",  label: "Inspire" },
-                      { value: "smart-filter", label: "Smart filter" },
-                    ]}
-                    value={settings.playlistMode}
-                    onChange={v => saveSettings({ playlistMode: v as PlaylistMode })}
-                  />
-                  <p className="text-[11px] mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                    {settings.playlistMode === "as-is" && "Play the host's playlist verbatim."}
-                    {settings.playlistMode === "inspiration" && "Use the playlist's vibe; pick songs the group knows."}
-                    {settings.playlistMode === "smart-filter" && "Filter the playlist by difficulty + group taste."}
-                  </p>
-                </div>
+                  {advancedOpen && (
+                    <div className="mt-3 flex flex-col gap-4 pt-3"
+                      style={{ borderTop: "1px dashed rgb(var(--border-rgb))" }}
+                    >
+                      {/* Late join */}
+                      <div>
+                        <p className="text-sm font-medium mb-2">Late join</p>
+                        <Toggle
+                          options={[
+                            { value: "open",            label: "Open" },
+                            { value: "spectator-only",  label: "Spectators only" },
+                            { value: "closed",          label: "Closed" },
+                          ]}
+                          value={settings.lateJoinMode}
+                          onChange={v => saveSettings({ lateJoinMode: v as LateJoinMode })}
+                        />
+                      </div>
 
-                {/* Pill toggles */}
-                <div className="flex flex-wrap gap-2">
-                  {([
-                    { key: "streamerMode",      on: "📡 Streamer mode ON",      off: "📡 Streamer mode OFF" },
-                    { key: "hideSpectators",    on: "👁️ Spectators hidden",     off: "👁️ Show spectators" },
-                    { key: "teamSwapEnabled",   on: "🔄 Team swap ON",          off: "🔄 Team swap OFF" },
-                    { key: "skipRecentlyHeard", on: "🆕 Skip recently heard ON", off: "🆕 Skip recently heard OFF" },
-                    { key: "singleScreenMode",  on: "🎮 Single-screen ON",      off: "🎮 Single-screen OFF" },
-                  ] as const).map(({ key, on, off }) => {
-                    const val = !!settings[key];
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => saveSettings({ [key]: !val } as TlRoomSettings)}
-                        className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
-                        style={{
-                          borderColor: val ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
-                          background:  val ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
-                        }}
-                      >
-                        {val ? on : off}
-                      </button>
-                    );
-                  })}
+                      {/* Pill toggles */}
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { key: "streamerMode",     on: "📡 Streamer mode ON",  off: "📡 Streamer mode OFF" },
+                          { key: "hideSpectators",   on: "👁️ Spectators hidden", off: "👁️ Show spectators" },
+                          { key: "teamSwapEnabled",  on: "🔄 Team swap ON",      off: "🔄 Team swap OFF" },
+                          { key: "singleScreenMode", on: "🎮 Single-screen ON",  off: "🎮 Single-screen OFF" },
+                        ] as const).map(({ key, on, off }) => {
+                          const val = !!settings[key];
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => saveSettings({ [key]: !val } as TlRoomSettings)}
+                              className="text-sm font-semibold px-3 py-2 rounded-md border transition-all"
+                              style={{
+                                borderColor: val ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                                background:  val ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                              }}
+                            >
+                              {val ? on : off}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </Panel>
@@ -378,45 +336,110 @@ export default function LobbyPage() {
             </Panel>
           )}
 
-          {/* Songs (curation engine + optional playlist) */}
+          {/* Songs — single source-of-truth toggle. Group taste auto-generates
+              when the host clicks Start; Playlist mode requires the host to
+              paste a Spotify URL up front. */}
           {isHost && (
             <Panel className="p-5">
-              <h2 className="font-bold text-lg mb-1">Songs</h2>
-              <p className="text-xs mb-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                {trackCount > 0
-                  ? `${trackCount} songs loaded. Generate more or add another playlist.`
-                  : "Pick songs based on your group's listening data, or paste a Spotify playlist link."}
-              </p>
+              <h2 className="font-bold text-lg mb-3">Songs</h2>
 
-              {/* Generate from group taste (Last.fm) */}
-              <Button
-                onClick={generateBatch}
-                loading={generating}
-                className="w-full mb-3"
-              >
-                🎵 Generate {trackCount > 0 ? "more" : "30 songs"} from group taste
-              </Button>
+              {/* Source toggle */}
+              <Toggle
+                options={[
+                  { value: "group-taste", label: "🎧 Group taste" },
+                  { value: "playlist",    label: "🔗 Spotify playlist" },
+                ]}
+                value={settings.songSource}
+                onChange={v => saveSettings({ songSource: v as SongSource })}
+              />
 
-              {/* Playlist URL fallback */}
-              <div className="flex gap-2">
-                <Input
-                  value={playlistUrl}
-                  onChange={e => setPlaylistUrl(e.target.value)}
-                  placeholder="…or paste a Spotify playlist URL"
-                  className="flex-1"
-                  onKeyDown={e => e.key === "Enter" && addPlaylist()}
-                />
-                <Button onClick={addPlaylist} loading={addingPlaylist} size="sm" variant="ghost">Add</Button>
-              </div>
+              {/* Group taste branch */}
+              {settings.songSource === "group-taste" && (
+                <div className="mt-4 flex flex-col gap-4">
+                  <div>
+                    <p className="text-sm font-medium mb-2">Difficulty</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {([
+                        { value: "easy",    label: "🟢 Easy",    hint: "Songs everyone knows" },
+                        { value: "medium",  label: "🟡 Medium",  hint: "Mix of known + similar" },
+                        { value: "hard",    label: "🟠 Hard",    hint: "Rare picks from your taste" },
+                        { value: "hardest", label: "🔴 Hardest", hint: "Genre-matched unknowns" },
+                      ] as const).map(({ value, label, hint }) => {
+                        const active = settings.difficulty === value;
+                        return (
+                          <button
+                            key={value}
+                            onClick={() => saveSettings({ difficulty: value as Difficulty })}
+                            title={hint}
+                            className="text-left rounded-md p-2.5 transition-all border"
+                            style={{
+                              borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                              background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                            }}
+                          >
+                            <p className="text-sm font-semibold">{label}</p>
+                            <p className="text-[10px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-              {playlistError && <p className="text-sm text-red-400 mt-2">{playlistError}</p>}
-              {playlistMsg   && <p className="text-sm text-green-400 mt-2">{playlistMsg}</p>}
-              <p className="text-xs mt-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                Generation uses each player's Last.fm + the difficulty above. Spotify must be connected on your{" "}
-                <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
-                  profile
-                </a> for playback.
-              </p>
+                  <button
+                    onClick={() => saveSettings({ skipRecentlyHeard: !settings.skipRecentlyHeard })}
+                    className="text-sm font-semibold px-3 py-2 rounded-md border transition-all self-start"
+                    style={{
+                      borderColor: settings.skipRecentlyHeard ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                      background:  settings.skipRecentlyHeard ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                    }}
+                  >
+                    🆕 {settings.skipRecentlyHeard ? "Skip recently heard ON" : "Skip recently heard OFF"}
+                  </button>
+
+                  <p className="text-xs px-3 py-2 rounded-md"
+                    style={{
+                      background: "rgba(var(--color-primary-rgb),0.08)",
+                      border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
+                      color:      "rgb(var(--text-secondary-rgb))",
+                    }}>
+                    🎵 Songs auto-generate when you press Start. Each player's Last.fm + the
+                    difficulty above shape the playlist. The host needs Spotify connected on
+                    their{" "}
+                    <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
+                      profile
+                    </a> for playback.
+                  </p>
+                </div>
+              )}
+
+              {/* Playlist branch */}
+              {settings.songSource === "playlist" && (
+                <div className="mt-4 flex flex-col gap-3">
+                  <div>
+                    <p className="text-sm font-medium mb-2">Spotify playlist URL</p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={playlistUrl}
+                        onChange={e => setPlaylistUrl(e.target.value)}
+                        placeholder="https://open.spotify.com/playlist/…"
+                        className="flex-1"
+                        onKeyDown={e => e.key === "Enter" && addPlaylist()}
+                      />
+                      <Button onClick={addPlaylist} loading={addingPlaylist} size="sm" variant="ghost">Add</Button>
+                    </div>
+                  </div>
+
+                  {playlistError && <p className="text-sm text-red-400">{playlistError}</p>}
+                  {playlistMsg   && <p className="text-sm text-green-400">{playlistMsg}</p>}
+
+                  <p className="text-xs">
+                    <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{trackCount}</strong>{" "}
+                    <span style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                      song{trackCount === 1 ? "" : "s"} loaded. Add more playlists to mix them in.
+                    </span>
+                  </p>
+                </div>
+              )}
             </Panel>
           )}
         </div>
@@ -475,22 +498,32 @@ export default function LobbyPage() {
           {/* Start */}
           {isHost && (() => {
             const minTracks = Math.max(5, teams.length + 1);
+            // Group-taste rooms auto-generate on Start, so we never gate the
+            // button on track count for that source. Playlist rooms still
+            // need the host to actually add a URL first.
+            const isPlaylistMode = settings.songSource === "playlist";
+            const tracksTooFew   = isPlaylistMode && trackCount < minTracks;
+
             return (
               <Panel className="p-4">
                 {startError && <p className="text-sm text-red-400 mb-3">⚠️ {startError}</p>}
                 <Button
                   onClick={startGame}
                   loading={starting}
-                  disabled={trackCount < minTracks}
+                  disabled={tracksTooFew}
                   className="w-full"
                   size="lg"
                 >
-                  {trackCount < minTracks
-                    ? `Add songs first (${trackCount}/${minTracks})`
-                    : "🎮 Start Game"}
+                  {starting && !isPlaylistMode
+                    ? "🎵 Generating songs… this can take a few seconds"
+                    : tracksTooFew
+                      ? `Add a playlist first (${trackCount}/${minTracks})`
+                      : "🎮 Start Game"}
                 </Button>
                 <p className="text-xs mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                  Each team starts with one card; minimum is teams + 1
+                  {isPlaylistMode
+                    ? `Each team starts with one card; minimum is ${minTracks} tracks`
+                    : "Songs auto-generate from group taste when you press Start"}
                 </p>
               </Panel>
             );

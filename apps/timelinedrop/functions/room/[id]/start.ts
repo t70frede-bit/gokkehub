@@ -5,6 +5,7 @@ import {
   getRoom, updateRoom, getTeams, getPlayers, updatePlayer,
   createRound, insertTimelineEntry,
 } from "../../_supabase";
+import { handleGenerate } from "./curate";
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -24,12 +25,38 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   const players = await getPlayers(env, roomId);
   if (teams.length < 2) return json({ error: "Need at least 2 teams" }, 400, req);
 
-  const pool = room.track_pool ?? [];
+  let pool = room.track_pool ?? [];
   // Need: 1 starter card per team + 1 first round track
   const minTracks = teams.length + 1;
+  // For "group-taste" rooms we generate songs on the fly here rather than
+  // making the host hit a separate "Generate" button. Curation runs the
+  // Last.fm + Spotify pipeline; cold cache takes a few seconds.
+  const songSource = room.settings?.songSource ?? "group-taste";
+  if (songSource === "group-taste" && pool.length < Math.max(minTracks, 10)) {
+    // handleGenerate reads the request body for player_id; we already validated
+    // the host above. Build a synthetic request that matches what curate.ts expects.
+    const genReq = new Request(req.url, {
+      method:  "POST",
+      headers: req.headers,
+      body:    JSON.stringify({ player_id: body.player_id }),
+    });
+    const genRes = await handleGenerate(genReq, roomId, env, false);
+    if (!genRes.ok) {
+      // Pass curation errors through so the host sees what went wrong.
+      const text = await genRes.text().catch(() => "");
+      return new Response(text || JSON.stringify({ error: "Generation failed" }), {
+        status:  genRes.status,
+        headers: genRes.headers,
+      });
+    }
+    // Re-read room to pick up the freshly inserted track_pool.
+    const refreshed = await getRoom(env, roomId);
+    pool = refreshed?.track_pool ?? pool;
+  }
+
   if (pool.length < minTracks) {
     return json({
-      error: `Need at least ${minTracks} songs (one starting card per team + one for the first round). Add another playlist.`,
+      error: `Need at least ${minTracks} songs (one starting card per team + one for the first round). Add a Spotify playlist or switch to Group taste.`,
     }, 400, req);
   }
 

@@ -23,6 +23,11 @@ export type JudgeMode =
 export type Difficulty = "easy" | "medium" | "hard" | "hardest";
 export type PlaylistMode = "as-is" | "inspiration" | "smart-filter";
 
+// Where the round's songs come from. Group taste runs the curation engine
+// against each player's Last.fm history; playlist uses tracks the host pasted
+// from a Spotify playlist URL.
+export type SongSource = "group-taste" | "playlist";
+
 export interface TlRoomSettings {
   lateJoinMode?:       LateJoinMode;
   streamerMode?:       boolean;
@@ -31,9 +36,11 @@ export interface TlRoomSettings {
   judgeMode?:          JudgeMode;
   voteTimerSeconds?:   number;
   difficulty?:         Difficulty;
+  /** @deprecated kept for back-compat — UI no longer surfaces this. */
   playlistMode?:       PlaylistMode;
   skipRecentlyHeard?:  boolean;       // 14-day blacklist toggle
   singleScreenMode?:   boolean;       // host plays for every team on one device
+  songSource?:         SongSource;    // group-taste (default) | playlist
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -47,6 +54,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   playlistMode:      "as-is",
   skipRecentlyHeard: true,
   singleScreenMode:  false,
+  songSource:        "group-taste",
 };
 
 export interface TlRoom {
