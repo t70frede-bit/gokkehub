@@ -38,15 +38,15 @@ const GAMES: Game[] = [
     status: "soon",
   },
   {
-    name: "Timeline Drop",
+    name: "Musix",
     tagline: "Sort the hits by year",
     description:
-      "Songs drop one by one — place each on your team's timeline in the right year. Closer is better. Based on Hitster.",
-    emoji: "📅",
-    url: "https://hitster.gokkehub.com",
+      "A song plays — place it on your team's timeline in the right year. Closer is better. Earn tokens by guessing the artist + name. Hitster, but with your group's actual taste.",
+    emoji: "🎵",
+    url: "https://musix.gokkehub.com",
     accentRgb: "212, 160, 74",
     secondaryRgb: "184, 133, 59",
-    status: "soon",
+    status: "live",
   },
   {
     name: "BeatRank",
