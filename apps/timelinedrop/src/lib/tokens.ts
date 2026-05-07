@@ -121,9 +121,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
   more_or_less: {
     type: "more_or_less",
     category: "during_listen",
-    name: "More or Less",
-    short: "Older?",
-    description: "Pick a card. The system tells you whether the current song is older or newer (ties say younger).",
+    name: "Before or After",
+    short: "Before?",
+    description: "Pick a card. We'll tell you whether the current song is from before or after that year.",
     icon: "↕️",
     implemented: true,
   },

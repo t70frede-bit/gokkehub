@@ -2242,14 +2242,14 @@ export default function GamePage() {
         />
       )}
 
-      {/* ── More-or-less hint (after the captain picks a card) ─────────── */}
+      {/* ── Before-or-After hint (after the captain picks a card) ──────── */}
       {round && round.more_or_less_card_id && (() => {
         const target = (timelines[activeTeam?.id ?? -1] ?? [])
           .find(e => e.track_id === round.more_or_less_card_id);
         if (!target) return null;
         const cardYear = target.corrected_year ?? target.year;
         const songYear = round.corrected_year ?? round.track.releaseYear;
-        const verdict = songYear < cardYear ? "older" : "newer or same year";
+        const verdict = songYear < cardYear ? "before" : "after";
         return (
           <div
             className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-md flex items-center gap-2 animate-fade-in"
@@ -2262,9 +2262,8 @@ export default function GamePage() {
           >
             <span>↕️</span>
             <span>
-              The current song is{" "}
-              <strong style={{ color: "rgb(var(--color-primary-rgb))" }}>{verdict}</strong>
-              {" "}than <em>{target.track.name}</em> ({cardYear})
+              This song is from{" "}
+              <strong style={{ color: "rgb(var(--color-primary-rgb))" }}>{verdict} {cardYear}</strong>
             </span>
           </div>
         );
