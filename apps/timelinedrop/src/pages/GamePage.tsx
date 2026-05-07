@@ -847,11 +847,11 @@ function AudioPlayerUI(props: AudioPlayerProps) {
           {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
         </button>
         {volOpen && (
-          <div className="absolute right-0 top-full mt-1 z-10 px-3 py-2 rounded-lg flex items-center gap-2"
+          <div className="absolute right-0 bottom-full mb-2 z-10 px-3 py-2 rounded-md flex items-center gap-2"
             style={{
-              background: "rgba(var(--surface-raised-rgb), 0.95)",
-              border:     "1px solid rgba(255,255,255,0.1)",
-              backdropFilter: "blur(8px)",
+              background: "rgb(var(--surface-overlay-rgb))",
+              border:     "1px solid rgb(var(--border-rgb))",
+              boxShadow:  "var(--shadow-card)",
             }}>
             <input type="range" min="0" max="1" step="0.05" value={volume}
               onChange={e => onVolume(Number(e.target.value))}
