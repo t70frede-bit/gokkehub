@@ -93,13 +93,11 @@ interface TimelineProps {
   coverRevealed?: boolean;       // cover_reveal token effect
   isCaptain:      boolean;
   isActive:       boolean;       // is this the active team's timeline?
-  isHost?:        boolean;
   myPlayerId?:    string;
   stagedLeft:     number | null;
   stagedRight:    number | null;
   onStageGap:     (gapIdx: number | null, leftYear: number | null, rightYear: number | null) => void;
   onPingYear?:    (year: number) => void;
-  onDismissPing?: (pingId: number) => void;   // server enforces: captain, host, or ping author
   onCardClick?:   (entry: TlTimelineEntry) => void;  // more-or-less etc
   cardClickHint?: string;
   pings?:         TimelinePing[];
@@ -113,10 +111,20 @@ interface MergedItem {
 }
 
 function Timeline({
-  entries, dragCard, coverRevealed, isCaptain, isActive, isHost = false, myPlayerId,
-  stagedLeft, stagedRight, onStageGap, onPingYear, onDismissPing,
+  entries, dragCard, coverRevealed, isCaptain, isActive, myPlayerId,
+  stagedLeft, stagedRight, onStageGap, onPingYear,
   onCardClick, cardClickHint, pings = [], pending = [],
 }: TimelineProps) {
+  // Cards scale up when the rail is sparse and shrink as it fills. Counts
+  // include the captain's mystery placeholder so the rest doesn't reflow when
+  // they stage.
+  const cardCount = entries.length + pending.length + (dragCard ? 1 : 0);
+  const cardWidth =
+    cardCount <= 3 ? 144 :
+    cardCount <= 5 ? 124 :
+    cardCount <= 7 ? 108 :
+    cardCount <= 9 ? 96  :
+    cardCount <= 12 ? 84 : 72;
   const [dragOver, setDragOver] = useState<number | null>(null);
 
   // Merge locked + pending into a single ordered list — pending cards form gaps too.
@@ -217,17 +225,6 @@ function Timeline({
             if (isCaptain) stageGap(gapIdx);
             else if (onPingYear && isActive) pingGap(gapIdx);
           };
-          // Right-click: remove a ping authored by ME inside this gap's range.
-          // Captains/host can right-click any ping.
-          const handleRightClick = (e: React.MouseEvent) => {
-            if (!onDismissPing) return;
-            const removable = gapPings.filter(p => isCaptain || isHost || p.player_id === myPlayerId);
-            if (removable.length === 0) return;
-            e.preventDefault();
-            // Newest first — drop the most recent removable ping
-            const target = removable[removable.length - 1];
-            onDismissPing(target.id);
-          };
 
           return (
             <Fragment key={gapIdx}>
@@ -247,18 +244,17 @@ function Timeline({
                   onDragLeave={isCaptain ? (() => setDragOver(null)) : undefined}
                   onDrop={isCaptain ? (() => { setDragOver(null); stageGap(gapIdx); }) : undefined}
                   onClick={handleClick}
-                  onContextMenu={handleRightClick}
                   title={
                     isStaged
                       ? (isCaptain ? "Selected — click again to clear" : "Captain is considering this spot")
                       : isCaptain
-                        ? "Click to place · right-click to clear pings"
-                        : (isActive ? "Click to suggest · right-click to clear yours" : "")
+                        ? "Click to place"
+                        : (isActive ? "Click to suggest · click again to remove" : "")
                   }
                 >
                   {isStaged && dragCard ? (
                     <div onClick={e => isCaptain && e.stopPropagation()} className="px-1">
-                      <QuestionCard track={dragCard} coverRevealed={coverRevealed} />
+                      <QuestionCard track={dragCard} coverRevealed={coverRevealed} width={cardWidth} />
                     </div>
                   ) : isOver ? (
                     <span style={{ color: "rgb(var(--color-primary-rgb))", fontSize: 16 }}>↓</span>
@@ -271,8 +267,6 @@ function Timeline({
                     <PingBubbles
                       pings={gapPings}
                       myPlayerId={myPlayerId}
-                      canDismissAny={isCaptain || isHost}
-                      onDismiss={onDismissPing}
                     />
                   )}
                 </div>
@@ -288,16 +282,13 @@ function Timeline({
                     position:   "relative",
                   }}
                   onClick={() => pingGap(gapIdx)}
-                  onContextMenu={handleRightClick}
-                  title={onPingYear ? "Click to pin · right-click to clear yours" : ""}
+                  title={onPingYear ? "Click to pin · click again to remove" : ""}
                 >
                   <span className="tl-gap-dot" />
                   {gapPings.length > 0 && (
                     <PingBubbles
                       pings={gapPings}
                       myPlayerId={myPlayerId}
-                      canDismissAny={isCaptain || isHost}
-                      onDismiss={onDismissPing}
                     />
                   )}
                 </div>
@@ -308,55 +299,40 @@ function Timeline({
               {item && (() => {
                 const cardPings = pings.filter(p => p.year === item.year);
                 const canCardPing = !!onPingYear && isActive && !isCaptain;
-                const canCardDismiss = !!onDismissPing && cardPings.some(p =>
-                  isCaptain || isHost || p.player_id === myPlayerId
-                );
                 const lockedEntry = item.locked ? entries.find(e => e.track_id === item.track.id) : null;
                 const canCardSelect = !!onCardClick && !!lockedEntry;
-                const cardClickable = canCardSelect || canCardPing || canCardDismiss;
+                const cardClickable = canCardSelect || canCardPing;
 
                 const handleCardClick = () => {
                   if (canCardSelect && lockedEntry && onCardClick) { onCardClick(lockedEntry); return; }
                   if (canCardPing && onPingYear) onPingYear(item.year);
-                };
-                const handleCardRightClick = (e: React.MouseEvent) => {
-                  if (!onDismissPing) return;
-                  const removable = cardPings.filter(p =>
-                    isCaptain || isHost || p.player_id === myPlayerId
-                  );
-                  if (removable.length === 0) return;
-                  e.preventDefault();
-                  onDismissPing(removable[removable.length - 1].id);
                 };
 
                 return (
                   <div
                     className="flex-shrink-0 relative"
                     onClick={cardClickable ? handleCardClick : undefined}
-                    onContextMenu={canCardDismiss ? handleCardRightClick : undefined}
                     style={{
-                      cursor: cardClickable ? "pointer" : "default",
+                      cursor:   cardClickable ? "pointer" : "default",
                       position: "relative",
-                      outline: canCardSelect ? "2px solid rgba(var(--color-primary-rgb), 0.7)" : undefined,
+                      outline:  canCardSelect ? "2px solid rgba(var(--color-primary-rgb), 0.7)" : undefined,
                       borderRadius: canCardSelect ? 8 : undefined,
                     }}
                     title={
                       canCardSelect ? (cardClickHint ?? "Click to pick this card")
-                      : canCardPing  ? "Click to suggest this year · right-click to clear yours"
+                      : canCardPing  ? "Click to suggest this year · click again to remove"
                       : ""
                     }
                   >
                     {item.locked ? (
-                      <TrackCard year={item.year} track={item.track} />
+                      <TrackCard year={item.year} track={item.track} width={cardWidth} />
                     ) : (
-                      <PendingCard year={item.year} track={item.track} />
+                      <PendingCard year={item.year} track={item.track} width={cardWidth} />
                     )}
                     {cardPings.length > 0 && (
                       <PingBubbles
                         pings={cardPings}
                         myPlayerId={myPlayerId}
-                        canDismissAny={isCaptain || isHost}
-                        onDismiss={onDismissPing}
                       />
                     )}
                   </div>
@@ -574,61 +550,43 @@ function PlayerFooter({
   );
 }
 
-// Persistent ping bubbles stacked above a gap. Styled to feel like physical
-// push-pins: layered shadow gives elevation, subtle inner highlight on top,
-// and a small triangular tail points down at the gap.
-//
-// Each bubble shows × when the viewer is allowed to remove it: own pings are
-// always removable, captain/host can remove any. Right-click also dismisses.
+// Persistent ping bubbles stacked above a gap or card. Styled to feel like
+// physical push-pins: layered shadow gives elevation, subtle inner highlight,
+// and a small triangular tail points down at the slot. The bubbles are
+// pointer-events-none — players toggle their own pings by tapping the same
+// slot a second time, not by clicking the bubble.
 function PingBubbles({
-  pings, myPlayerId, canDismissAny, onDismiss,
+  pings, myPlayerId,
 }: {
-  pings:          TimelinePing[];
-  myPlayerId?:    string;
-  canDismissAny?: boolean;
-  onDismiss?:     (id: number) => void;
+  pings:        TimelinePing[];
+  myPlayerId?:  string;
 }) {
   const visible = pings.slice(-4);
   return (
-    <div className="absolute -top-9 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1"
-      style={{ pointerEvents: onDismiss ? "auto" : "none" }}>
+    <div className="absolute -top-9 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
       {visible.map((p, idx) => {
-        const isMine    = !!myPlayerId && p.player_id === myPlayerId;
-        const canRemove = !!onDismiss && (isMine || !!canDismissAny);
-        const isLast    = idx === visible.length - 1;
-        const colorVar  = isMine ? "--color-primary-rgb" : "--color-secondary-rgb";
+        const isMine   = !!myPlayerId && p.player_id === myPlayerId;
+        const isLast   = idx === visible.length - 1;
+        const colorVar = isMine ? "--color-primary-rgb" : "--color-secondary-rgb";
 
         return (
           <div key={p.id} className="relative">
             <div
-              className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap flex items-center gap-1.5"
+              className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
               style={{
                 background: `linear-gradient(180deg, rgba(var(${colorVar}), 1) 0%, rgba(var(${colorVar}), 0.78) 100%)`,
                 color:      "#fff",
-                // Layered shadow: 1px crisp drop + diffuse below = "lifted off the rail"
                 boxShadow: [
-                  "0 1px 0 rgba(255,255,255,0.18) inset",     // top inner highlight
-                  "0 1px 1px rgba(0,0,0,0.35)",               // crisp 1px ground line
-                  "0 6px 14px rgba(0,0,0,0.38)",              // diffuse halo
+                  "0 1px 0 rgba(255,255,255,0.18) inset",
+                  "0 1px 1px rgba(0,0,0,0.35)",
+                  "0 6px 14px rgba(0,0,0,0.38)",
                 ].join(", "),
                 border:     `1px solid rgba(var(${colorVar}), 0.55)`,
-                cursor:     canRemove ? "pointer" : "default",
                 textShadow: "0 1px 1px rgba(0,0,0,0.35)",
               }}
-              title={canRemove ? `${p.player_name} · right-click to remove` : p.player_name}
-              onContextMenu={canRemove ? ((e) => { e.preventDefault(); e.stopPropagation(); onDismiss!(p.id); }) : undefined}
+              title={isMine ? `Your ping · tap the slot again to remove` : p.player_name}
             >
-              <span>📍 {p.player_name.split(" ")[0]}</span>
-              {canRemove && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDismiss!(p.id); }}
-                  className="text-sm leading-none -mr-0.5 hover:text-red-200"
-                  title="Dismiss"
-                  style={{ opacity: 0.85 }}
-                >
-                  ×
-                </button>
-              )}
+              📍 {p.player_name.split(" ")[0]}
             </div>
 
             {/* Tail — only on the bottom-most bubble so the stack points at one place */}
@@ -643,7 +601,6 @@ function PingBubbles({
                   borderRight: "5px solid transparent",
                   borderTop:   `5px solid rgba(var(${colorVar}), 0.85)`,
                   filter:      "drop-shadow(0 1px 1px rgba(0,0,0,0.35))",
-                  pointerEvents: "none",
                 }}
               />
             )}
@@ -654,9 +611,9 @@ function PingBubbles({
   );
 }
 
-function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
+function TrackCard({ year, track, width = 88 }: { year: number; track: SpotifyTrack; width?: number }) {
   return (
-    <div className="flex flex-col items-center select-none" style={{ width: 88 }}>
+    <div className="flex flex-col items-center select-none" style={{ width }}>
       <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
         style={{
           fontSize: "0.8rem",
@@ -681,9 +638,9 @@ function TrackCard({ year, track }: { year: number; track: SpotifyTrack }) {
   );
 }
 
-function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
+function PendingCard({ year, track, width = 88 }: { year: number; track: SpotifyTrack; width?: number }) {
   return (
-    <div className="pending-card-wrap flex-shrink-0 flex flex-col items-center select-none" style={{ width: 88 }}>
+    <div className="pending-card-wrap flex-shrink-0 flex flex-col items-center select-none" style={{ width }}>
       <p className="font-black mb-1.5 px-1.5 rounded whitespace-nowrap"
         style={{
           fontSize:   "0.8rem",
@@ -713,9 +670,9 @@ function PendingCard({ year, track }: { year: number; track: SpotifyTrack }) {
   );
 }
 
-function QuestionCard({ track, coverRevealed }: { track: SpotifyTrack; coverRevealed?: boolean }) {
+function QuestionCard({ track, coverRevealed, width }: { track: SpotifyTrack; coverRevealed?: boolean; width?: number }) {
   return (
-    <div className="question-card select-none">
+    <div className="question-card select-none" style={width ? { width } : undefined}>
       {coverRevealed && track.coverUrl ? (
         <img
           src={track.coverUrl}
@@ -1922,9 +1879,12 @@ export default function GamePage() {
                 </span>
               </div>
 
-              {/* The big timeline — horizontally scrollable when many cards;
-                  vertically auto-sized so the panel matches its content. */}
-              <div className="overflow-x-auto overflow-y-hidden pt-1">
+              {/* The big timeline — horizontally scrollable when many cards.
+                  pt-12 leaves room for ping bubbles + speech bubbles that
+                  hover above the cards (otherwise the wrapper clips them).
+                  overflowY:visible lets bubbles escape; the spotlight panel
+                  already manages its own height. */}
+              <div className="overflow-x-auto pt-12" style={{ overflowY: "visible" }}>
                 {tl.length === 0 && !showDragCard ? (
                   <p className="text-sm opacity-40 italic text-center py-8">No cards on the timeline yet</p>
                 ) : (
@@ -1941,11 +1901,9 @@ export default function GamePage() {
                       ? (optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null))
                       : null}
                     onStageGap={stageGap}
-                    onPingYear={isActive ? pingAtYear : undefined}
-                    onDismissPing={isActive ? dismissPing : undefined}
+                    onPingYear={isActive && isMyTeam ? pingAtYear : undefined}
                     onCardClick={isActive && isMyTeam && moreOrLessArmed ? (entry) => useTypedToken("more_or_less", { card_id: entry.track_id }) : undefined}
                     cardClickHint={moreOrLessArmed ? "Pick this card to compare years" : undefined}
-                    isHost={isHost}
                     myPlayerId={myPlayerId}
                     pings={isActive ? persistentPings : []}
                     pending={pending as SpotifyTrack[]}
@@ -2004,45 +1962,39 @@ export default function GamePage() {
                 background:   "rgb(var(--surface-raised-rgb))",
               }}
             >
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {/* Tokens at the very left */}
-                <TokenStrip
-                  tokens={state.tokens?.[team.id] ?? []}
-                  color={color}
-                  compact
-                />
-
-                {/* Team name + you badge */}
-                <span
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ background: `rgb(var(--team-${color}-rgb))` }}
-                />
-                <p className="font-bold truncate" style={{ fontSize: "var(--text-sm)" }}>{team.name}</p>
-                {isMyTeam && (
-                  <span className="font-bold uppercase opacity-60 px-1.5 rounded"
-                    style={{ background: "rgba(255,255,255,0.08)", fontSize: 9, letterSpacing: "0.06em" }}>
-                    you
-                  </span>
-                )}
-
-                {/* Score */}
-                <span
-                  className="whitespace-nowrap font-mono font-bold"
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {/* Left: score-disc + team name */}
+                <div
+                  className="flex items-center justify-center font-extrabold flex-shrink-0"
+                  title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
                   style={{
-                    fontSize: "var(--text-base)",
-                    color:    `rgb(var(--team-${color}-rgb))`,
+                    width:        32,
+                    height:       32,
+                    borderRadius: "50%",
+                    background:   `rgb(var(--team-${color}-rgb))`,
+                    color:        "#fff",
+                    fontSize:     "var(--text-base)",
+                    fontFamily:   "var(--font-mono)",
+                    boxShadow:    "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
                   }}
                 >
                   {tl.length}
-                  {pending.length > 0 && (
-                    <span style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
-                      {" +"}{pending.length}
-                    </span>
+                </div>
+                <div className="min-w-0">
+                  <p className="font-bold truncate" style={{ fontSize: "var(--text-sm)" }}>
+                    {team.name}
+                  </p>
+                  {(isMyTeam || pending.length > 0) && (
+                    <p className="leading-none mt-0.5" style={{ fontSize: 10, color: "rgb(var(--text-muted-rgb))" }}>
+                      {isMyTeam && <span className="uppercase tracking-wider">you</span>}
+                      {isMyTeam && pending.length > 0 && " · "}
+                      {pending.length > 0 && <span>+{pending.length} pending</span>}
+                    </p>
                   )}
-                </span>
+                </div>
 
-                {/* Avatars at the right */}
-                <div className="ml-auto">
+                {/* Centre: team avatars (always centred regardless of name length) */}
+                <div className="flex-1 flex justify-center min-w-0">
                   <PlayerFooter
                     players={teamPlayers}
                     notes={footerNotes}
@@ -2053,6 +2005,13 @@ export default function GamePage() {
                     compact
                   />
                 </div>
+
+                {/* Right: tokens */}
+                <TokenStrip
+                  tokens={state.tokens?.[team.id] ?? []}
+                  color={color}
+                  compact
+                />
               </div>
             </Panel>
           );

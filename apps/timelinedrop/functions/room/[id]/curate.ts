@@ -110,7 +110,18 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   const arranged = arrangePlaylistArc(scored, isRefill ? 15 : TARGET_BATCH_SIZE);
 
   // 7) Look up Spotify URIs for each candidate. Hard cap on attempts to stay
-  //    under the 50-subrequest limit even on cold cache.
+  //    under the 50-subrequest limit even on cold cache. Year-diversity guard
+  //    skips candidates whose release year already has MAX_PER_YEAR matches in
+  //    this batch — players were complaining the captain kept hearing songs
+  //    from "the current year" because top-tracks data is recency-skewed.
+  const MAX_PER_YEAR = 2;
+  // Seed the year tally with whatever's already in track_pool so we don't
+  // pile up consecutive Refill batches on the same year either.
+  const yearCount = new Map<number, number>();
+  for (const t of (room.track_pool ?? [])) {
+    yearCount.set(t.releaseYear, (yearCount.get(t.releaseYear) ?? 0) + 1);
+  }
+
   const tracks: SpotifyTrack[] = [];
   const enriched: Array<SpotifyTrack & { _meta: ScoredCandidate }> = [];
   let attempts = 0;
@@ -119,10 +130,11 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
     if (tracks.length >= (isRefill ? 15 : TARGET_BATCH_SIZE)) break;
     attempts++;
     const hit = await searchTrackUri(accessToken, c.artist, c.track);
-    if (hit) {
-      tracks.push(hit);
-      enriched.push({ ...hit, _meta: c });
-    }
+    if (!hit) continue;
+    if ((yearCount.get(hit.releaseYear) ?? 0) >= MAX_PER_YEAR) continue;
+    tracks.push(hit);
+    enriched.push({ ...hit, _meta: c });
+    yearCount.set(hit.releaseYear, (yearCount.get(hit.releaseYear) ?? 0) + 1);
   }
 
   // 8) Append to track_pool
