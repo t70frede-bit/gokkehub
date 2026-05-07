@@ -712,12 +712,17 @@ interface AudioPlayerProps {
   positionMs:   number;
   djReady:      boolean;
   listenerConnected: boolean;
+  /** When the active team has spent a Cover Reveal token, the bar swaps the
+   *  music-note placeholder for the actual album art. */
+  coverUrl?:    string | null;
+  coverRevealed?: boolean;
 }
 
 function AudioPlayerUI(props: AudioPlayerProps) {
   const {
     isDJ, djPlaying, trackUri, onPlay, onPause, onSeek, volume, onVolume,
     durationMs, positionMs, djReady, listenerConnected,
+    coverUrl, coverRevealed,
   } = props;
 
   // DJ uses the local SDK state for instant feedback; listeners derive from realtime room state.
@@ -740,12 +745,24 @@ function AudioPlayerUI(props: AudioPlayerProps) {
 
       {/* Now-playing label (left side, like Spotify's track info) */}
       <div className="flex items-center gap-2 flex-shrink-0 min-w-[120px]">
-        <div className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0"
-          style={{ background: "rgba(var(--color-primary-rgb), 0.15)", border: "1px solid rgba(var(--color-primary-rgb), 0.35)" }}>
-          <span className="text-base">🎵</span>
-        </div>
+        {coverRevealed && coverUrl ? (
+          <img
+            src={coverUrl}
+            alt="Album cover"
+            draggable={false}
+            className="w-9 h-9 rounded-md object-cover flex-shrink-0"
+            style={{ border: "1px solid rgba(var(--color-primary-rgb), 0.5)" }}
+          />
+        ) : (
+          <div className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(var(--color-primary-rgb), 0.15)", border: "1px solid rgba(var(--color-primary-rgb), 0.35)" }}>
+            <span className="text-base">🎵</span>
+          </div>
+        )}
         <div className="hidden sm:block min-w-0">
-          <p className="text-xs font-semibold opacity-80 truncate">Now playing</p>
+          <p className="text-xs font-semibold opacity-80 truncate">
+            {coverRevealed ? "Cover revealed" : "Now playing"}
+          </p>
           <p className="text-[10px] opacity-50 truncate">{trackUri ? "Mystery track" : "—"}</p>
         </div>
       </div>
@@ -1844,39 +1861,92 @@ export default function GamePage() {
                 boxShadow:    "var(--shadow-card)",
               }}
             >
-              {/* Spotlight header */}
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
-                <span
-                  className="w-3 h-3 rounded-full flex-shrink-0"
+              {/* Spotlight header — same layout as compact opponents:
+                  [score-disc · name+badges · centred avatars · tokens]. */}
+              <div className="flex items-center gap-3 mb-3">
+                {/* Left: score-disc + team name + badge */}
+                <div
+                  className="flex items-center justify-center font-extrabold flex-shrink-0"
+                  title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
                   style={{
-                    background: `rgb(var(--team-${color}-rgb))`,
-                    boxShadow:  isActive ? `0 0 12px rgba(var(--team-${color}-rgb), 0.85)` : "none",
+                    width:        40,
+                    height:       40,
+                    borderRadius: "50%",
+                    background:   `rgb(var(--team-${color}-rgb))`,
+                    color:        "#fff",
+                    fontSize:     "var(--text-lg)",
+                    fontFamily:   "var(--font-mono)",
+                    boxShadow:    isActive
+                      ? `inset 0 1px 0 rgba(255,255,255,0.18), 0 0 12px rgba(var(--team-${color}-rgb), 0.55)`
+                      : "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
                   }}
-                />
-                <h2 className="font-extrabold text-base sm:text-lg tracking-tight">
-                  {team.name}
-                </h2>
-                {isActive ? (
-                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse"
+                >
+                  {tl.length}
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-extrabold tracking-tight truncate"
+                    style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}>
+                    {team.name}
+                  </h2>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    {isActive ? (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse"
+                        style={{
+                          background: `rgba(var(--team-${color}-rgb), 0.30)`,
+                          color:      `rgb(var(--team-${color}-rgb))`,
+                          border:     `1px solid rgba(var(--team-${color}-rgb), 0.7)`,
+                        }}>
+                        🎯 On the spot
+                      </span>
+                    ) : isMyTeam ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider opacity-70"
+                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                        Your team
+                      </span>
+                    ) : null}
+                    {pending.length > 0 && (
+                      <span className="text-[10px]"
+                        style={{ color: "rgb(var(--color-secondary-rgb))" }}>
+                        +{pending.length} pending
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Centre: avatars w/ chat bubbles */}
+                <div className="flex-1 flex justify-center min-w-0">
+                  <PlayerFooter
+                    players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
+                    notes={footerNotes}
+                    color={color}
+                    myPlayerId={myPlayerId}
+                    nowMs={chatTickMs}
+                    onMakeCaptain={isHost ? makeCaptain : undefined}
+                    isHost={isHost}
+                    bare
+                  />
+                </div>
+
+                {/* Right: cover reveal thumbnail (when token used) + tokens */}
+                {isActive && round && round.cover_revealed && round.track.coverUrl && (
+                  <img
+                    src={round.track.coverUrl}
+                    alt="Album cover"
+                    draggable={false}
+                    className="rounded-md object-cover flex-shrink-0"
+                    title="Cover revealed by token"
                     style={{
-                      background: `rgba(var(--team-${color}-rgb), 0.30)`,
-                      color:      `rgb(var(--team-${color}-rgb))`,
-                      border:     `1px solid rgba(var(--team-${color}-rgb), 0.7)`,
-                    }}>
-                    🎯 On the spot
-                  </span>
-                ) : isMyTeam ? (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider opacity-70"
-                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
-                    Your team
-                  </span>
-                ) : null}
-                <span className="text-xs opacity-50 ml-auto">
-                  {tl.length} card{tl.length !== 1 ? "s" : ""}
-                  {pending.length > 0 && (
-                    <span style={{ color: "rgb(var(--color-secondary-rgb))" }}> · +{pending.length} pending</span>
-                  )}
-                </span>
+                      width:  40,
+                      height: 40,
+                      border: `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
+                    }}
+                  />
+                )}
+                <TokenStrip
+                  tokens={state.tokens?.[team.id] ?? []}
+                  color={color}
+                  onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
+                />
               </div>
 
               {/* The big timeline — horizontally scrollable when many cards.
@@ -1911,29 +1981,7 @@ export default function GamePage() {
                 )}
               </div>
 
-              {/* Bottom row: tokens (left) + player avatars (right) */}
-              <div
-                className="flex items-end gap-3 pt-2 mt-1"
-                style={{ borderTop: `1px dashed rgba(var(--team-${color}-rgb), 0.18)` }}
-              >
-                <TokenStrip
-                  tokens={state.tokens?.[team.id] ?? []}
-                  color={color}
-                  onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
-                />
-                <div className="ml-auto">
-                  <PlayerFooter
-                    players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
-                    notes={footerNotes}
-                    color={color}
-                    myPlayerId={myPlayerId}
-                    nowMs={chatTickMs}
-                    onMakeCaptain={isHost ? makeCaptain : undefined}
-                    isHost={isHost}
-                    bare
-                  />
-                </div>
-              </div>
+              {/* Tokens + avatars now live in the spotlight header above. */}
             </Panel>
           );
         };
@@ -2141,6 +2189,8 @@ export default function GamePage() {
           positionMs={djAudio.positionMs}
           djReady={djAudio.ready}
           listenerConnected={listenAudio.connected}
+          coverUrl={round?.track.coverUrl ?? null}
+          coverRevealed={!!round?.cover_revealed}
         />
       )}
 
