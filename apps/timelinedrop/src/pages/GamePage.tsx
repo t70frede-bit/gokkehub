@@ -1732,6 +1732,26 @@ export default function GamePage() {
         </div>
 
         <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
+          {/* Track-pool progress so players know how many songs are left. */}
+          {room.track_pool.length > 0 && (
+            <div
+              className="flex items-baseline gap-1 px-2 py-1 rounded-md"
+              title={`Song ${Math.min(room.track_cursor, room.track_pool.length)} of ${room.track_pool.length}`}
+              style={{
+                background: "rgba(var(--color-primary-rgb), 0.10)",
+                border:     "1px solid rgba(var(--color-primary-rgb), 0.30)",
+                color:      "rgb(var(--color-primary-rgb))",
+                fontFamily: "var(--font-mono)",
+                fontSize:   "var(--text-xs)",
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              <span>♪</span>
+              <span>{Math.min(room.track_cursor, room.track_pool.length)}</span>
+              <span style={{ opacity: 0.55 }}>/{room.track_pool.length}</span>
+            </div>
+          )}
           {/* Token overview moved to each team panel — sub-header keeps only
               turn info, timer, and the host menu so it stays compact. */}
           {timerStartedAt && <TimerRing remaining={remaining} />}
