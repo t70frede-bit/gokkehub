@@ -234,20 +234,71 @@ input[type="range"].orange-range::-moz-range-thumb {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes tokenLaunch {
-  /* Token starts above and behind the viewport, spinning on Y, then lands. */
-  0%   { transform: translateY(-180%) rotateY(0deg)   rotateZ(-14deg) scale(0.45); opacity: 0; }
-  18%  { opacity: 1; }
-  60%  { transform: translateY(-15%)  rotateY(540deg) rotateZ(-3deg)  scale(0.95); }
-  100% { transform: translateY(0)     rotateY(720deg) rotateZ(0deg)   scale(1);   opacity: 1; }
+
+/* Coin — a 3D-flipping disc with a front face (icon) and back face (music
+   note). The .token-coin-stage gives the perspective; .token-coin is the
+   rotating element with preserve-3d so both faces render in 3-space. The
+   coinFlip keyframes combine an X-axis rotation (end-over-end like a
+   tossed coin) with a parabolic translateY arc and a slight scale that
+   peaks at apex — gives the cue that the coin moves toward and away from
+   the camera. 1080° lands the FRONT face up (icon visible). */
+.token-coin-stage {
+  perspective: 1400px;
+  perspective-origin: 50% 40%;
+  width: 160px;
+  height: 160px;
 }
-@keyframes tokenSettle {
-  0%   { transform: translateY(0) scale(1); }
-  40%  { transform: translateY(-4px) scale(1.06); }
-  100% { transform: translateY(0) scale(1); }
+.token-coin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.token-coin-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.token-coin-front  { transform: translateZ(2px); }
+.token-coin-back   { transform: rotateX(180deg) translateZ(2px); }
+.token-coin-icon {
+  font-size: 76px;
+  line-height: 1;
+  filter: drop-shadow(0 3px 4px rgba(0,0,0,0.45));
+}
+.token-coin-back-mark {
+  font-size: 56px;
+  line-height: 1;
+  color: rgba(255,255,255,0.55);
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35));
+}
+
+@keyframes coinFlip {
+  /* Spin on X (end-over-end) along a parabolic vertical arc. translateY
+     uses an ease-out-like curve: launches high, slows at apex, accelerates
+     down. rotateX accumulates 1080° (3 full flips) and lands on the front
+     face. scale peaks slightly at apex to suggest depth. */
+  0%   { transform: translateY(-260px) rotateX(0deg)    scale(0.55); opacity: 0; }
+  12%  { opacity: 1; }
+  45%  { transform: translateY(-220px) rotateX(540deg)  scale(1.04); }
+  70%  { transform: translateY(-90px)  rotateX(810deg)  scale(1.02); }
+  100% { transform: translateY(0)      rotateX(1080deg) scale(1);    opacity: 1; }
+}
+@keyframes coinSettle {
+  /* Tiny squash-and-bounce on landing. Front is up (rotateX 0 ≡ 1080°). */
+  0%   { transform: translateY(0)    scaleY(1)    scaleX(1); }
+  35%  { transform: translateY(2px)  scaleY(0.92) scaleX(1.05); }
+  70%  { transform: translateY(-2px) scaleY(1.03) scaleX(0.98); }
+  100% { transform: translateY(0)    scaleY(1)    scaleX(1); }
 }
 @keyframes coverReveal {
-  /* Starts where the disc was, scales up to fill the stage. No title/artist
+  /* Starts where the coin was, scales up to fill the stage. No title/artist
      surfaces — the cover is the only hint the team gets. */
   0%   { transform: scale(0.35) rotate(-3deg); opacity: 0; filter: blur(8px); }
   60%  { opacity: 1; filter: blur(0); }

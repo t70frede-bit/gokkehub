@@ -2564,6 +2564,12 @@ export default function GamePage() {
         const myTeam     = myPlayer?.team_id ?? null;
         const myCounter  = !!(myTeam && (state.tokens?.[myTeam] ?? [])
           .some(t => !t.pending && t.type === "token_counter"));
+        // Any non-activator team holding a ready counter extends the window to
+        // 10s so the reaction is actually playable.
+        const someoneCanCounter = state.teams.some(t =>
+          t.id !== act.teamId &&
+          (state.tokens?.[t.id] ?? []).some(tk => !tk.pending && tk.type === "token_counter"),
+        );
         // Cover-reveal tokens chain into a big centred-cover phase after the
         // counter window. We only pass the URL — the cover IS the hint, so
         // title/artist must not appear in the cinematic.
@@ -2577,6 +2583,7 @@ export default function GamePage() {
             teamName={actTeam.name}
             teamColor={actColor}
             hasCounter={myCounter && actTeam.id !== myTeam}
+            counterAvailable={someoneCanCounter}
             revealMedia={revealMedia}
             onDismiss={clearTokenActivation}
           />
@@ -2696,33 +2703,36 @@ function TokenTray({
 // synchronous-enough for shared situational awareness.
 //
 // Phases:
-//   0–1000ms   token flips in from above, rotating on Y, lands centred
-//   1000ms+    name + description rise into view
-//   1000–3500ms counter-window countdown (sets the cadence for a future
-//               token_counter reaction; for now it just times the dismiss)
-//   3500ms     auto-dismiss
+//   0–1100ms    coin flips end-over-end (rotateX) along a parabolic arc, lands
+//   1100ms+     name + description rise into view; counter-window countdown
+//   counter end auto-dismiss (or chain into cover reveal for Cover Reveal tokens)
+//
+// Counter window is 3s by default, extended to 10s when at least one other
+// team can actually counter — reaction time on an opaque CSS animation needs
+// breathing room when the choice is meaningful.
 const COVER_REVEAL_TOKENS = new Set<string>(["cover_reveal", "cover_reveal_before"]);
 
 function TokenActivationOverlay({
-  activation, teamName, teamColor, hasCounter, onCounter, onDismiss,
+  activation, teamName, teamColor, hasCounter, counterAvailable, onCounter, onDismiss,
   revealMedia,
 }: {
   activation: { tokenId: number; tokenType: string; teamId: number; triggeredAt: number };
   teamName:   string;
   teamColor:  TeamColor | "spectator";
-  hasCounter: boolean;          // true if my team holds a token_counter (placeholder until implemented)
-  onCounter?: () => void;       // called when the counter button is pressed
+  hasCounter: boolean;          // I (my team) hold a token_counter — shows the Counter button
+  counterAvailable: boolean;    // ANY non-activator team holds a counter — extends the window
+  onCounter?: () => void;
   onDismiss:  () => void;
   /** When the token is a Cover Reveal AND the round track is known, pass the
    *  cover here. After the counter window expires (and no counter fires),
-   *  the disc fades out and the cover scales up centre-screen for a moment.
+   *  the coin fades out and the cover scales up centre-screen for a moment.
    *  We intentionally DO NOT pass title/artist — the cover is the hint; the
    *  song identity is still the question the captain has to answer. */
   revealMedia?: { coverUrl: string };
 }) {
   const spec = tokenSpec(activation.tokenType);
-  const LAND_MS           = 1000;
-  const COUNTER_WINDOW_MS = 2500;
+  const LAND_MS           = 1100;
+  const COUNTER_WINDOW_MS = counterAvailable ? 10000 : 3000;
   const REVEAL_HOLD_MS    = 3500;
   const canReveal         = COVER_REVEAL_TOKENS.has(activation.tokenType) && !!revealMedia?.coverUrl;
   const [phase, setPhase] = useState<"flying" | "landed" | "revealed">("flying");
@@ -2737,8 +2747,6 @@ function TokenActivationOverlay({
       setRemainingMs(Math.max(0, left));
     }, 80);
     if (canReveal) {
-      // After counter window, swap to the cover reveal stage instead of
-      // dismissing. The reveal holds for REVEAL_HOLD_MS, then we close.
       timers.push(window.setTimeout(() => setPhase("revealed"), LAND_MS + COUNTER_WINDOW_MS));
       timers.push(window.setTimeout(onDismiss, LAND_MS + COUNTER_WINDOW_MS + REVEAL_HOLD_MS));
     } else {
@@ -2750,7 +2758,7 @@ function TokenActivationOverlay({
     };
     // Re-run on a new activation (different tokenId).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activation.tokenId, canReveal]);
+  }, [activation.tokenId, canReveal, COUNTER_WINDOW_MS]);
 
   const ringPct = phase === "landed"
     ? Math.max(0, Math.min(100, (remainingMs / COUNTER_WINDOW_MS) * 100))
@@ -2769,30 +2777,43 @@ function TokenActivationOverlay({
       // doesn't dismiss because the Counter button lives next to it.
       onClick={onDismiss}
     >
-      {/* Token disc — flips in, settles, then (if revealing a cover) fades out
-          to make space for the album art. */}
+      {/* Coin — two-faced, X-axis flip, parabolic arc. The .token-coin /
+          .token-coin-face / token-coin-* classes live in styles.css so the
+          3D math reads cleanly. */}
       {!inReveal && (
         <div
-          style={{
-            width:        160,
-            height:       160,
-            borderRadius: "50%",
-            background:   `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(var(--team-${teamColor}-rgb), 0.85) 60%, rgba(var(--team-${teamColor}-rgb), 1))`,
-            border:       `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
-            boxShadow:    `0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.25), 0 22px 60px rgba(0,0,0,0.6)`,
-            display:      "flex",
-            alignItems:   "center",
-            justifyContent: "center",
-            fontSize:     72,
-            lineHeight:   1,
-            transformStyle: "preserve-3d",
-            animation:    phase === "flying"
-              ? "tokenLaunch 1000ms cubic-bezier(0.22, 1.02, 0.36, 1) forwards"
-              : "tokenSettle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
-          }}
+          className="token-coin-stage"
           onClick={(e) => e.stopPropagation()}
         >
-          <span style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))" }}>{spec.icon}</span>
+          <div
+            className="token-coin"
+            style={{
+              animation: phase === "flying"
+                ? "coinFlip 1100ms cubic-bezier(0.33, 0.0, 0.4, 1) forwards"
+                : "coinSettle 360ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+            }}
+          >
+            <div
+              className="token-coin-face token-coin-front"
+              style={{
+                background: `radial-gradient(circle at 35% 28%, rgba(255,255,255,0.22), rgba(var(--team-${teamColor}-rgb), 0.85) 55%, rgba(var(--team-${teamColor}-rgb), 1))`,
+                border:     `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
+                boxShadow:  `inset 0 0 24px rgba(255,255,255,0.12), 0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.22), 0 22px 60px rgba(0,0,0,0.6)`,
+              }}
+            >
+              <span className="token-coin-icon">{spec.icon}</span>
+            </div>
+            <div
+              className="token-coin-face token-coin-back"
+              style={{
+                background: `radial-gradient(circle at 35% 28%, rgba(255,255,255,0.12), rgba(var(--team-${teamColor}-rgb), 0.55) 55%, rgba(var(--team-${teamColor}-rgb), 0.85))`,
+                border:     `3px solid rgba(var(--team-${teamColor}-rgb), 0.85)`,
+                boxShadow:  `inset 0 0 24px rgba(0,0,0,0.25)`,
+              }}
+            >
+              <span className="token-coin-back-mark">♪</span>
+            </div>
+          </div>
         </div>
       )}
 
