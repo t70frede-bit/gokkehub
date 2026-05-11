@@ -3,7 +3,7 @@ import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import {
   getRoom, updateRoom, getTeams, getPlayers, updatePlayer,
-  createRound, insertTimelineEntry,
+  createRound, insertTimelineEntry, recordPlayedTracks,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -93,6 +93,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     outcome:     null,
     revealed_at: null,
   });
+
+  // Mark every non-spectator player as having heard this track so the
+  // "Skip recently heard" filter can exclude it from future curation.
+  await recordPlayedTracks(
+    env,
+    roomId,
+    players.filter(p => !p.is_spectator).map(p => p.id),
+    firstTrack.id,
+  );
 
   await updateRoom(env, roomId, {
     status:           "playing",

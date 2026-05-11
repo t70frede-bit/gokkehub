@@ -80,34 +80,34 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   // 2) Build candidate pool based on difficulty
   let candidates: Candidate[] = await buildCandidatePool(env, profiles, difficulty);
 
-  // 3) Apply played-this-session filter + 14-day blacklist (if enabled)
+  // 3) Coarse pre-filter: dedupe against the existing pool by artist:track slug.
+  //    This is a within-curation safeguard; the recently-heard blacklist is
+  //    applied later, against Spotify IDs (the only key the played-tracks
+  //    table actually stores).
   const alreadyInPool = new Set((room.track_pool ?? []).map(t => `${t.artist.toLowerCase()}:${t.name.toLowerCase()}`));
   candidates = candidates.filter(c => !alreadyInPool.has(`${c.artist.toLowerCase()}:${c.track.toLowerCase()}`));
-
-  if (settings.skipRecentlyHeard) {
-    const blacklist = await fetchBlacklist(env, roomId, eligible, 14);
-    candidates = candidates.filter(c => !blacklist.has(`${c.artist.toLowerCase()}:${c.track.toLowerCase()}`));
-  }
 
   // 4) Score for ranking only — the candidate POOL already encodes difficulty
   //    (see buildCandidatePool). The previous score-band filter was a no-op for
   //    single-taste groups because scores cluster bimodally (~70 for known,
   //    0 for unknown), leaving the medium/hard bands empty and the fallback
   //    served back the highest-scoring tracks (your top hits).
-  let scored: ScoredCandidate[] = candidates.map(c => scoreCandidate(profiles, c));
+  const scored: ScoredCandidate[] = candidates.map(c => scoreCandidate(profiles, c));
 
-  // 5) Pool exhaustion fallback: relax blacklist progressively when too small
-  if (scored.length < TARGET_BATCH_SIZE / 2 && settings.skipRecentlyHeard) {
-    for (const days of [7, 3, 0]) {
-      const bl = days > 0 ? await fetchBlacklist(env, roomId, eligible, days) : new Set<string>();
-      const fresh = candidates.filter(c => !bl.has(`${c.artist.toLowerCase()}:${c.track.toLowerCase()}`));
-      scored = fresh.map(c => scoreCandidate(profiles, c));
-      if (scored.length >= TARGET_BATCH_SIZE / 2) break;
-    }
-  }
-
-  // 6) Arrange the playlist arc
+  // 5) Arrange the playlist arc
   const arranged = arrangePlaylistArc(scored, isRefill ? 15 : TARGET_BATCH_SIZE);
+
+  // 6) Fetch the recently-heard blacklist if enabled. tl_played_tracks stores
+  //    Spotify track IDs, so the blacklist is a Set<spotify_id> and we apply
+  //    it in the lookup loop below (after searchTrackUri returns the ID).
+  //    If the result comes up short, we relax the window in-place rather
+  //    than re-doing the lookup loop.
+  const blacklist14d = settings.skipRecentlyHeard
+    ? await fetchBlacklist(env, roomId, eligible, 14)
+    : new Set<string>();
+  const blacklist3d  = settings.skipRecentlyHeard && blacklist14d.size > 0
+    ? await fetchBlacklist(env, roomId, eligible, 3)
+    : new Set<string>();
 
   // 7) Look up Spotify URIs for each candidate. Hard cap on attempts to stay
   //    under the 50-subrequest limit even on cold cache. Year-diversity guard
@@ -115,6 +115,7 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   //    this batch — players were complaining the captain kept hearing songs
   //    from "the current year" because top-tracks data is recency-skewed.
   const MAX_PER_YEAR = 2;
+  const targetSize   = isRefill ? 15 : TARGET_BATCH_SIZE;
   // Seed the year tally with whatever's already in track_pool so we don't
   // pile up consecutive Refill batches on the same year either.
   const yearCount = new Map<number, number>();
@@ -124,17 +125,52 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
 
   const tracks: SpotifyTrack[] = [];
   const enriched: Array<SpotifyTrack & { _meta: ScoredCandidate }> = [];
+  // Candidates that survived Spotify lookup but were dropped by the 14-day
+  // blacklist. We keep them around as a relaxation tier — if the main loop
+  // ends short we'll re-admit them (least-recently-heard first, approximated
+  // by the 3-day filter).
+  const skippedRecent: Array<SpotifyTrack & { _meta: ScoredCandidate }> = [];
   let attempts = 0;
   for (const c of arranged) {
     if (attempts >= MAX_SPOTIFY_LOOKUPS) break;
-    if (tracks.length >= (isRefill ? 15 : TARGET_BATCH_SIZE)) break;
+    if (tracks.length >= targetSize) break;
     attempts++;
     const hit = await searchTrackUri(accessToken, c.artist, c.track);
     if (!hit) continue;
     if ((yearCount.get(hit.releaseYear) ?? 0) >= MAX_PER_YEAR) continue;
+    if (blacklist14d.has(hit.id)) {
+      skippedRecent.push({ ...hit, _meta: c });
+      continue;
+    }
     tracks.push(hit);
     enriched.push({ ...hit, _meta: c });
     yearCount.set(hit.releaseYear, (yearCount.get(hit.releaseYear) ?? 0) + 1);
+  }
+
+  // 8) Relaxation: if we're below half-target, re-admit blacklisted tracks
+  //    that weren't heard in the last 3 days. Costs no extra subrequests.
+  if (tracks.length < targetSize / 2 && skippedRecent.length > 0) {
+    for (const s of skippedRecent) {
+      if (tracks.length >= targetSize) break;
+      if (blacklist3d.has(s.id)) continue;
+      if ((yearCount.get(s.releaseYear) ?? 0) >= MAX_PER_YEAR) continue;
+      const { _meta, ...track } = s;
+      tracks.push(track);
+      enriched.push(s);
+      yearCount.set(track.releaseYear, (yearCount.get(track.releaseYear) ?? 0) + 1);
+    }
+  }
+  // Final relaxation — admit everything remaining (still capped by targetSize).
+  if (tracks.length < targetSize / 2 && skippedRecent.length > 0) {
+    for (const s of skippedRecent) {
+      if (tracks.length >= targetSize) break;
+      if (enriched.some(e => e.id === s.id)) continue;
+      if ((yearCount.get(s.releaseYear) ?? 0) >= MAX_PER_YEAR) continue;
+      const { _meta, ...track } = s;
+      tracks.push(track);
+      enriched.push(s);
+      yearCount.set(track.releaseYear, (yearCount.get(track.releaseYear) ?? 0) + 1);
+    }
   }
 
   // 8) Append to track_pool
@@ -229,7 +265,8 @@ async function fetchBlacklist(env: Env, roomId: string, players: TlPlayer[], day
   });
   if (!res.ok) return new Set();
   const rows = await res.json() as Array<{ track_id: string }>;
-  return new Set(rows.map(r => r.track_id.toLowerCase()));
+  // Spotify IDs are case-sensitive opaque base62 strings — compare as-is.
+  return new Set(rows.map(r => r.track_id));
 }
 
 // Refill buffer is shared logic; export so start.ts can call it directly.

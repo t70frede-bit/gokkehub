@@ -18,7 +18,7 @@ function url(env: Env, table: string, params = "") {
   return `${env.SUPABASE_URL}/rest/v1/${table}${params ? `?${params}` : ""}`;
 }
 
-async function req<T>(env: Env, method: string, table: string, params = "", body?: unknown, upsert = false): Promise<T[]> {
+export async function req<T>(env: Env, method: string, table: string, params = "", body?: unknown, upsert = false): Promise<T[]> {
   const res = await fetch(url(env, table, params), {
     method,
     headers: makeHeaders(env, upsert),
@@ -83,6 +83,31 @@ export async function updatePlayer(env: Env, playerId: string, data: Partial<TlP
 export async function createRound(env: Env, data: Partial<TlRound>): Promise<TlRound> {
   const rows = await req<TlRound>(env, "POST", "tl_rounds", "", data);
   return rows[0];
+}
+
+/**
+ * Record that every non-spectator player just heard a track. Drives the
+ * "Skip recently heard" filter in curate.ts — without this, the blacklist
+ * is always empty so the same songs keep coming back. Failures are swallowed
+ * so a transient Supabase hiccup never blocks a round from starting.
+ */
+export async function recordPlayedTracks(
+  env: Env,
+  roomId: string,
+  playerIds: string[],
+  trackId: string,
+): Promise<void> {
+  if (playerIds.length === 0 || !trackId) return;
+  const rows = playerIds.map(player_id => ({
+    room_id: roomId,
+    player_id,
+    track_id: trackId,
+  }));
+  try {
+    await req(env, "POST", "tl_played_tracks", "", rows);
+  } catch (e) {
+    console.error("[musix] recordPlayedTracks failed:", e);
+  }
 }
 
 export async function getRound(env: Env, roundId: number): Promise<TlRound | null> {

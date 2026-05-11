@@ -2,21 +2,29 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button, Panel } from "@gokkehub/ui";
 import { supabase } from "../lib/supabase";
-import type { TlTeam } from "../lib/types";
+import type { TlTeam, TlRoom } from "../lib/types";
 
 export default function EndPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate   = useNavigate();
+  const myPlayerId = roomId ? localStorage.getItem(`tl_player_${roomId}`) : null;
   const [teams,   setTeams]   = useState<TlTeam[]>([]);
   const [counts,  setCounts]  = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
+  const [hostId,  setHostId]  = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!roomId) return;
     (async () => {
-      const teamsRes = await supabase.from("tl_teams").select("*").eq("room_id", roomId).order("sort_order");
+      const [teamsRes, roomRes] = await Promise.all([
+        supabase.from("tl_teams").select("*").eq("room_id", roomId).order("sort_order"),
+        supabase.from("tl_rooms").select("host_id").eq("id", roomId).single(),
+      ]);
       const ts = (teamsRes.data ?? []) as TlTeam[];
       setTeams(ts);
+      setHostId(((roomRes.data as Pick<TlRoom, "host_id"> | null)?.host_id) ?? null);
       const countMap: Record<number, number> = {};
       for (const t of ts) {
         const r = await supabase.from("tl_timeline").select("*", { count: "exact", head: true }).eq("team_id", t.id);
@@ -27,10 +35,37 @@ export default function EndPage() {
     })();
   }, [roomId]);
 
+  async function playAgain() {
+    if (!roomId || !myPlayerId) return;
+    setResetting(true);
+    setResetError(null);
+    try {
+      const res = await fetch(`/room/${roomId}/reset`, {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        credentials: "include",
+        body:        JSON.stringify({ player_id: myPlayerId }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        let msg = `Reset failed (${res.status})`;
+        try { msg = (JSON.parse(text).error as string) || msg; } catch { /* ignore */ }
+        setResetError(msg);
+        setResetting(false);
+        return;
+      }
+      navigate(`/lobby/${roomId}`);
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : "Network error");
+      setResetting(false);
+    }
+  }
+
   if (loading) return <div className="flex-1 flex items-center justify-center opacity-50">Loading…</div>;
 
   const sorted = [...teams].sort((a, b) => (counts[b.id] ?? 0) - (counts[a.id] ?? 0));
   const winner = sorted[0];
+  const isHost = !!(myPlayerId && hostId && myPlayerId === hostId);
 
   return (
     <div className="flex-1 flex items-center justify-center p-4">
@@ -55,8 +90,22 @@ export default function EndPage() {
 
         <div className="flex gap-3 justify-center">
           <Button onClick={() => navigate("/")} variant="ghost">New game</Button>
-          <Button onClick={() => navigate(`/lobby/${roomId}`)}>Play again</Button>
+          <Button
+            onClick={playAgain}
+            disabled={!isHost || resetting}
+            title={!isHost ? "Only the host can restart this room" : undefined}
+          >
+            {resetting ? "Resetting…" : "Play again"}
+          </Button>
         </div>
+        {resetError && (
+          <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb, 220,60,60))" }}>
+            {resetError}
+          </p>
+        )}
+        {!isHost && (
+          <p className="text-xs opacity-50">Waiting for the host to start a new game…</p>
+        )}
       </div>
     </div>
   );

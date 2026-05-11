@@ -3,7 +3,7 @@ import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import {
   getRoom, updateRoom, getTeams, getPlayers, getRound, updateRound,
-  createRound, getTimeline, insertTimelineEntry, updateTeam,
+  createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
 } from "../../_supabase";
 import type {
   PlacementRequest, TurnActionRequest, GuessRequest, JudgeRequest,
@@ -431,6 +431,11 @@ async function handleTurnAction(req: Request, roomId: string, env: Env) {
       outcome:     null,
       revealed_at: null,
     });
+    await recordPlayedTracks(
+      env, roomId,
+      players.filter(p => !p.is_spectator).map(p => p.id),
+      nextTrack.id,
+    );
     await updateRoom(env, roomId, {
       track_cursor:     room.track_cursor + 1,
       current_round_id: round.id,
@@ -627,6 +632,14 @@ async function advanceTurn(
     outcome:     null,
     revealed_at: null,
   });
+
+  // Recently-heard blacklist — every non-spectator player just heard this.
+  const turnPlayers = await getPlayers(env, roomId);
+  await recordPlayedTracks(
+    env, roomId,
+    turnPlayers.filter(p => !p.is_spectator).map(p => p.id),
+    nextTrack.id,
+  );
 
   await updateRoom(env, roomId, {
     active_team_id:   nextTeam.id,
