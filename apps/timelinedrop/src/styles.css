@@ -246,3 +246,10 @@ input[type="range"].orange-range::-moz-range-thumb {
   40%  { transform: translateY(-4px) scale(1.06); }
   100% { transform: translateY(0) scale(1); }
 }
+@keyframes coverReveal {
+  /* Starts where the disc was, scales up to fill the stage. No title/artist
+     surfaces — the cover is the only hint the team gets. */
+  0%   { transform: scale(0.35) rotate(-3deg); opacity: 0; filter: blur(8px); }
+  60%  { opacity: 1; filter: blur(0); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; filter: blur(0); }
+}

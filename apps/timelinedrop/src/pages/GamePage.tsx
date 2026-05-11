@@ -2564,12 +2564,20 @@ export default function GamePage() {
         const myTeam     = myPlayer?.team_id ?? null;
         const myCounter  = !!(myTeam && (state.tokens?.[myTeam] ?? [])
           .some(t => !t.pending && t.type === "token_counter"));
+        // Cover-reveal tokens chain into a big centred-cover phase after the
+        // counter window. We only pass the URL — the cover IS the hint, so
+        // title/artist must not appear in the cinematic.
+        const isCoverReveal = act.tokenType === "cover_reveal" || act.tokenType === "cover_reveal_before";
+        const revealMedia   = isCoverReveal && round?.track?.coverUrl
+          ? { coverUrl: round.track.coverUrl }
+          : undefined;
         return (
           <TokenActivationOverlay
             activation={act}
             teamName={actTeam.name}
             teamColor={actColor}
             hasCounter={myCounter && actTeam.id !== myTeam}
+            revealMedia={revealMedia}
             onDismiss={clearTokenActivation}
           />
         );
@@ -2693,8 +2701,11 @@ function TokenTray({
 //   1000–3500ms counter-window countdown (sets the cadence for a future
 //               token_counter reaction; for now it just times the dismiss)
 //   3500ms     auto-dismiss
+const COVER_REVEAL_TOKENS = new Set<string>(["cover_reveal", "cover_reveal_before"]);
+
 function TokenActivationOverlay({
   activation, teamName, teamColor, hasCounter, onCounter, onDismiss,
+  revealMedia,
 }: {
   activation: { tokenId: number; tokenType: string; teamId: number; triggeredAt: number };
   teamName:   string;
@@ -2702,34 +2713,49 @@ function TokenActivationOverlay({
   hasCounter: boolean;          // true if my team holds a token_counter (placeholder until implemented)
   onCounter?: () => void;       // called when the counter button is pressed
   onDismiss:  () => void;
+  /** When the token is a Cover Reveal AND the round track is known, pass the
+   *  cover here. After the counter window expires (and no counter fires),
+   *  the disc fades out and the cover scales up centre-screen for a moment.
+   *  We intentionally DO NOT pass title/artist — the cover is the hint; the
+   *  song identity is still the question the captain has to answer. */
+  revealMedia?: { coverUrl: string };
 }) {
   const spec = tokenSpec(activation.tokenType);
-  // Total visible time is COUNTER_WINDOW_MS after the token lands.
-  const LAND_MS          = 1000;
+  const LAND_MS           = 1000;
   const COUNTER_WINDOW_MS = 2500;
-  const [phase, setPhase] = useState<"flying" | "landed">("flying");
+  const REVEAL_HOLD_MS    = 3500;
+  const canReveal         = COVER_REVEAL_TOKENS.has(activation.tokenType) && !!revealMedia?.coverUrl;
+  const [phase, setPhase] = useState<"flying" | "landed" | "revealed">("flying");
   const [remainingMs, setRemainingMs] = useState(COUNTER_WINDOW_MS);
 
   useEffect(() => {
-    const t1 = window.setTimeout(() => setPhase("landed"), LAND_MS);
-    const start = Date.now() + LAND_MS;
+    const timers: number[] = [];
+    timers.push(window.setTimeout(() => setPhase("landed"), LAND_MS));
+    const counterStart = Date.now() + LAND_MS;
     const tick = window.setInterval(() => {
-      const left = COUNTER_WINDOW_MS - (Date.now() - start);
+      const left = COUNTER_WINDOW_MS - (Date.now() - counterStart);
       setRemainingMs(Math.max(0, left));
     }, 80);
-    const t2 = window.setTimeout(onDismiss, LAND_MS + COUNTER_WINDOW_MS);
+    if (canReveal) {
+      // After counter window, swap to the cover reveal stage instead of
+      // dismissing. The reveal holds for REVEAL_HOLD_MS, then we close.
+      timers.push(window.setTimeout(() => setPhase("revealed"), LAND_MS + COUNTER_WINDOW_MS));
+      timers.push(window.setTimeout(onDismiss, LAND_MS + COUNTER_WINDOW_MS + REVEAL_HOLD_MS));
+    } else {
+      timers.push(window.setTimeout(onDismiss, LAND_MS + COUNTER_WINDOW_MS));
+    }
     return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
+      for (const id of timers) window.clearTimeout(id);
       window.clearInterval(tick);
     };
     // Re-run on a new activation (different tokenId).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activation.tokenId]);
+  }, [activation.tokenId, canReveal]);
 
   const ringPct = phase === "landed"
     ? Math.max(0, Math.min(100, (remainingMs / COUNTER_WINDOW_MS) * 100))
     : 100;
+  const inReveal = phase === "revealed";
 
   return (
     <div
@@ -2743,31 +2769,57 @@ function TokenActivationOverlay({
       // doesn't dismiss because the Counter button lives next to it.
       onClick={onDismiss}
     >
-      {/* Token disc — flips in then settles */}
-      <div
-        style={{
-          width:        160,
-          height:       160,
-          borderRadius: "50%",
-          background:   `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(var(--team-${teamColor}-rgb), 0.85) 60%, rgba(var(--team-${teamColor}-rgb), 1))`,
-          border:       `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
-          boxShadow:    `0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.25), 0 22px 60px rgba(0,0,0,0.6)`,
-          display:      "flex",
-          alignItems:   "center",
-          justifyContent: "center",
-          fontSize:     72,
-          lineHeight:   1,
-          transformStyle: "preserve-3d",
-          animation:    phase === "flying"
-            ? "tokenLaunch 1000ms cubic-bezier(0.22, 1.02, 0.36, 1) forwards"
-            : "tokenSettle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <span style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))" }}>{spec.icon}</span>
-      </div>
+      {/* Token disc — flips in, settles, then (if revealing a cover) fades out
+          to make space for the album art. */}
+      {!inReveal && (
+        <div
+          style={{
+            width:        160,
+            height:       160,
+            borderRadius: "50%",
+            background:   `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(var(--team-${teamColor}-rgb), 0.85) 60%, rgba(var(--team-${teamColor}-rgb), 1))`,
+            border:       `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
+            boxShadow:    `0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.25), 0 22px 60px rgba(0,0,0,0.6)`,
+            display:      "flex",
+            alignItems:   "center",
+            justifyContent: "center",
+            fontSize:     72,
+            lineHeight:   1,
+            transformStyle: "preserve-3d",
+            animation:    phase === "flying"
+              ? "tokenLaunch 1000ms cubic-bezier(0.22, 1.02, 0.36, 1) forwards"
+              : "tokenSettle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))" }}>{spec.icon}</span>
+        </div>
+      )}
 
-      {/* Caption — name + description, rises in once the token lands */}
+      {/* Cover reveal — only after the counter window, never with title/artist
+          (the cover is the hint; identifying the song stays the captain's job) */}
+      {inReveal && revealMedia && (
+        <img
+          src={revealMedia.coverUrl}
+          alt="Album cover"
+          draggable={false}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width:        "min(70vw, 70vh)",
+            height:       "min(70vw, 70vh)",
+            maxWidth:     520,
+            maxHeight:    520,
+            borderRadius: 16,
+            objectFit:    "cover",
+            border:       `3px solid rgba(var(--team-${teamColor}-rgb), 0.85)`,
+            boxShadow:    `0 0 0 8px rgba(var(--team-${teamColor}-rgb), 0.22), 0 32px 80px rgba(0,0,0,0.7)`,
+            animation:    "coverReveal 520ms cubic-bezier(0.22, 1.02, 0.36, 1) forwards",
+          }}
+        />
+      )}
+
+      {/* Caption — name + description, rises in once the token lands. Hidden
+          during the cover reveal so the art has the stage. */}
       <div
         className="mt-8 text-center px-6"
         style={{
@@ -2775,6 +2827,7 @@ function TokenActivationOverlay({
           opacity:   phase === "landed" ? 1 : 0,
           transform: phase === "landed" ? "translateY(0)" : "translateY(18px)",
           transition: "opacity 280ms ease-out, transform 280ms ease-out",
+          display:   inReveal ? "none" : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
       >
