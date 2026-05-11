@@ -7,8 +7,13 @@
   position: relative;
   display: flex;
   align-items: center;
-  overflow-x: hidden;
-  padding: 0.5rem 0.5rem 0.75rem;
+  /* Bubbles (pings + speech) anchor above each card with bottom: 100%+ off-card.
+     Setting overflow-x: hidden forces overflow-y to "auto" in most browsers,
+     which clips them. Use overflow-x: clip so the y-axis stays visible. The
+     pt below leaves enough headroom for a small stack of bubbles. */
+  overflow-x: clip;
+  overflow-y: visible;
+  padding: 4.5rem 0.5rem 0.75rem;
   min-height: 6.5rem;
 }
 .timeline-rail::before {

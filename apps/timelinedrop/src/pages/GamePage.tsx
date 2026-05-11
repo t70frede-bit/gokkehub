@@ -2108,12 +2108,10 @@ export default function GamePage() {
                 />
               </div>
 
-              {/* The big timeline — horizontally scrollable when many cards.
-                  pt-12 leaves room for ping bubbles + speech bubbles that
-                  hover above the cards (otherwise the wrapper clips them).
-                  overflowY:visible lets bubbles escape; the spotlight panel
-                  already manages its own height. */}
-              <div className="overflow-x-auto pt-12" style={{ overflowY: "visible" }}>
+              {/* Timeline-rail handles horizontal clipping + bubble headroom
+                  via the .timeline-rail class. Outer wrapper stays visible so
+                  bubbles can escape upward when they stack. */}
+              <div style={{ overflow: "visible" }}>
                 {tl.length === 0 && !showDragCard ? (
                   <p className="text-sm opacity-40 italic text-center py-8">No cards on the timeline yet</p>
                 ) : (
