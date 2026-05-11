@@ -100,16 +100,25 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           const newRoom = payload.new as TlRoom;
           setState(s => {
             if (!s) return s;
-            // If current_round_id advanced past what we have for state.round,
-            // the matching tl_rounds INSERT was likely dropped (reconnect/
-            // backpressure). Fetch the new round explicitly so the reveal
-            // overlay can dismount.
-            if (
+            // CRITICAL: if the room has advanced to a new round but state.round
+            // still points at the previous (resolved, outcome="correct") one,
+            // we MUST clear state.round in the same render — otherwise the
+            // RevealOverlay (which renders on state.round.outcome) stays
+            // mounted on top of the page until the round refetch resolves.
+            // If that refetch is slow or fails, the screen stays "blacked out"
+            // until the user reloads. Clearing state.round here lets the page
+            // render normally (timelines visible, empty audio bar) while we
+            // fetch the new round in the background.
+            const advancedPastCurrentRound =
               typeof newRoom.current_round_id === "number" &&
-              newRoom.current_round_id !== (s.round?.id ?? null)
-            ) {
+              newRoom.current_round_id !== (s.round?.id ?? null);
+            if (advancedPastCurrentRound) {
               supabase.from("tl_rounds").select("*").eq("id", newRoom.current_round_id).single()
                 .then(r => {
+                  if (r.error) {
+                    console.warn("[musix] fallback round fetch failed:", r.error.message);
+                    return;
+                  }
                   if (!r.data) return;
                   const fetched = r.data as TlRound;
                   setState(s2 => {
@@ -120,7 +129,14 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
                   });
                 });
             }
-            return { ...s, room: newRoom };
+            return {
+              ...s,
+              room: newRoom,
+              // Clear the stale round so the resolved reveal overlay dismounts
+              // immediately. Will be repopulated by the refetch above (or by
+              // the tl_rounds INSERT event if it arrives first).
+              round: advancedPastCurrentRound ? null : s.round,
+            };
           });
         })
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_teams",   filter: `room_id=eq.${roomId}` },

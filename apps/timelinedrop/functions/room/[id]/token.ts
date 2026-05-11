@@ -55,6 +55,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       return json({ error: "Only the captain can use a token" }, 403, req);
     }
 
+    // One-token-per-song rule: reject if any token has already been burned
+    // against this round id, regardless of type.
+    if (await tokenAlreadyUsedThisRound(env, round.id)) {
+      return json({ error: "Only one token may be used per song" }, 409, req);
+    }
+
     // Map UI type → token type stored in tl_team_tokens.
     // (recovery_arm uses a recovery token; the actual save fires when a wrong
     // placement settles — handled in round.ts.)
@@ -84,6 +90,19 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     return json({ error: err instanceof Error ? err.message : String(err) }, 500, req);
   }
 };
+
+async function tokenAlreadyUsedThisRound(env: Env, roundId: number): Promise<boolean> {
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${roundId}&select=id&limit=1`;
+  const res = await fetch(url, {
+    headers: {
+      apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+  if (!res.ok) return false;
+  const rows = await res.json() as Array<{ id: number }>;
+  return rows.length > 0;
+}
 
 async function findAndUseToken(
   env: Env, teamId: number, type: string, roundId: number,

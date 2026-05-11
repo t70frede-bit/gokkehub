@@ -372,6 +372,22 @@ async function handleUseToken(req: Request, roomId: string, env: Env, waitUntil?
     return json({ error: "Only the captain can use a token" }, 403, req);
   }
 
+  // One-token-per-song rule — check tl_team_tokens for any already burned
+  // against this round. Mirrors the same guard in token.ts.
+  const usedUrl = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${round.id}&select=id&limit=1`;
+  const usedRes = await fetch(usedUrl, {
+    headers: {
+      apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+  if (usedRes.ok) {
+    const usedRows = await usedRes.json() as Array<{ id: number }>;
+    if (usedRows.length > 0) {
+      return json({ error: "Only one token may be used per song" }, 409, req);
+    }
+  }
+
   // Find an available song_skipper token for the active team and burn it.
   const tokenId = await findAndUseToken(env, activeTeam.id, "song_skipper", round.id);
   if (!tokenId) {

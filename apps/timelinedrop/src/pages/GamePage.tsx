@@ -859,6 +859,32 @@ function AudioPlayerUI(props: AudioPlayerProps) {
   // DJ uses the local SDK state for instant feedback; listeners derive from realtime room state.
   const playing = isDJ ? djPlaying : (props.playingSince !== null && props.pausedAtMs === null);
   const [volOpen, setVolOpen] = useState(false);
+  // Pre-mute volume so clicking the icon toggles mute and back.
+  const prevVolumeRef = useRef(volume > 0 ? volume : 0.7);
+  // Slider popover hover timers (small delay so cursor can travel from icon
+  // to slider without flicker, since the click action is now "mute" not
+  // "open slider").
+  const popoverEnterTimer = useRef<number | null>(null);
+  const popoverLeaveTimer = useRef<number | null>(null);
+
+  function toggleMute() {
+    if (volume > 0) {
+      prevVolumeRef.current = volume;
+      onVolume(0);
+    } else {
+      onVolume(prevVolumeRef.current > 0 ? prevVolumeRef.current : 0.7);
+    }
+  }
+  function openVolPopover() {
+    if (popoverLeaveTimer.current) window.clearTimeout(popoverLeaveTimer.current);
+    if (popoverEnterTimer.current) window.clearTimeout(popoverEnterTimer.current);
+    popoverEnterTimer.current = window.setTimeout(() => setVolOpen(true), 180);
+  }
+  function scheduleVolClose() {
+    if (popoverEnterTimer.current) window.clearTimeout(popoverEnterTimer.current);
+    if (popoverLeaveTimer.current) window.clearTimeout(popoverLeaveTimer.current);
+    popoverLeaveTimer.current = window.setTimeout(() => setVolOpen(false), 150);
+  }
 
   function fmt(ms: number) {
     const s = Math.floor(ms / 1000);
@@ -942,22 +968,30 @@ function AudioPlayerUI(props: AudioPlayerProps) {
         {fmt(positionMs)} / {fmt(durationMs)}
       </span>
 
-      {/* Volume — collapsed behind icon */}
-      <div className="relative flex-shrink-0">
+      {/* Volume — click icon = mute toggle, hover = slider popover. */}
+      <div
+        className="relative flex-shrink-0"
+        onMouseEnter={openVolPopover}
+        onMouseLeave={scheduleVolClose}
+      >
         <button
-          onClick={() => setVolOpen(v => !v)}
+          onClick={toggleMute}
           className="w-7 h-7 flex items-center justify-center rounded opacity-60 hover:opacity-100"
-          title="Volume"
+          title={volume === 0 ? "Unmute" : "Mute"}
         >
           {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
         </button>
         {volOpen && (
-          <div className="absolute right-0 bottom-full mb-2 z-10 px-3 py-2 rounded-md flex items-center gap-2"
+          <div
+            className="absolute right-0 bottom-full mb-2 z-10 px-3 py-2 rounded-md flex items-center gap-2"
             style={{
               background: "rgb(var(--surface-overlay-rgb))",
               border:     "1px solid rgb(var(--border-rgb))",
               boxShadow:  "var(--shadow-card)",
-            }}>
+            }}
+            onMouseEnter={openVolPopover}
+            onMouseLeave={scheduleVolClose}
+          >
             <input type="range" min="0" max="1" step="0.05" value={volume}
               onChange={e => onVolume(Number(e.target.value))}
               className="orange-range w-32" />
@@ -1665,6 +1699,15 @@ export default function GamePage() {
 
   const { room, teams, round, timelines, notes, pings, myPlayer } = state;
   const activeTeam = teams.find(t => t.id === room.active_team_id);
+  // One-token-per-song rule (server-enforced in token.ts + round.ts). The UI
+  // disables the token tray once any of these flags is set so the captain
+  // doesn't try a second token and hit a 409.
+  const tokenUsedThisRound = !!round && (
+    round.skipped ||
+    round.cover_revealed ||
+    !!round.more_or_less_card_id ||
+    round.recovery_armed
+  );
   // Pings persist on the timeline until dismissed (right-click / × button).
   // Players can dismiss their own; captain & host can dismiss any.
   // Coerce year to Number — Supabase may serialise NUMERIC as a string.
@@ -2108,7 +2151,7 @@ export default function GamePage() {
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
-                    onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
+                    onClick={isMyTeam && iAmCaptain && isMyTurn && !tokenUsedThisRound ? () => setTokenTrayOpen(true) : undefined}
                   />
                 </div>
               </div>
@@ -2338,7 +2381,8 @@ export default function GamePage() {
                         variant="ghost"
                         size="sm"
                         className="flex-shrink-0"
-                        title="Use a token"
+                        disabled={tokenUsedThisRound}
+                        title={tokenUsedThisRound ? "Only one token per song" : "Use a token"}
                       >
                         🎟 Tokens ({ready.length})
                       </Button>
@@ -2462,7 +2506,7 @@ export default function GamePage() {
             onClick={() => setCoverEnlarged(true)}
             className="fixed z-30 rounded-md overflow-hidden transition-all active:scale-[0.96]"
             style={{
-              right:        16,
+              left:         16,
               bottom:       16,
               width:        56,
               height:       56,
