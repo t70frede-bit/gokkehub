@@ -685,7 +685,16 @@ function PingBubbles({
 }) {
   const visible = pings.slice(-4);
   return (
-    <div className="absolute -top-9 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
+    <div
+      className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none"
+      style={{
+        // Anchor the BOTTOM of the column just above the slot so additional
+        // bubbles stack upward (away from the card) instead of growing down
+        // over it. zIndex keeps them above neighbouring cards.
+        bottom: "calc(100% + 6px)",
+        zIndex: 20,
+      }}
+    >
       {visible.map((p, idx) => {
         const isMine   = !!myPlayerId && p.player_id === myPlayerId;
         const isLast   = idx === visible.length - 1;
@@ -2227,7 +2236,7 @@ export default function GamePage() {
             {/* Spotlight team — fills the remaining vertical space and scrolls
                 its inner content (Timeline + footer) if it exceeds height. */}
             {spotlightTeam && (
-              <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+              <div className="flex flex-col flex-1 min-h-0" style={{ overflow: "visible" }}>
                 {renderSpotlight(spotlightTeam)}
               </div>
             )}
