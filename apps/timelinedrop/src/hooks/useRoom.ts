@@ -96,7 +96,33 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
     const channel = supabase
       .channel(`room:${roomId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_rooms",   filter: `id=eq.${roomId}` },
-        (payload) => setState(s => s ? { ...s, room: payload.new as TlRoom } : s))
+        (payload) => {
+          const newRoom = payload.new as TlRoom;
+          setState(s => {
+            if (!s) return s;
+            // If current_round_id advanced past what we have for state.round,
+            // the matching tl_rounds INSERT was likely dropped (reconnect/
+            // backpressure). Fetch the new round explicitly so the reveal
+            // overlay can dismount.
+            if (
+              typeof newRoom.current_round_id === "number" &&
+              newRoom.current_round_id !== (s.round?.id ?? null)
+            ) {
+              supabase.from("tl_rounds").select("*").eq("id", newRoom.current_round_id).single()
+                .then(r => {
+                  if (!r.data) return;
+                  const fetched = r.data as TlRound;
+                  setState(s2 => {
+                    if (!s2) return s2;
+                    const wm = Math.max(s2.room.current_round_id ?? 0, s2.round?.id ?? 0);
+                    if (fetched.id < wm) return s2;
+                    return { ...s2, round: fetched };
+                  });
+                });
+            }
+            return { ...s, room: newRoom };
+          });
+        })
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_teams",   filter: `room_id=eq.${roomId}` },
         () => supabase.from("tl_teams").select("*").eq("room_id", roomId).order("sort_order")
           .then(r => setState(s => s ? { ...s, teams: (r.data ?? []) as TlTeam[] } : s)))
@@ -112,15 +138,23 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           const newRound = payload.new as TlRound;
           setState(s => {
             if (!s) return s;
-            // Server-side update flow on "Next song" is: INSERT new round →
-            // UPDATE old round (bonus_awarded etc) → UPDATE tl_rooms. If the
-            // UPDATE for the previous round arrives LAST, it would overwrite
-            // state.round with the stale old row whose outcome is still
-            // "correct" — and the reveal modal stays mounted (screen looks
-            // frozen black until a refresh). Reject any tl_rounds event whose
-            // id is older than the room's current_round_id.
-            const currentId = s.room.current_round_id;
-            if (typeof currentId === "number" && newRound.id < currentId) return s;
+            // Server-side update flow on a turn change is:
+            //   UPDATE old round (bonus_awarded) → INSERT new round → UPDATE tl_rooms.
+            // Realtime delivery is NOT ordered across tables, so the UPDATE for
+            // the old round can land AFTER the INSERT for the new one. If we
+            // only checked against state.room.current_round_id we'd accept the
+            // stale UPDATE (current_round_id hasn't propagated yet → its id
+            // still equals current) and overwrite state.round with a row whose
+            // outcome="correct" — the reveal modal stays mounted (black-screen
+            // bug).
+            //
+            // Watermark on the highest round id we've ever accepted instead.
+            // Once we've seen R2, no UPDATE on R1 can replace it.
+            const watermark = Math.max(
+              s.room.current_round_id ?? 0,
+              s.round?.id              ?? 0,
+            );
+            if (newRound.id < watermark) return s;
             // If new round ID, reload notes/pings
             if (newRound.id !== s.round?.id) {
               supabase.from("tl_notes").select("*").eq("round_id", newRound.id).order("created_at")
