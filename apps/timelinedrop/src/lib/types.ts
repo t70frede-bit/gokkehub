@@ -189,16 +189,30 @@ export interface TlNote {
 
 // ── Aggregated game state (built client-side from subscriptions) ──────────────
 
+/**
+ * Transient event: a team just activated a token. All clients in the room see
+ * the same TokenActivation arrive via realtime, which drives the full-screen
+ * flip animation. `tokenId` is the tl_team_tokens row id and doubles as a
+ * dedupe key so the same row never animates twice.
+ */
+export interface TokenActivation {
+  tokenId:     number;
+  tokenType:   string;   // TokenType from lib/tokens.ts
+  teamId:      number;
+  triggeredAt: number;   // epoch ms, for UI sequencing
+}
+
 export interface GameState {
-  room:         TlRoom;
-  teams:        TlTeam[];
-  players:      TlPlayer[];
-  round:        TlRound | null;
-  timelines:    Record<number, TlTimelineEntry[]>; // teamId → sorted entries
-  notes:        TlNote[];
-  pings:        TlPing[];
-  tokens:       Record<number, TlTeamToken[]>; // teamId → tokens (granted, not yet used)
-  myPlayer:     TlPlayer | null;
+  room:             TlRoom;
+  teams:            TlTeam[];
+  players:          TlPlayer[];
+  round:            TlRound | null;
+  timelines:        Record<number, TlTimelineEntry[]>; // teamId → sorted entries
+  notes:            TlNote[];
+  pings:            TlPing[];
+  tokens:           Record<number, TlTeamToken[]>; // teamId → tokens (granted, not yet used)
+  myPlayer:         TlPlayer | null;
+  tokenActivation:  TokenActivation | null;       // most recent activation; cleared by consumer
 }
 
 // ── WebRTC signaling messages (sent via Supabase Broadcast) ──────────────────

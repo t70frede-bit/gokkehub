@@ -1466,7 +1466,7 @@ export default function GamePage() {
   const navigate   = useNavigate();
   const myPlayerId = roomId ? localStorage.getItem(`tl_player_${roomId}`) ?? undefined : undefined;
 
-  const { state } = useRoom(roomId, myPlayerId);
+  const { state, clearTokenActivation } = useRoom(roomId, myPlayerId);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -2020,60 +2020,63 @@ export default function GamePage() {
                 boxShadow:    "var(--shadow-card)",
               }}
             >
-              {/* Spotlight header — same layout as compact opponents:
-                  [score-disc · name+badges · centred avatars · tokens]. */}
+              {/* Spotlight header — three balanced sections so the centre stays
+                  truly centred regardless of left/right content widths:
+                  [flex-1 score-disc + name] · [shrink avatars] · [flex-1 tokens]. */}
               <div className="flex items-center gap-3 mb-3">
                 {/* Left: score-disc + team name + badge */}
-                <div
-                  className="flex items-center justify-center font-extrabold flex-shrink-0"
-                  title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
-                  style={{
-                    width:        40,
-                    height:       40,
-                    borderRadius: "50%",
-                    background:   `rgb(var(--team-${color}-rgb))`,
-                    color:        "#fff",
-                    fontSize:     "var(--text-lg)",
-                    fontFamily:   "var(--font-mono)",
-                    boxShadow:    isActive
-                      ? `inset 0 1px 0 rgba(255,255,255,0.18), 0 0 12px rgba(var(--team-${color}-rgb), 0.55)`
-                      : "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
-                  }}
-                >
-                  {tl.length}
-                </div>
-                <div className="min-w-0">
-                  <h2 className="font-extrabold tracking-tight truncate"
-                    style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}>
-                    {team.name}
-                  </h2>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    {isActive ? (
-                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse"
-                        style={{
-                          background: `rgba(var(--team-${color}-rgb), 0.30)`,
-                          color:      `rgb(var(--team-${color}-rgb))`,
-                          border:     `1px solid rgba(var(--team-${color}-rgb), 0.7)`,
-                        }}>
-                        🎯 On the spot
-                      </span>
-                    ) : isMyTeam ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider opacity-70"
-                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
-                        Your team
-                      </span>
-                    ) : null}
-                    {pending.length > 0 && (
-                      <span className="text-[10px]"
-                        style={{ color: "rgb(var(--color-secondary-rgb))" }}>
-                        +{pending.length} pending
-                      </span>
-                    )}
+                <div className="flex-1 flex items-center gap-3 min-w-0">
+                  <div
+                    className="flex items-center justify-center font-extrabold flex-shrink-0"
+                    title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
+                    style={{
+                      width:        40,
+                      height:       40,
+                      borderRadius: "50%",
+                      background:   `rgb(var(--team-${color}-rgb))`,
+                      color:        "#fff",
+                      fontSize:     "var(--text-lg)",
+                      fontFamily:   "var(--font-mono)",
+                      boxShadow:    isActive
+                        ? `inset 0 1px 0 rgba(255,255,255,0.18), 0 0 12px rgba(var(--team-${color}-rgb), 0.55)`
+                        : "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
+                    }}
+                  >
+                    {tl.length}
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-extrabold tracking-tight truncate"
+                      style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}>
+                      {team.name}
+                    </h2>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {isActive ? (
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse"
+                          style={{
+                            background: `rgba(var(--team-${color}-rgb), 0.30)`,
+                            color:      `rgb(var(--team-${color}-rgb))`,
+                            border:     `1px solid rgba(var(--team-${color}-rgb), 0.7)`,
+                          }}>
+                          🎯 On the spot
+                        </span>
+                      ) : isMyTeam ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider opacity-70"
+                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                          Your team
+                        </span>
+                      ) : null}
+                      {pending.length > 0 && (
+                        <span className="text-[10px]"
+                          style={{ color: "rgb(var(--color-secondary-rgb))" }}>
+                          +{pending.length} pending
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Centre: avatars w/ chat bubbles */}
-                <div className="flex-1 flex justify-center min-w-0">
+                {/* Centre: avatars w/ chat bubbles — natural width, truly centred */}
+                <div className="flex-shrink-0">
                   <PlayerFooter
                     players={state.players.filter(p => p.team_id === team.id && !p.is_spectator)}
                     notes={footerNotes}
@@ -2087,25 +2090,27 @@ export default function GamePage() {
                 </div>
 
                 {/* Right: cover reveal thumbnail (when token used) + tokens */}
-                {isActive && round && round.cover_revealed && round.track.coverUrl && (
-                  <img
-                    src={round.track.coverUrl}
-                    alt="Album cover"
-                    draggable={false}
-                    className="rounded-md object-cover flex-shrink-0"
-                    title="Cover revealed by token"
-                    style={{
-                      width:  40,
-                      height: 40,
-                      border: `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
-                    }}
+                <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
+                  {isActive && round && round.cover_revealed && round.track.coverUrl && (
+                    <img
+                      src={round.track.coverUrl}
+                      alt="Album cover"
+                      draggable={false}
+                      className="rounded-md object-cover flex-shrink-0"
+                      title="Cover revealed by token"
+                      style={{
+                        width:  40,
+                        height: 40,
+                        border: `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
+                      }}
+                    />
+                  )}
+                  <TokenStrip
+                    tokens={state.tokens?.[team.id] ?? []}
+                    color={color}
+                    onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
                   />
-                )}
-                <TokenStrip
-                  tokens={state.tokens?.[team.id] ?? []}
-                  color={color}
-                  onClick={isMyTeam && iAmCaptain && isMyTurn ? () => setTokenTrayOpen(true) : undefined}
-                />
+                </div>
               </div>
 
               {/* Timeline-rail handles horizontal clipping + bubble headroom
@@ -2169,37 +2174,40 @@ export default function GamePage() {
             >
               <div className="flex items-center gap-3 flex-shrink-0">
                 {/* Left: score-disc + team name */}
-                <div
-                  className="flex items-center justify-center font-extrabold flex-shrink-0"
-                  title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
-                  style={{
-                    width:        32,
-                    height:       32,
-                    borderRadius: "50%",
-                    background:   `rgb(var(--team-${color}-rgb))`,
-                    color:        "#fff",
-                    fontSize:     "var(--text-base)",
-                    fontFamily:   "var(--font-mono)",
-                    boxShadow:    "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
-                  }}
-                >
-                  {tl.length}
-                </div>
-                <div className="min-w-0">
-                  <p className="font-bold truncate" style={{ fontSize: "var(--text-sm)" }}>
-                    {team.name}
-                  </p>
-                  {(isMyTeam || pending.length > 0) && (
-                    <p className="leading-none mt-0.5" style={{ fontSize: 10, color: "rgb(var(--text-muted-rgb))" }}>
-                      {isMyTeam && <span className="uppercase tracking-wider">you</span>}
-                      {isMyTeam && pending.length > 0 && " · "}
-                      {pending.length > 0 && <span>+{pending.length} pending</span>}
+                <div className="flex-1 flex items-center gap-3 min-w-0">
+                  <div
+                    className="flex items-center justify-center font-extrabold flex-shrink-0"
+                    title={`${tl.length} card${tl.length !== 1 ? "s" : ""}${pending.length > 0 ? ` (+${pending.length} pending)` : ""}`}
+                    style={{
+                      width:        32,
+                      height:       32,
+                      borderRadius: "50%",
+                      background:   `rgb(var(--team-${color}-rgb))`,
+                      color:        "#fff",
+                      fontSize:     "var(--text-base)",
+                      fontFamily:   "var(--font-mono)",
+                      boxShadow:    "inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35)",
+                    }}
+                  >
+                    {tl.length}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold truncate" style={{ fontSize: "var(--text-sm)" }}>
+                      {team.name}
                     </p>
-                  )}
+                    {(isMyTeam || pending.length > 0) && (
+                      <p className="leading-none mt-0.5" style={{ fontSize: 10, color: "rgb(var(--text-muted-rgb))" }}>
+                        {isMyTeam && <span className="uppercase tracking-wider">you</span>}
+                        {isMyTeam && pending.length > 0 && " · "}
+                        {pending.length > 0 && <span>+{pending.length} pending</span>}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Centre: team avatars (always centred regardless of name length) */}
-                <div className="flex-1 flex justify-center min-w-0">
+                {/* Centre: team avatars — natural width, truly centred between
+                    equal-flex left and right sections */}
+                <div className="flex-shrink-0">
                   <PlayerFooter
                     players={teamPlayers}
                     notes={footerNotes}
@@ -2212,11 +2220,13 @@ export default function GamePage() {
                 </div>
 
                 {/* Right: tokens */}
-                <TokenStrip
-                  tokens={state.tokens?.[team.id] ?? []}
-                  color={color}
-                  compact
-                />
+                <div className="flex-1 flex items-center justify-end min-w-0">
+                  <TokenStrip
+                    tokens={state.tokens?.[team.id] ?? []}
+                    color={color}
+                    compact
+                  />
+                </div>
               </div>
             </Panel>
           );
@@ -2544,6 +2554,26 @@ export default function GamePage() {
           </button>
         </div>
       )}
+
+      {/* ── Token activation cinematic ─────────────────────────────────── */}
+      {state.tokenActivation && (() => {
+        const act        = state.tokenActivation;
+        const actTeam    = state.teams.find(t => t.id === act.teamId);
+        if (!actTeam) return null;
+        const actColor   = getTeamColor(actTeam.sort_order);
+        const myTeam     = myPlayer?.team_id ?? null;
+        const myCounter  = !!(myTeam && (state.tokens?.[myTeam] ?? [])
+          .some(t => !t.pending && t.type === "token_counter"));
+        return (
+          <TokenActivationOverlay
+            activation={act}
+            teamName={actTeam.name}
+            teamColor={actColor}
+            hasCounter={myCounter && actTeam.id !== myTeam}
+            onDismiss={clearTokenActivation}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -2649,6 +2679,189 @@ function TokenTray({
         Close
       </button>
     </Modal>
+  );
+}
+
+// ── Token activation overlay ──────────────────────────────────────────────
+// Full-screen cinematic when any team plays a token. Every client gets the
+// same TokenActivation via realtime (see useRoom), so the animation is
+// synchronous-enough for shared situational awareness.
+//
+// Phases:
+//   0–1000ms   token flips in from above, rotating on Y, lands centred
+//   1000ms+    name + description rise into view
+//   1000–3500ms counter-window countdown (sets the cadence for a future
+//               token_counter reaction; for now it just times the dismiss)
+//   3500ms     auto-dismiss
+function TokenActivationOverlay({
+  activation, teamName, teamColor, hasCounter, onCounter, onDismiss,
+}: {
+  activation: { tokenId: number; tokenType: string; teamId: number; triggeredAt: number };
+  teamName:   string;
+  teamColor:  TeamColor | "spectator";
+  hasCounter: boolean;          // true if my team holds a token_counter (placeholder until implemented)
+  onCounter?: () => void;       // called when the counter button is pressed
+  onDismiss:  () => void;
+}) {
+  const spec = tokenSpec(activation.tokenType);
+  // Total visible time is COUNTER_WINDOW_MS after the token lands.
+  const LAND_MS          = 1000;
+  const COUNTER_WINDOW_MS = 2500;
+  const [phase, setPhase] = useState<"flying" | "landed">("flying");
+  const [remainingMs, setRemainingMs] = useState(COUNTER_WINDOW_MS);
+
+  useEffect(() => {
+    const t1 = window.setTimeout(() => setPhase("landed"), LAND_MS);
+    const start = Date.now() + LAND_MS;
+    const tick = window.setInterval(() => {
+      const left = COUNTER_WINDOW_MS - (Date.now() - start);
+      setRemainingMs(Math.max(0, left));
+    }, 80);
+    const t2 = window.setTimeout(onDismiss, LAND_MS + COUNTER_WINDOW_MS);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearInterval(tick);
+    };
+    // Re-run on a new activation (different tokenId).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activation.tokenId]);
+
+  const ringPct = phase === "landed"
+    ? Math.max(0, Math.min(100, (remainingMs / COUNTER_WINDOW_MS) * 100))
+    : 100;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex flex-col items-center justify-center"
+      style={{
+        background:      "rgba(0,0,0,0.62)",
+        backdropFilter:  "blur(6px)",
+        animation:       "tokenOverlayFade 220ms ease-out",
+      }}
+      // Click anywhere outside the token disc to dismiss early. The disc itself
+      // doesn't dismiss because the Counter button lives next to it.
+      onClick={onDismiss}
+    >
+      {/* Token disc — flips in then settles */}
+      <div
+        style={{
+          width:        160,
+          height:       160,
+          borderRadius: "50%",
+          background:   `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(var(--team-${teamColor}-rgb), 0.85) 60%, rgba(var(--team-${teamColor}-rgb), 1))`,
+          border:       `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
+          boxShadow:    `0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.25), 0 22px 60px rgba(0,0,0,0.6)`,
+          display:      "flex",
+          alignItems:   "center",
+          justifyContent: "center",
+          fontSize:     72,
+          lineHeight:   1,
+          transformStyle: "preserve-3d",
+          animation:    phase === "flying"
+            ? "tokenLaunch 1000ms cubic-bezier(0.22, 1.02, 0.36, 1) forwards"
+            : "tokenSettle 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))" }}>{spec.icon}</span>
+      </div>
+
+      {/* Caption — name + description, rises in once the token lands */}
+      <div
+        className="mt-8 text-center px-6"
+        style={{
+          maxWidth:  480,
+          opacity:   phase === "landed" ? 1 : 0,
+          transform: phase === "landed" ? "translateY(0)" : "translateY(18px)",
+          transition: "opacity 280ms ease-out, transform 280ms ease-out",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p
+          className="uppercase tracking-[0.18em]"
+          style={{
+            fontSize: "var(--text-xs)",
+            color:    `rgb(var(--team-${teamColor}-rgb))`,
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {teamName} played
+        </p>
+        <h2
+          className="font-extrabold mt-1"
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize:   "var(--text-2xl)",
+            color:      "rgb(var(--text-primary-rgb))",
+          }}
+        >
+          {spec.name}
+        </h2>
+        <p
+          className="mt-2"
+          style={{
+            fontSize: "var(--text-sm)",
+            color:    "rgb(var(--text-muted-rgb))",
+            lineHeight: 1.45,
+          }}
+        >
+          {spec.description}
+        </p>
+
+        {/* Counter-window: linear shrinking bar + optional Counter button.
+            When token_counter ships this becomes the live reaction window. */}
+        {phase === "landed" && (
+          <div className="mt-5 flex flex-col items-center gap-2">
+            <div
+              style={{
+                width:        180,
+                height:       3,
+                borderRadius: 2,
+                background:   "rgba(255,255,255,0.08)",
+                overflow:     "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width:      `${ringPct}%`,
+                  height:     "100%",
+                  background: `rgb(var(--team-${teamColor}-rgb))`,
+                  transition: "width 80ms linear",
+                }}
+              />
+            </div>
+            {hasCounter && onCounter ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onCounter(); }}
+                className="px-3 py-1.5 rounded-md font-bold transition-all active:scale-[0.97]"
+                style={{
+                  fontSize:   "var(--text-xs)",
+                  background: "rgba(var(--color-secondary-rgb), 0.18)",
+                  border:     "1px solid rgba(var(--color-secondary-rgb), 0.6)",
+                  color:      "rgb(var(--color-secondary-rgb))",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+              >
+                🛡 Counter ({Math.ceil(remainingMs / 1000)}s)
+              </button>
+            ) : (
+              <p
+                style={{
+                  fontSize: "var(--text-xs)",
+                  color:    "rgb(var(--text-muted-rgb))",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {Math.ceil(remainingMs / 1000)}s
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

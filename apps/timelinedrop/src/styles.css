@@ -228,3 +228,21 @@ input[type="range"].orange-range::-moz-range-thumb {
   background: rgb(var(--color-primary-rgb));
   cursor: pointer;
 }
+
+/* ── Token activation overlay ───────────────────────────────────────────── */
+@keyframes tokenOverlayFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes tokenLaunch {
+  /* Token starts above and behind the viewport, spinning on Y, then lands. */
+  0%   { transform: translateY(-180%) rotateY(0deg)   rotateZ(-14deg) scale(0.45); opacity: 0; }
+  18%  { opacity: 1; }
+  60%  { transform: translateY(-15%)  rotateY(540deg) rotateZ(-3deg)  scale(0.95); }
+  100% { transform: translateY(0)     rotateY(720deg) rotateZ(0deg)   scale(1);   opacity: 1; }
+}
+@keyframes tokenSettle {
+  0%   { transform: translateY(0) scale(1); }
+  40%  { transform: translateY(-4px) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}

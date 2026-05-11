@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import type {
   TlRoom, TlTeam, TlPlayer, TlRound,
@@ -9,6 +9,12 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
   const [state, setState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // Consumer calls this once it has finished rendering the activation animation
+  // so the same record won't replay if state is reloaded.
+  const clearTokenActivation = useCallback(() => {
+    setState(s => s && s.tokenActivation ? { ...s, tokenActivation: null } : s);
+  }, []);
 
   useEffect(() => {
     if (!roomId) return;
@@ -75,10 +81,16 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
         pings,
         tokens,
         myPlayer: ((playersRes.data ?? []) as TlPlayer[]).find(p => p.id === myPlayerId) ?? null,
+        tokenActivation: null,
       });
     }
 
     loadAll();
+
+    // Tokens that have already animated this session. Postgres only fires
+    // UPDATE events for changes after we subscribe, but the same row can be
+    // re-emitted on reconnect — dedupe by id so the animation never replays.
+    const seenActivations = new Set<number>();
 
     // Realtime subscriptions
     const channel = supabase
@@ -170,16 +182,38 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           return { ...s, pings: s.pings.filter(p => p.id !== removedId) };
         }))
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_team_tokens", filter: `room_id=eq.${roomId}` },
-        () => supabase.from("tl_team_tokens").select("*").eq("room_id", roomId).is("used_at", null)
-          .then(r => setState(s => {
-            if (!s) return s;
-            const tokens: Record<number, TlTeamToken[]> = {};
-            for (const t of s.teams) tokens[t.id] = [];
-            for (const tk of (r.data ?? []) as TlTeamToken[]) {
-              tokens[tk.team_id] = [...(tokens[tk.team_id] ?? []), tk];
+        (payload) => {
+          // Detect activation: an UPDATE whose new.used_at is set. used_at is
+          // a one-way flag (granted → used, never reverted), so any UPDATE
+          // with used_at populated represents a fresh activation. The default
+          // REPLICA IDENTITY only returns the PK on old, so we can't compare
+          // old.used_at — dedupe by token id instead.
+          if (payload.eventType === "UPDATE") {
+            const row = payload.new as TlTeamToken;
+            if (row.used_at && !seenActivations.has(row.id)) {
+              seenActivations.add(row.id);
+              setState(s => s ? {
+                ...s,
+                tokenActivation: {
+                  tokenId:     row.id,
+                  tokenType:   row.type,
+                  teamId:      row.team_id,
+                  triggeredAt: Date.now(),
+                },
+              } : s);
             }
-            return { ...s, tokens };
-          })))
+          }
+          supabase.from("tl_team_tokens").select("*").eq("room_id", roomId).is("used_at", null)
+            .then(r => setState(s => {
+              if (!s) return s;
+              const tokens: Record<number, TlTeamToken[]> = {};
+              for (const t of s.teams) tokens[t.id] = [];
+              for (const tk of (r.data ?? []) as TlTeamToken[]) {
+                tokens[tk.team_id] = [...(tokens[tk.team_id] ?? []), tk];
+              }
+              return { ...s, tokens };
+            }));
+        })
       .subscribe();
 
     channelRef.current = channel;
@@ -190,5 +224,5 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
     };
   }, [roomId, myPlayerId]);
 
-  return { state, error };
+  return { state, error, clearTokenActivation };
 }
