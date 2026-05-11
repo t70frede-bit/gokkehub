@@ -553,30 +553,54 @@ function PlayerFooter({
 // Persistent ping bubbles stacked above a gap or card. Styled to feel like
 // physical push-pins: layered shadow gives elevation, subtle inner highlight,
 // ── SuggestionField ───────────────────────────────────────────────────────
-// One half of the guess panel — an input plus a scrollable chip rail of
-// suggestions submitted by teammates. Click a chip to drop its value into
-// the input (used by the captain to grab an answer their team typed in).
-// De-duped + sorted newest-first so the freshest suggestions read first.
+// Input + scrollable chip rail of teammate suggestions.
+// - Duplicates collapse into one chip ("×3 Drake") and float to the top.
+// - Click-to-fill is only enabled for the captain (onPick provided).
+// - Read-only mode hides the input entirely (used for non-active viewers).
 function SuggestionField({
-  label, placeholder, value, onChange, suggestions, onPick,
+  label, placeholder, value, onChange, suggestions, onPick, readOnly,
 }: {
   label:       string;
   placeholder: string;
-  value:       string;
-  onChange:    (v: string) => void;
+  value?:      string;
+  onChange?:   (v: string) => void;
   suggestions: TlNote[];
-  onPick:      (v: string) => void;
+  /** Captain-only. When undefined, chips are visible but not clickable. */
+  onPick?:     (v: string) => void;
+  /** Read-only mode — no input shown, chips only. */
+  readOnly?:   boolean;
 }) {
-  // De-dupe by content (case-insensitive); keep the latest note per value so
-  // the chip shows the player who suggested it most recently.
-  const seen = new Map<string, TlNote>();
+  // Group duplicates by case-insensitive content. Count suggestions and
+  // remember which players suggested each value + the freshest timestamp
+  // for tie-breaking.
+  interface Group {
+    content:    string;       // canonical casing (first occurrence)
+    count:      number;
+    players:    Set<string>;
+    mostRecent: number;       // ms epoch
+  }
+  const grouped = new Map<string, Group>();
   for (const n of suggestions) {
     const key = n.content.trim().toLowerCase();
     if (!key) continue;
-    seen.set(key, n);
+    const ts = Date.parse(n.created_at);
+    const g  = grouped.get(key);
+    if (g) {
+      g.count++;
+      g.players.add(n.player_name);
+      if (!Number.isNaN(ts)) g.mostRecent = Math.max(g.mostRecent, ts);
+    } else {
+      grouped.set(key, {
+        content:    n.content.trim(),
+        count:      1,
+        players:    new Set([n.player_name]),
+        mostRecent: Number.isNaN(ts) ? 0 : ts,
+      });
+    }
   }
-  const chips = [...seen.values()].sort(
-    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  // Sort: count desc, then mostRecent desc.
+  const chips = [...grouped.values()].sort((a, b) =>
+    b.count - a.count || b.mostRecent - a.mostRecent
   );
 
   return (
@@ -585,51 +609,67 @@ function SuggestionField({
         {label}
       </label>
 
-      {/* Scrollable chip rail (horizontal). max-h caps it so the panel doesn't
-          balloon vertically when suggestions stack. */}
       {chips.length > 0 && (
         <div
           className="flex gap-1.5 overflow-x-auto pb-1"
-          style={{
-            scrollbarWidth: "thin",
-            maxHeight:      72,
-          }}
+          style={{ scrollbarWidth: "thin", maxHeight: 72 }}
         >
-          {chips.map(n => (
-            <button
-              key={n.id}
-              type="button"
-              onClick={() => onPick(n.content)}
-              title={`Suggested by ${n.player_name}`}
-              className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-all active:scale-[0.97]"
-              style={{
-                background: "rgba(var(--color-primary-rgb), 0.12)",
-                border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
-                color:      "rgb(var(--color-primary-rgb))",
-                cursor:     "pointer",
-              }}
-            >
-              <span>{n.content}</span>
-              <span className="ml-1 opacity-50 font-normal">
-                · {n.player_name.split(" ")[0]}
-              </span>
-            </button>
-          ))}
+          {chips.map((g, i) => {
+            const playerList = [...g.players].join(", ");
+            const clickable  = !!onPick;
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={clickable ? () => onPick!(g.content) : undefined}
+                disabled={!clickable}
+                title={`${g.count > 1 ? `${g.count}× — ` : ""}suggested by ${playerList}`}
+                className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-all disabled:cursor-default"
+                style={{
+                  background: clickable
+                    ? "rgba(var(--color-primary-rgb), 0.18)"
+                    : "rgba(var(--color-primary-rgb), 0.08)",
+                  border:     `1px solid rgba(var(--color-primary-rgb), ${clickable ? 0.45 : 0.25})`,
+                  color:      "rgb(var(--color-primary-rgb))",
+                  cursor:     clickable ? "pointer" : "default",
+                }}
+              >
+                {g.count > 1 && (
+                  <span className="font-mono mr-1" style={{ opacity: 0.85 }}>
+                    ×{g.count}
+                  </span>
+                )}
+                <span>{g.content}</span>
+                <span className="ml-1 opacity-55 font-normal">
+                  · {[...g.players].slice(0, 2).map(p => p.split(" ")[0]).join(", ")}
+                  {g.players.size > 2 && "…"}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        maxLength={120}
-        className="rounded-md px-3 py-2 text-sm outline-none"
-        style={{
-          background: "rgb(var(--surface-input-rgb))",
-          border:     "1px solid rgb(var(--border-rgb))",
-          color:      "inherit",
-        }}
-      />
+      {chips.length === 0 && readOnly && (
+        <p className="text-xs italic" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          No suggestions yet.
+        </p>
+      )}
+
+      {!readOnly && (
+        <input
+          value={value ?? ""}
+          onChange={e => onChange?.(e.target.value)}
+          placeholder={placeholder}
+          maxLength={120}
+          className="rounded-md px-3 py-2 text-sm outline-none"
+          style={{
+            background: "rgb(var(--surface-input-rgb))",
+            border:     "1px solid rgb(var(--border-rgb))",
+            color:      "inherit",
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2195,14 +2235,19 @@ export default function GamePage() {
         );
       })()}
 
-      {/* ── Bottom panel: structured guess inputs + suggestion chips ─────
-           Everyone has the same two inputs (Song name + Artist) plus a chip
-           rail above each, populated by other players' suggestions for the
-           current round. Captains place; everyone else submits suggestions. */}
+      {/* ── Bottom panel: role-gated guess inputs + suggestion chips ─────
+           - Active captain: fills inputs from chips; submits placement.
+           - Active non-captain: submits suggestions; cannot click chips.
+           - Everyone else (opponent / spectator): chips view-only, no input. */}
       {round && round.outcome === null && (() => {
         const songSuggestions   = notes.filter(n => n.kind === "song");
         const artistSuggestions = notes.filter(n => n.kind === "artist");
-        const isCaptainHere     = iAmCaptain && isMyTurn;
+
+        const iAmActiveTeam      = !!myPlayer && myPlayer.team_id === room.active_team_id;
+        const isCaptainHere      = iAmCaptain && isMyTurn;
+        const isActiveTeammate   = iAmActiveTeam && !isCaptainHere;
+        const isObserver         = !iAmActiveTeam;
+
         const stagedL = optimisticStaged ? optimisticStaged.left  : (round?.staged_left_year  ?? null);
         const stagedR = optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null);
         const isStaged = stagedL !== null || stagedR !== null;
@@ -2225,7 +2270,9 @@ export default function GamePage() {
           >
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-wider opacity-50">
-                {isCaptainHere ? "Your guess" : "Suggest to your captain"}
+                {isCaptainHere    ? "Your guess"
+                  : isActiveTeammate ? "Suggest to your captain"
+                  : "Suggestions"}
               </p>
               {persistentPings.length > 0 && (
                 <span className="text-[11px] opacity-50">📍 {persistentPings.length}</span>
@@ -2236,23 +2283,25 @@ export default function GamePage() {
               <SuggestionField
                 label="Song name"
                 placeholder="What's it called?"
-                value={guessSongname}
-                onChange={setGuessSongname}
+                value={isCaptainHere || isActiveTeammate ? guessSongname : undefined}
+                onChange={isCaptainHere || isActiveTeammate ? setGuessSongname : undefined}
                 suggestions={songSuggestions}
-                onPick={(v) => setGuessSongname(v)}
+                onPick={isCaptainHere ? (v) => setGuessSongname(v) : undefined}
+                readOnly={isObserver}
               />
               <SuggestionField
                 label="Artist"
                 placeholder="Who's playing?"
-                value={guessArtist}
-                onChange={setGuessArtist}
+                value={isCaptainHere || isActiveTeammate ? guessArtist : undefined}
+                onChange={isCaptainHere || isActiveTeammate ? setGuessArtist : undefined}
                 suggestions={artistSuggestions}
-                onPick={(v) => setGuessArtist(v)}
+                onPick={isCaptainHere ? (v) => setGuessArtist(v) : undefined}
+                readOnly={isObserver}
               />
             </div>
 
             <div className="flex gap-2 flex-wrap">
-              {isCaptainHere ? (
+              {isCaptainHere && (
                 <>
                   <Button
                     onClick={confirmGuess}
@@ -2279,7 +2328,8 @@ export default function GamePage() {
                     );
                   })()}
                 </>
-              ) : (
+              )}
+              {isActiveTeammate && (
                 <Button
                   onClick={sendBoth}
                   disabled={!guessSongname.trim() && !guessArtist.trim()}
@@ -2293,6 +2343,11 @@ export default function GamePage() {
             {isCaptainHere && (
               <p className="text-[11px] opacity-40">
                 Click a gap to place the year. Both fields right earns a 🪙 token bonus — no penalty if wrong.
+              </p>
+            )}
+            {isObserver && (
+              <p className="text-[11px] opacity-40">
+                Waiting for the active team to guess.
               </p>
             )}
           </Panel>

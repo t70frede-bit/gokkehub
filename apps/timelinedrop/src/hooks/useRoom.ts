@@ -100,6 +100,15 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           const newRound = payload.new as TlRound;
           setState(s => {
             if (!s) return s;
+            // Server-side update flow on "Next song" is: INSERT new round →
+            // UPDATE old round (bonus_awarded etc) → UPDATE tl_rooms. If the
+            // UPDATE for the previous round arrives LAST, it would overwrite
+            // state.round with the stale old row whose outcome is still
+            // "correct" — and the reveal modal stays mounted (screen looks
+            // frozen black until a refresh). Reject any tl_rounds event whose
+            // id is older than the room's current_round_id.
+            const currentId = s.room.current_round_id;
+            if (typeof currentId === "number" && newRound.id < currentId) return s;
             // If new round ID, reload notes/pings
             if (newRound.id !== s.round?.id) {
               supabase.from("tl_notes").select("*").eq("round_id", newRound.id).order("created_at")
