@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, Input, Modal, Panel } from "@gokkehub/ui";
+import { Button, Modal, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
-import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, JudgeMode, TlTeamToken } from "../lib/types";
+import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
@@ -552,6 +552,88 @@ function PlayerFooter({
 
 // Persistent ping bubbles stacked above a gap or card. Styled to feel like
 // physical push-pins: layered shadow gives elevation, subtle inner highlight,
+// ── SuggestionField ───────────────────────────────────────────────────────
+// One half of the guess panel — an input plus a scrollable chip rail of
+// suggestions submitted by teammates. Click a chip to drop its value into
+// the input (used by the captain to grab an answer their team typed in).
+// De-duped + sorted newest-first so the freshest suggestions read first.
+function SuggestionField({
+  label, placeholder, value, onChange, suggestions, onPick,
+}: {
+  label:       string;
+  placeholder: string;
+  value:       string;
+  onChange:    (v: string) => void;
+  suggestions: TlNote[];
+  onPick:      (v: string) => void;
+}) {
+  // De-dupe by content (case-insensitive); keep the latest note per value so
+  // the chip shows the player who suggested it most recently.
+  const seen = new Map<string, TlNote>();
+  for (const n of suggestions) {
+    const key = n.content.trim().toLowerCase();
+    if (!key) continue;
+    seen.set(key, n);
+  }
+  const chips = [...seen.values()].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  );
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-sm font-medium" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+        {label}
+      </label>
+
+      {/* Scrollable chip rail (horizontal). max-h caps it so the panel doesn't
+          balloon vertically when suggestions stack. */}
+      {chips.length > 0 && (
+        <div
+          className="flex gap-1.5 overflow-x-auto pb-1"
+          style={{
+            scrollbarWidth: "thin",
+            maxHeight:      72,
+          }}
+        >
+          {chips.map(n => (
+            <button
+              key={n.id}
+              type="button"
+              onClick={() => onPick(n.content)}
+              title={`Suggested by ${n.player_name}`}
+              className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold transition-all active:scale-[0.97]"
+              style={{
+                background: "rgba(var(--color-primary-rgb), 0.12)",
+                border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
+                color:      "rgb(var(--color-primary-rgb))",
+                cursor:     "pointer",
+              }}
+            >
+              <span>{n.content}</span>
+              <span className="ml-1 opacity-50 font-normal">
+                · {n.player_name.split(" ")[0]}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        maxLength={120}
+        className="rounded-md px-3 py-2 text-sm outline-none"
+        style={{
+          background: "rgb(var(--surface-input-rgb))",
+          border:     "1px solid rgb(var(--border-rgb))",
+          color:      "inherit",
+        }}
+      />
+    </div>
+  );
+}
+
 // and a small triangular tail points down at the slot. The bubbles are
 // pointer-events-none — players toggle their own pings by tapping the same
 // slot a second time, not by clicking the bubble.
@@ -1337,7 +1419,6 @@ export default function GamePage() {
 
   const { state } = useRoom(roomId, myPlayerId);
 
-  const [noteText,   setNoteText]   = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Lifted guess inputs so chat-pull buttons can write into them.
@@ -1541,11 +1622,11 @@ export default function GamePage() {
   const persistentPings = pings.map(p => ({
     id: p.id, year: Number(p.year), player_name: p.player_name, player_id: p.player_id,
   }));
-  // Notes for the per-player speech bubbles (last 12s) — feeds PlayerFooter.
+  // Speech-bubble chat above avatars retired in favour of structured
+  // suggestions. PlayerFooter still accepts a notes prop for back-compat
+  // but we feed it nothing.
   const chatTickMs = Date.now();
-  const footerNotes: FooterNote[] = notes
-    .map(n => ({ id: n.id, player_id: n.player_id, content: n.content, createdMs: Date.parse(n.created_at) }))
-    .filter(n => !Number.isNaN(n.createdMs) && (chatTickMs - n.createdMs) < 12000);
+  const footerNotes: FooterNote[] = [];
 
   async function confirmGuess() {
     if (!round || submitting) return;
@@ -1665,12 +1746,19 @@ export default function GamePage() {
     });
   }
 
-  async function sendNote() {
-    if (!noteText.trim() || !round || !myPlayer) return;
+  // Submit a structured suggestion (song name or artist) into tl_notes.
+  // Captains use these chips to fill their own inputs — they do NOT submit
+  // suggestions themselves; their typing only places the actual guess.
+  async function sendSuggestion(kind: "song" | "artist", value: string) {
+    const v = value.trim();
+    if (!v || !round || !myPlayer) return;
     await supabase.from("tl_notes").insert({
-      round_id: round.id, player_id: myPlayer.id, player_name: myPlayer.name, content: noteText.trim(),
+      round_id:    round.id,
+      player_id:   myPlayer.id,
+      player_name: myPlayer.name,
+      content:     v.slice(0, 120),
+      kind,
     });
-    setNoteText("");
   }
 
   // Toggle a ping at a specific year. One ping per (player, year) per round —
@@ -2107,91 +2195,109 @@ export default function GamePage() {
         );
       })()}
 
-      {/* ── Bottom panel: guess form for active captain, chat for everyone else ── */}
-      {iAmCaptain && isMyTurn && round && round.outcome === null ? (
-        <Panel className="flex-shrink-0 p-3 space-y-2"
-          style={{ borderColor: "rgba(var(--color-primary-rgb), 0.35)" }}>
-          <p className="text-xs uppercase tracking-wider opacity-50">Your guess</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <Input
-              label="Song name"
-              value={guessSongname}
-              onChange={e => setGuessSongname(e.target.value)}
-              placeholder="What's it called?"
-              maxLength={120}
-            />
-            <Input
-              label="Artist"
-              value={guessArtist}
-              onChange={e => setGuessArtist(e.target.value)}
-              placeholder="Who's playing?"
-              maxLength={120}
-            />
-          </div>
-          <p className="text-[11px] opacity-40">
-            Click a gap to place the year. Artist & song are optional — get both right for a 🪙 token bonus. No penalty if wrong.
-          </p>
-          <div className="flex gap-2 flex-wrap">
-            {(() => {
-              const stagedL = optimisticStaged ? optimisticStaged.left  : (round?.staged_left_year  ?? null);
-              const stagedR = optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null);
-              const isStaged = stagedL !== null || stagedR !== null;
-              return (
+      {/* ── Bottom panel: structured guess inputs + suggestion chips ─────
+           Everyone has the same two inputs (Song name + Artist) plus a chip
+           rail above each, populated by other players' suggestions for the
+           current round. Captains place; everyone else submits suggestions. */}
+      {round && round.outcome === null && (() => {
+        const songSuggestions   = notes.filter(n => n.kind === "song");
+        const artistSuggestions = notes.filter(n => n.kind === "artist");
+        const isCaptainHere     = iAmCaptain && isMyTurn;
+        const stagedL = optimisticStaged ? optimisticStaged.left  : (round?.staged_left_year  ?? null);
+        const stagedR = optimisticStaged ? optimisticStaged.right : (round?.staged_right_year ?? null);
+        const isStaged = stagedL !== null || stagedR !== null;
+
+        const sendBoth = async () => {
+          if (guessSongname.trim()) await sendSuggestion("song",   guessSongname);
+          if (guessArtist.trim())   await sendSuggestion("artist", guessArtist);
+          setGuessSongname("");
+          setGuessArtist("");
+        };
+
+        return (
+          <Panel
+            className="flex-shrink-0 p-3 space-y-2"
+            style={{
+              borderColor: isCaptainHere
+                ? "rgba(var(--color-primary-rgb), 0.35)"
+                : undefined,
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-wider opacity-50">
+                {isCaptainHere ? "Your guess" : "Suggest to your captain"}
+              </p>
+              {persistentPings.length > 0 && (
+                <span className="text-[11px] opacity-50">📍 {persistentPings.length}</span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <SuggestionField
+                label="Song name"
+                placeholder="What's it called?"
+                value={guessSongname}
+                onChange={setGuessSongname}
+                suggestions={songSuggestions}
+                onPick={(v) => setGuessSongname(v)}
+              />
+              <SuggestionField
+                label="Artist"
+                placeholder="Who's playing?"
+                value={guessArtist}
+                onChange={setGuessArtist}
+                suggestions={artistSuggestions}
+                onPick={(v) => setGuessArtist(v)}
+              />
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              {isCaptainHere ? (
+                <>
+                  <Button
+                    onClick={confirmGuess}
+                    loading={submitting}
+                    disabled={!isStaged}
+                    className="flex-1 min-w-[160px]"
+                  >
+                    {!isStaged ? "Click a gap to place the card" : "✓ Confirm guess"}
+                  </Button>
+                  {(() => {
+                    const tokens = (activeTeam ? state.tokens?.[activeTeam.id] : []) ?? [];
+                    const ready  = tokens.filter(t => !t.pending);
+                    if (ready.length === 0) return null;
+                    return (
+                      <Button
+                        onClick={() => setTokenTrayOpen(true)}
+                        variant="ghost"
+                        size="sm"
+                        className="flex-shrink-0"
+                        title="Use a token"
+                      >
+                        🎟 Tokens ({ready.length})
+                      </Button>
+                    );
+                  })()}
+                </>
+              ) : (
                 <Button
-                  onClick={confirmGuess}
-                  loading={submitting}
-                  disabled={!isStaged}
+                  onClick={sendBoth}
+                  disabled={!guessSongname.trim() && !guessArtist.trim()}
                   className="flex-1 min-w-[160px]"
                 >
-                  {!isStaged ? "Click a gap to place the card" : "✓ Confirm guess"}
+                  Send to captain
                 </Button>
-              );
-            })()}
-            {(() => {
-              const tokens = (activeTeam ? state.tokens?.[activeTeam.id] : []) ?? [];
-              const ready  = tokens.filter(t => !t.pending);
-              if (ready.length === 0) return null;
-              return (
-                <Button
-                  onClick={() => setTokenTrayOpen(true)}
-                  variant="ghost"
-                  size="sm"
-                  className="flex-shrink-0"
-                  title="Use a token"
-                >
-                  🎟 Tokens ({ready.length})
-                </Button>
-              );
-            })()}
-          </div>
-        </Panel>
-      ) : (
-      <Panel className="flex-shrink-0 p-2 flex items-center gap-2">
-        <span className="text-base flex-shrink-0">💬</span>
-        <input
-          value={noteText}
-          onChange={e => setNoteText(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && sendNote()}
-          placeholder="Say something — it'll pop above your head"
-          maxLength={100}
-          className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-sm outline-none"
-          style={{
-            background: "rgba(var(--surface-raised-rgb),0.5)",
-            border:     "1px solid rgba(255,255,255,0.1)",
-            color:      "inherit",
-          }}
-        />
-        <button onClick={sendNote}
-          disabled={!noteText.trim()}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium flex-shrink-0 disabled:opacity-40"
-          style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))" }}>
-          Send
-        </button>
-        {persistentPings.length > 0 && (
-          <span className="text-[11px] opacity-50 flex-shrink-0 ml-1">📍 {persistentPings.length}</span>
-        )}
-      </Panel>
-      )}
+              )}
+            </div>
+
+            {isCaptainHere && (
+              <p className="text-[11px] opacity-40">
+                Click a gap to place the year. Both fields right earns a 🪙 token bonus — no penalty if wrong.
+              </p>
+            )}
+          </Panel>
+        );
+      })()}
 
       {/* ── Spotify-style audio bar at the very bottom (captain only) ──────── */}
       {iAmCaptain && (

@@ -181,6 +181,9 @@ export interface TlNote {
   player_id:   string;
   player_name: string;
   content:     string;
+  /** Migration 010 — "free" is legacy chat; "song"/"artist" are structured
+   *  suggestions for the captain's guess inputs. */
+  kind:        "free" | "song" | "artist";
   created_at:  string;
 }
 
