@@ -1,6 +1,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
+import { getSessionId } from "@gokkehub/auth/session";
 import {
   getRoom, updateRoom, getTeams, getPlayers, updatePlayer,
   createRound, insertTimelineEntry, recordPlayedTracks,
@@ -20,6 +21,19 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   if (!room) return json({ error: "Room not found" }, 404, req);
   if (room.status !== "lobby") return json({ error: "Game already started" }, 409, req);
   if (room.host_id !== body.player_id) return json({ error: "Only the host can start" }, 403, req);
+
+  // Persist the host's SESSIONS KV id so background top-ups can load their
+  // Spotify creds without needing a host cookie on the triggering request.
+  // Tolerate the column not existing yet (migration 011 may not have been
+  // applied) — the rest of the start flow shouldn't be blocked by it.
+  const hostSessionId = getSessionId(req);
+  if (hostSessionId) {
+    try {
+      await updateRoom(env, roomId, { host_session_id: hostSessionId });
+    } catch (e) {
+      console.warn("[musix] could not persist host_session_id (run migration 011):", e);
+    }
+  }
 
   const teams   = await getTeams(env, roomId);
   const players = await getPlayers(env, roomId);

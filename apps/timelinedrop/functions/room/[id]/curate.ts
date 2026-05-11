@@ -61,13 +61,26 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   const settings   = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
   const difficulty = settings.difficulty;
 
-  // Get the host's active Spotify token (needed for URI search). Without it we can't
-  // surface tracks the SDK can play, so the curation aborts gracefully.
-  const session = await getSession(env.SESSIONS, req);
-  if (!session?.spotify?.refreshToken) {
+  // Get the host's active Spotify token (needed for URI search). For host-
+  // triggered actions we read from the request cookie; for background top-
+  // ups triggered by a non-host player we fall back to the host_session_id
+  // persisted on the room (migration 011). Without either we can't surface
+  // tracks the SDK can play, so the curation aborts gracefully.
+  const requestSession = await getSession(env.SESSIONS, req);
+  let refreshToken = requestSession?.spotify?.refreshToken;
+  if (!refreshToken && room.host_session_id) {
+    const raw = await env.SESSIONS.get(room.host_session_id);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { spotify?: { refreshToken?: string } };
+        refreshToken = parsed.spotify?.refreshToken;
+      } catch { /* malformed session JSON — ignore */ }
+    }
+  }
+  if (!refreshToken) {
     return json({ error: "Host needs to connect Spotify on their profile to generate tracks" }, 400, req);
   }
-  const accessToken = await getActiveHostToken(env, session.spotify.refreshToken);
+  const accessToken = await getActiveHostToken(env, refreshToken);
   if (!accessToken) return json({ error: "Could not refresh Spotify token" }, 500, req);
 
   // 1) Build per-player profiles

@@ -5,6 +5,14 @@ import {
   getRoom, updateRoom, getTeams, getPlayers, getRound, updateRound,
   createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
 } from "../../_supabase";
+import { handleGenerate } from "./curate";
+
+// Background pool top-up — fires when the pool is about to run out so the
+// game doesn't end abruptly. The handleGenerate function uses host_session_id
+// from the room to authenticate, so this works regardless of who triggered
+// the round transition.
+const POOL_TOPUP_WATERMARK = 5;   // start refill when ≤5 unplayed tracks remain
+const POOL_CAP             = 60;  // don't grow indefinitely
 import type {
   PlacementRequest, TurnActionRequest, GuessRequest, JudgeRequest,
   FinalizeJudgmentRequest, UseTokenRequest, StageRequest,
@@ -22,7 +30,7 @@ import type {
 //   ?action=propose-year    — any player suggests a year correction for the current track
 //   ?action=approve-year    — host accepts/rejects the proposed year correction
 
-export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
+export const onRequest: PagesFunction<Env> = async ({ request, params, env, waitUntil }) => {
   const pre = handlePreflight(request as unknown as Request);
   if (pre) return pre;
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -35,13 +43,45 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   if (action === "stage")        return handleStage(req, roomId, env);
   if (action === "guess")        return handleGuess(req, roomId, env);
   if (action === "judge")        return handleJudge(req, roomId, env);
-  if (action === "finalize")     return handleFinalize(req, roomId, env);
-  if (action === "usetoken")     return handleUseToken(req, roomId, env);
-  if (action === "turn")         return handleTurnAction(req, roomId, env);
+  if (action === "finalize")     return handleFinalize(req, roomId, env, waitUntil);
+  if (action === "usetoken")     return handleUseToken(req, roomId, env, waitUntil);
+  if (action === "turn")         return handleTurnAction(req, roomId, env, waitUntil);
   if (action === "propose-year") return handleProposeYear(req, roomId, env);
   if (action === "approve-year") return handleApproveYear(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
+
+type WaitUntil = ((p: Promise<unknown>) => void) | undefined;
+
+// If the pool is running low, kick off a refill in the background. handleGenerate
+// authenticates via room.host_session_id (migration 011) so it doesn't need
+// the triggering player to be the host.
+function maybeTopUpPool(
+  env: Env,
+  req: Request,
+  roomId: string,
+  poolLength: number,
+  newCursor: number,
+  waitUntil: WaitUntil,
+) {
+  const remaining = poolLength - newCursor;
+  if (remaining > POOL_TOPUP_WATERMARK) return;
+  if (poolLength >= POOL_CAP)            return;
+  const synthReq = new Request(req.url, {
+    method:  "POST",
+    headers: req.headers,
+    body:    JSON.stringify({ player_id: "auto-topup" }),
+  });
+  const work = handleGenerate(synthReq, roomId, env, true)
+    .then(async (r) => {
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        console.warn("[musix] auto top-up returned", r.status, text.slice(0, 200));
+      }
+    })
+    .catch((e) => console.warn("[musix] auto top-up threw:", e));
+  if (waitUntil) waitUntil(work); else void work;
+}
 
 // In single-screen mode the host stands in for every team's captain (so one
 // device can drive the whole game). This helper centralises the check.
@@ -280,7 +320,7 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
 
 // ── Finalize (vote-all timer expiry) ─────────────────────────────────────────
 
-async function handleFinalize(req: Request, roomId: string, env: Env) {
+async function handleFinalize(req: Request, roomId: string, env: Env, _waitUntil?: WaitUntil) {
   const body = await req.json() as FinalizeJudgmentRequest;
   const { round_id } = body;
 
@@ -314,7 +354,7 @@ async function handleFinalize(req: Request, roomId: string, env: Env) {
 
 // ── Use token (mid-round skip) ───────────────────────────────────────────────
 
-async function handleUseToken(req: Request, roomId: string, env: Env) {
+async function handleUseToken(req: Request, roomId: string, env: Env, waitUntil?: WaitUntil) {
   const body = await req.json() as UseTokenRequest;
   const { round_id, player_id } = body;
 
@@ -357,7 +397,7 @@ async function handleUseToken(req: Request, roomId: string, env: Env) {
     return json({ ok: true, winner: activeTeam.id }, 200, req);
   }
 
-  await advanceTurn(env, roomId, room, teams);
+  await advanceTurn(env, roomId, room, teams, req, waitUntil);
   return json({ ok: true }, 200, req);
 }
 
@@ -399,7 +439,7 @@ export { findAndUseToken };
 
 // ── Turn action (stop | next) ────────────────────────────────────────────────
 
-async function handleTurnAction(req: Request, roomId: string, env: Env) {
+async function handleTurnAction(req: Request, roomId: string, env: Env, waitUntil?: WaitUntil) {
   const body = await req.json() as TurnActionRequest & { player_id: string };
   const { action, player_id } = body;
 
@@ -436,12 +476,14 @@ async function handleTurnAction(req: Request, roomId: string, env: Env) {
       players.filter(p => !p.is_spectator).map(p => p.id),
       nextTrack.id,
     );
+    const newCursor = room.track_cursor + 1;
     await updateRoom(env, roomId, {
-      track_cursor:     room.track_cursor + 1,
+      track_cursor:     newCursor,
       current_round_id: round.id,
       playing_since:    null,
       paused_at_ms:     null,
     });
+    maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, waitUntil);
     return json({ ok: true, round_id: round.id }, 200, req);
   }
 
@@ -457,7 +499,7 @@ async function handleTurnAction(req: Request, roomId: string, env: Env) {
     return json({ ok: true, winner: activeTeam.id }, 200, req);
   }
 
-  await advanceTurn(env, roomId, room, teams);
+  await advanceTurn(env, roomId, room, teams, req, waitUntil);
   return json({ ok: true }, 200, req);
 }
 
@@ -603,6 +645,8 @@ async function advanceTurn(
   roomId: string,
   room: Awaited<ReturnType<typeof getRoom>>,
   teams: Awaited<ReturnType<typeof getTeams>>,
+  req?: Request,
+  waitUntil?: WaitUntil,
 ) {
   if (!room) return;
   const sortedTeams = [...teams].sort((a, b) => a.sort_order - b.sort_order);
@@ -641,11 +685,16 @@ async function advanceTurn(
     nextTrack.id,
   );
 
+  const newCursor = room.track_cursor + 1;
   await updateRoom(env, roomId, {
     active_team_id:   nextTeam.id,
-    track_cursor:     room.track_cursor + 1,
+    track_cursor:     newCursor,
     current_round_id: round.id,
     playing_since:    null,
     paused_at_ms:     null,
   });
+
+  // Background pool top-up — see maybeTopUpPool for the trigger condition.
+  // Skipped if we have no request handle (e.g. internal callers).
+  if (req) maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, waitUntil);
 }

@@ -60,6 +60,10 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
 export interface TlRoom {
   id:               string;       // 6-char code
   host_id:          string;
+  /** SESSIONS KV id of the host (set on Start). Used by the curation engine
+   *  to load the host's Spotify creds during background top-ups triggered
+   *  from a non-host request. */
+  host_session_id?: string | null;
   status:           "lobby" | "playing" | "finished";
   win_target:       number;
   active_team_id:   number | null;
