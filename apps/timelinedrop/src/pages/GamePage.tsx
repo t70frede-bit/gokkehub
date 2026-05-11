@@ -2777,9 +2777,11 @@ function TokenActivationOverlay({
       // doesn't dismiss because the Counter button lives next to it.
       onClick={onDismiss}
     >
-      {/* Coin — two-faced, X-axis flip, parabolic arc. The .token-coin /
-          .token-coin-face / token-coin-* classes live in styles.css so the
-          3D math reads cleanly. */}
+      {/* Coin — two-faced, X-axis flip, arcs from behind the screen plane
+          (negative translateZ → small) to in front of it (positive
+          translateZ → larger). Material is layered radial gradients +
+          inset highlight/shadow + rim line for a polished-metal look.
+          See .token-coin / .token-coin-face in styles.css. */}
       {!inReveal && (
         <div
           className="token-coin-stage"
@@ -2790,15 +2792,29 @@ function TokenActivationOverlay({
             style={{
               animation: phase === "flying"
                 ? "coinFlip 1100ms cubic-bezier(0.33, 0.0, 0.4, 1) forwards"
-                : "coinSettle 360ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+                : "coinSettle 560ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
             }}
           >
             <div
               className="token-coin-face token-coin-front"
               style={{
-                background: `radial-gradient(circle at 35% 28%, rgba(255,255,255,0.22), rgba(var(--team-${teamColor}-rgb), 0.85) 55%, rgba(var(--team-${teamColor}-rgb), 1))`,
-                border:     `3px solid rgba(var(--team-${teamColor}-rgb), 1)`,
-                boxShadow:  `inset 0 0 24px rgba(255,255,255,0.12), 0 0 0 6px rgba(var(--team-${teamColor}-rgb), 0.22), 0 22px 60px rgba(0,0,0,0.6)`,
+                background: [
+                  // top-left specular highlight (sells the metallic sheen)
+                  "radial-gradient(circle at 28% 22%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 30%)",
+                  // bottom-right falloff so the coin reads as a solid disc
+                  "radial-gradient(circle at 75% 80%, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0) 45%)",
+                  // main body — team colour with a slight inner brightening
+                  `radial-gradient(circle at 50% 45%, rgba(var(--team-${teamColor}-rgb), 1) 0%, rgba(var(--team-${teamColor}-rgb), 0.85) 60%, rgba(var(--team-${teamColor}-rgb), 0.6) 100%)`,
+                ].join(", "),
+                border:     `2px solid rgba(var(--team-${teamColor}-rgb), 1)`,
+                boxShadow:  [
+                  "inset 0 -14px 20px rgba(0,0,0,0.30)",     // lower-half core shadow
+                  "inset 0 10px 14px rgba(255,255,255,0.22)", // upper-half sheen
+                  "inset 0 0 0 4px rgba(255,255,255,0.08)",   // inner ring (engraving)
+                  "inset 0 0 0 5px rgba(0,0,0,0.22)",         // rim line
+                  `0 0 0 3px rgba(var(--team-${teamColor}-rgb), 0.30)`,
+                  "0 28px 60px rgba(0,0,0,0.65)",
+                ].join(", "),
               }}
             >
               <span className="token-coin-icon">{spec.icon}</span>
@@ -2806,14 +2822,24 @@ function TokenActivationOverlay({
             <div
               className="token-coin-face token-coin-back"
               style={{
-                background: `radial-gradient(circle at 35% 28%, rgba(255,255,255,0.12), rgba(var(--team-${teamColor}-rgb), 0.55) 55%, rgba(var(--team-${teamColor}-rgb), 0.85))`,
-                border:     `3px solid rgba(var(--team-${teamColor}-rgb), 0.85)`,
-                boxShadow:  `inset 0 0 24px rgba(0,0,0,0.25)`,
+                background: [
+                  "radial-gradient(circle at 28% 22%, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0) 30%)",
+                  "radial-gradient(circle at 75% 80%, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0) 45%)",
+                  `radial-gradient(circle at 50% 45%, rgba(var(--team-${teamColor}-rgb), 0.85) 0%, rgba(var(--team-${teamColor}-rgb), 0.55) 60%, rgba(var(--team-${teamColor}-rgb), 0.35) 100%)`,
+                ].join(", "),
+                border:     `2px solid rgba(var(--team-${teamColor}-rgb), 0.85)`,
+                boxShadow:  [
+                  "inset 0 -14px 20px rgba(0,0,0,0.40)",
+                  "inset 0 10px 14px rgba(255,255,255,0.10)",
+                  "inset 0 0 0 4px rgba(255,255,255,0.05)",
+                  "inset 0 0 0 5px rgba(0,0,0,0.28)",
+                ].join(", "),
               }}
             >
               <span className="token-coin-back-mark">♪</span>
             </div>
           </div>
+          <div className="token-coin-ground-shadow" />
         </div>
       )}
 
@@ -2842,7 +2868,7 @@ function TokenActivationOverlay({
       {/* Caption — name + description, rises in once the token lands. Hidden
           during the cover reveal so the art has the stage. */}
       <div
-        className="mt-8 text-center px-6"
+        className="mt-14 text-center px-6"
         style={{
           maxWidth:  480,
           opacity:   phase === "landed" ? 1 : 0,

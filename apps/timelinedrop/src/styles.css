@@ -237,16 +237,22 @@ input[type="range"].orange-range::-moz-range-thumb {
 
 /* Coin — a 3D-flipping disc with a front face (icon) and back face (music
    note). The .token-coin-stage gives the perspective; .token-coin is the
-   rotating element with preserve-3d so both faces render in 3-space. The
-   coinFlip keyframes combine an X-axis rotation (end-over-end like a
-   tossed coin) with a parabolic translateY arc and a slight scale that
-   peaks at apex — gives the cue that the coin moves toward and away from
-   the camera. 1080° lands the FRONT face up (icon visible). */
+   rotating element with preserve-3d so both faces render in 3-space.
+
+   Motion: the coin starts behind the screen (negative translateZ, small
+   apparent size) and flies toward the viewer along a parabolic arc,
+   landing in front of the screen plane (positive translateZ, slightly
+   oversized) — the "out of the screen" effect. 1080° of X-rotation
+   guarantees the FRONT face lands up.
+
+   Material: multi-stop radial gradient + dual inset shadows for top
+   highlight / bottom shading + a rim line, giving a polished-metal look. */
 .token-coin-stage {
-  perspective: 1400px;
-  perspective-origin: 50% 40%;
-  width: 160px;
-  height: 160px;
+  perspective: 1100px;
+  perspective-origin: 50% 38%;
+  width: 180px;
+  height: 180px;
+  position: relative;
 }
 .token-coin {
   position: relative;
@@ -264,38 +270,78 @@ input[type="range"].orange-range::-moz-range-thumb {
   justify-content: center;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  /* Pull each face out so they don't z-fight, and so the "edge" looks
+     subtly thicker thanks to box-shadow at non-zero z. */
 }
-.token-coin-front  { transform: translateZ(2px); }
-.token-coin-back   { transform: rotateX(180deg) translateZ(2px); }
+.token-coin-front  { transform: translateZ(4px); }
+.token-coin-back   { transform: rotateX(180deg) translateZ(4px); }
 .token-coin-icon {
-  font-size: 76px;
+  font-size: 80px;
   line-height: 1;
-  filter: drop-shadow(0 3px 4px rgba(0,0,0,0.45));
+  filter:
+    drop-shadow(0 1px 0 rgba(255,255,255,0.4))
+    drop-shadow(0 3px 5px rgba(0,0,0,0.55));
 }
 .token-coin-back-mark {
-  font-size: 56px;
+  font-size: 64px;
   line-height: 1;
+  font-family: var(--font-display);
   color: rgba(255,255,255,0.55);
-  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35));
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+}
+/* Soft floor shadow that grows with the coin's approach — sells the
+   "moving toward the camera" cue. Lives in the stage as a sibling so
+   it isn't affected by the coin's preserve-3d transforms. */
+.token-coin-ground-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: -28px;
+  transform: translateX(-50%);
+  width: 70%;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0) 70%);
+  filter: blur(2px);
+  animation: coinShadow 1100ms cubic-bezier(0.33, 0.0, 0.4, 1) forwards;
 }
 
 @keyframes coinFlip {
-  /* Spin on X (end-over-end) along a parabolic vertical arc. translateY
-     uses an ease-out-like curve: launches high, slows at apex, accelerates
-     down. rotateX accumulates 1080° (3 full flips) and lands on the front
-     face. scale peaks slightly at apex to suggest depth. */
-  0%   { transform: translateY(-260px) rotateX(0deg)    scale(0.55); opacity: 0; }
-  12%  { opacity: 1; }
-  45%  { transform: translateY(-220px) rotateX(540deg)  scale(1.04); }
-  70%  { transform: translateY(-90px)  rotateX(810deg)  scale(1.02); }
-  100% { transform: translateY(0)      rotateX(1080deg) scale(1);    opacity: 1; }
+  /* Coin starts ~1100px behind the screen plane (looks small via
+     perspective), arcs forward and upward, then drops back into the
+     viewer's space (positive Z). Final translateZ(160px) lands the coin
+     visibly in front of where the surface "is" — that's the
+     coming-out-of-the-screen punch. */
+  0%   {
+    transform: translate3d(0, -80px, -1100px) rotateX(0deg)    rotateZ(-10deg);
+    opacity: 0;
+  }
+  10%  { opacity: 1; }
+  45%  {
+    transform: translate3d(0, -110px, -300px) rotateX(540deg)  rotateZ(-4deg);
+  }
+  78%  {
+    transform: translate3d(0, -10px,   100px) rotateX(900deg)  rotateZ(-1deg);
+  }
+  100% {
+    transform: translate3d(0,  0,      160px) rotateX(1080deg) rotateZ(0deg);
+    opacity: 1;
+  }
 }
 @keyframes coinSettle {
-  /* Tiny squash-and-bounce on landing. Front is up (rotateX 0 ≡ 1080°). */
-  0%   { transform: translateY(0)    scaleY(1)    scaleX(1); }
-  35%  { transform: translateY(2px)  scaleY(0.92) scaleX(1.05); }
-  70%  { transform: translateY(-2px) scaleY(1.03) scaleX(0.98); }
-  100% { transform: translateY(0)    scaleY(1)    scaleX(1); }
+  /* The coin is sitting ~160px in front of the screen plane. Light
+     squash-and-bounce on landing, then a slow drift back to ~120px so it
+     doesn't feel locked. */
+  0%   { transform: translateZ(160px) scale(1); }
+  35%  { transform: translateZ(165px) scaleY(0.94) scaleX(1.04); }
+  70%  { transform: translateZ(135px) scaleY(1.02) scaleX(0.99); }
+  100% { transform: translateZ(120px) scale(1); }
+}
+@keyframes coinShadow {
+  /* Tiny far-away shadow, grows and darkens as the coin approaches. */
+  0%   { opacity: 0;    transform: translateX(-50%) scale(0.25); }
+  12%  { opacity: 0.35; transform: translateX(-50%) scale(0.4);  }
+  78%  { opacity: 0.75; transform: translateX(-50%) scale(1.05); }
+  100% { opacity: 0.9;  transform: translateX(-50%) scale(1);    }
 }
 @keyframes coverReveal {
   /* Starts where the coin was, scales up to fill the stage. No title/artist
