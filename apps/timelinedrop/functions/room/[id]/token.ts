@@ -19,6 +19,7 @@ interface UseBody {
 
 const ALLOWED_TYPES = new Set([
   "cover_reveal",
+  "cover_reveal_before",
   "more_or_less",
   "recovery_arm",
   "year_span_5",
@@ -30,11 +31,12 @@ const ALLOWED_TYPES = new Set([
 // reflects the same shape but only what the server needs.
 type TokenCategory = "during_listen" | "before_song" | "before_pass" | "opponent_turn" | "anytime";
 const CATEGORY_BY_TYPE: Record<string, TokenCategory> = {
-  cover_reveal: "during_listen",
-  more_or_less: "during_listen",
-  year_span_5:  "during_listen",
-  recovery_arm: "before_pass",
-  force_lock:   "opponent_turn",
+  cover_reveal:        "during_listen",
+  cover_reveal_before: "before_song",
+  more_or_less:        "during_listen",
+  year_span_5:         "during_listen",
+  recovery_arm:        "before_pass",
+  force_lock:          "opponent_turn",
 };
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -94,6 +96,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (category === "opponent_turn" && usingTeamId === activeTeam.id) {
       return json({ error: "This token can only be played while the other team is on the spot" }, 403, req);
     }
+    if (category === "before_song") {
+      // Active team only, and only before the song starts playing — once
+      // audio rolls the captain can use the regular cover_reveal instead.
+      if (usingTeamId !== activeTeam.id) {
+        return json({ error: "Only the active team's captain can play this" }, 403, req);
+      }
+      if (room.playing_since !== null) {
+        return json({ error: "Too late — use Cover Reveal instead once the song is playing" }, 409, req);
+      }
+    }
 
     // One-token-per-song rule is PER TEAM. Active team can spend on their
     // own turn and the opposing team can still spend a Force Lock or
@@ -106,11 +118,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     // (recovery_arm uses a recovery token; the actual save fires when a wrong
     // placement settles — handled in round.ts.)
     const tokenType =
-      type === "recovery_arm" ? "recovery" :
-      type === "cover_reveal" ? "cover_reveal" :
-      type === "more_or_less" ? "more_or_less" :
-      type === "year_span_5"  ? "year_span_5" :
-      type === "force_lock"   ? "force_lock"  :
+      type === "recovery_arm"        ? "recovery" :
+      type === "cover_reveal"        ? "cover_reveal" :
+      type === "cover_reveal_before" ? "cover_reveal_before" :
+      type === "more_or_less"        ? "more_or_less" :
+      type === "year_span_5"         ? "year_span_5" :
+      type === "force_lock"          ? "force_lock"  :
       type;
 
     // Find + mark used. usingTeamId — NOT necessarily activeTeam — owns the
@@ -119,7 +132,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!burned) return json({ error: `No ${tokenType} token available` }, 400, req);
 
     // Apply the effect.
-    if (type === "cover_reveal") {
+    if (type === "cover_reveal" || type === "cover_reveal_before") {
+      // Same in-game effect (round.cover_revealed = true). The category
+      // difference is timing: cover_reveal_before is available only before
+      // the audio rolls; once the song is playing, cover_reveal is the
+      // available variant. Effect-wise they're identical.
       await updateRound(env, round.id, { cover_revealed: true });
     } else if (type === "more_or_less") {
       const cardId = typeof payload?.card_id === "string" ? payload.card_id : null;

@@ -2561,6 +2561,7 @@ export default function GamePage() {
             tokens={(state.tokens?.[trayTeamId] ?? []).filter(t => !t.pending)}
             phase={phase}
             forceLocked={!!round?.force_locked}
+            songNotStarted={room.playing_since === null}
             onClose={() => setTokenTrayOpen(false)}
             onUse={(t) => useTypedToken(t.type as TokenType)}
           />
@@ -2716,13 +2717,14 @@ export default function GamePage() {
 // forceLocked is hint from the current round so we can disable duplicate
 // Force Lock attempts (only opponent_turn token in Tier 1).
 function TokenTray({
-  tokens, onClose, onUse, phase, forceLocked,
+  tokens, onClose, onUse, phase, forceLocked, songNotStarted,
 }: {
-  tokens:      TlTeamToken[];
-  onClose:     () => void;
-  onUse:       (token: TlTeamToken) => void;
-  phase:       "active" | "opponent";
-  forceLocked: boolean;
+  tokens:         TlTeamToken[];
+  onClose:        () => void;
+  onUse:          (token: TlTeamToken) => void;
+  phase:          "active" | "opponent";
+  forceLocked:    boolean;
+  songNotStarted: boolean;  // gates before_song tokens — once audio rolls they're locked out
 }) {
   // Group by category for a clearer layout.
   const groups: Record<string, TlTeamToken[]> = {};
@@ -2776,18 +2778,20 @@ function TokenTray({
                     if (!spec) return null;
                     // Phase gate: during_listen + before_pass only enabled
                     // when MY team is the active one; opponent_turn only when
-                    // we're off-spot; anytime always; before_song neither yet.
+                    // we're off-spot; anytime always; before_song requires
+                    // active team AND the song hasn't started yet.
                     const phaseOk =
                       spec.category === "anytime"      ? true :
                       spec.category === "during_listen" || spec.category === "before_pass" ? phase === "active" :
                       spec.category === "opponent_turn" ? phase === "opponent" :
+                      spec.category === "before_song"   ? phase === "active" && songNotStarted :
                       false;
                     // Force Lock is the only opponent_turn token; once
                     // round.force_locked is set, no team can play another.
                     const alreadyForceLocked = spec.type === "force_lock" && forceLocked;
                     const canUse = spec.implemented && phaseOk && !alreadyForceLocked;
                     const reason = !spec.implemented      ? "soon" :
-                                   !phaseOk               ? "wrong phase" :
+                                   !phaseOk               ? (spec.category === "before_song" ? "too late" : "wrong phase") :
                                    alreadyForceLocked     ? "used"  :
                                    null;
                     return (

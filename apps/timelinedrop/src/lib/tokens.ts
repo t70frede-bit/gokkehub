@@ -58,9 +58,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "before_song",
     name: "Cover Reveal (before)",
     short: "Cover",
-    description: "See the cover art of the next song before deciding whether to play it.",
+    description: "See the cover art of the next song before pressing play.",
     icon: "🖼️",
-    implemented: false,
+    implemented: true,
   },
   genre_picker: {
     type: "genre_picker",
