@@ -481,6 +481,12 @@ async function handleTurnAction(req: Request, roomId: string, env: Env, waitUnti
   activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam, roomId) ?? activeTeam;
 
   if (action === "next") {
+    // Force Lock — opponent played the token, active team can't continue.
+    // Their turn ends after the current song via the "stop" path (pending
+    // cards lock, advanceTurn fires).
+    if (currentRound?.force_locked) {
+      return json({ error: "Your turn was locked by the opposing team" }, 403, req);
+    }
     const nextTrack = room.track_pool[room.track_cursor];
     if (!nextTrack) return json({ error: "No more tracks" }, 400, req);
 

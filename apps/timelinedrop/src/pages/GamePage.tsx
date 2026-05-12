@@ -1216,19 +1216,39 @@ function RevealOverlay({
               {pendingCount} pending card{pendingCount !== 1 ? "s" : ""} this turn
               {!finalized && <span className="text-xs opacity-60"> · Judging not finalized — no token bonus</span>}
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button onClick={onStop} variant="ghost" size="sm" className="flex-col gap-0.5 py-3">
-                <span className="text-lg">🛑</span>
-                <span className="text-xs">Stop & lock</span>
-              </Button>
-              <Button onClick={onNext} size="sm" className="flex-col gap-0.5 py-3">
-                <span className="text-lg">▶</span>
-                <span className="text-xs">Next song</span>
-              </Button>
-            </div>
-            <p className="text-xs opacity-40 text-center">
-              Next: risk losing all {pendingCount} card{pendingCount !== 1 ? "s" : ""} if you place wrong
-            </p>
+            {round.force_locked ? (
+              <>
+                <div
+                  className="rounded-md px-3 py-2 text-sm text-center font-bold"
+                  style={{
+                    background: "rgba(var(--color-danger-rgb, 220,60,60), 0.18)",
+                    border:     "1px solid rgba(var(--color-danger-rgb, 220,60,60), 0.6)",
+                    color:      "rgb(var(--color-danger-rgb, 220,60,60))",
+                  }}
+                >
+                  🔒 Force Locked — turn ends now
+                </div>
+                <Button onClick={onStop} className="w-full">
+                  Lock pending & pass turn
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button onClick={onStop} variant="ghost" size="sm" className="flex-col gap-0.5 py-3">
+                    <span className="text-lg">🛑</span>
+                    <span className="text-xs">Stop & lock</span>
+                  </Button>
+                  <Button onClick={onNext} size="sm" className="flex-col gap-0.5 py-3">
+                    <span className="text-lg">▶</span>
+                    <span className="text-xs">Next song</span>
+                  </Button>
+                </div>
+                <p className="text-xs opacity-40 text-center">
+                  Next: risk losing all {pendingCount} card{pendingCount !== 1 ? "s" : ""} if you place wrong
+                </p>
+              </>
+            )}
           </div>
         )}
         {!isCaptain && (
@@ -1519,6 +1539,10 @@ export default function GamePage() {
 
   // Token tray: open the menu of the captain's available tokens.
   const [tokenTrayOpen, setTokenTrayOpen] = useState(false);
+  // Which team's tray is open. Active team's captain opens for during_listen
+  // tokens; non-active team's captain opens for opponent_turn tokens (Force
+  // Lock). The tray gates token buttons by category vs current phase.
+  const [tokenTrayTeamId, setTokenTrayTeamId] = useState<number | null>(null);
   // More-or-less is interactive — once armed, the captain has to pick a card.
   const [moreOrLessArmed, setMoreOrLessArmed] = useState(false);
   // Cover-reveal floating thumbnail: click to enlarge.
@@ -2189,7 +2213,7 @@ export default function GamePage() {
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
-                    onClick={isMyTeam && iAmCaptain && isMyTurn && !tokenUsedThisRound ? () => setTokenTrayOpen(true) : undefined}
+                    onClick={isMyTeam && iAmCaptain && isMyTurn && !tokenUsedThisRound ? () => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); } : undefined}
                   />
                 </div>
               </div>
@@ -2300,12 +2324,15 @@ export default function GamePage() {
                   />
                 </div>
 
-                {/* Right: tokens */}
+                {/* Right: tokens. Captain of THIS team (when it's not active)
+                    can click to open the tray for opponent-turn tokens like
+                    Force Lock. The tray filters by category vs phase. */}
                 <div className="flex-1 flex items-center justify-end min-w-0">
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
                     compact
+                    onClick={isMyTeam && iAmCaptain && !!round && !round.force_locked ? () => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); } : undefined}
                   />
                 </div>
               </div>
@@ -2415,7 +2442,7 @@ export default function GamePage() {
                     if (ready.length === 0) return null;
                     return (
                       <Button
-                        onClick={() => setTokenTrayOpen(true)}
+                        onClick={() => { if (activeTeam) setTokenTrayTeamId(activeTeam.id); setTokenTrayOpen(true); }}
                         variant="ghost"
                         size="sm"
                         className="flex-shrink-0"
@@ -2525,13 +2552,20 @@ export default function GamePage() {
       {!isDJ && <audio ref={listenAudio.audioRef} style={{ display: "none" }} />}
 
       {/* ── Token tray ─────────────────────────────────────────────────── */}
-      {tokenTrayOpen && activeTeam && (
-        <TokenTray
-          tokens={(state.tokens?.[activeTeam.id] ?? []).filter(t => !t.pending)}
-          onClose={() => setTokenTrayOpen(false)}
-          onUse={(t) => useTypedToken(t.type as TokenType)}
-        />
-      )}
+      {tokenTrayOpen && tokenTrayTeamId !== null && (() => {
+        const trayTeamId = tokenTrayTeamId;
+        const phase: "active" | "opponent" =
+          trayTeamId === room.active_team_id ? "active" : "opponent";
+        return (
+          <TokenTray
+            tokens={(state.tokens?.[trayTeamId] ?? []).filter(t => !t.pending)}
+            phase={phase}
+            forceLocked={!!round?.force_locked}
+            onClose={() => setTokenTrayOpen(false)}
+            onUse={(t) => useTypedToken(t.type as TokenType)}
+          />
+        );
+      })()}
 
       {/* ── Cover Reveal floating thumbnail (bottom-left) ───────────────── */}
       {/* Visible to every active-team member (the audio bar is captain-only,
@@ -2677,12 +2711,18 @@ export default function GamePage() {
 }
 
 // ── Token tray modal ──────────────────────────────────────────────────────
+// phase = "active" when MY team is on the spot (during_listen tokens enabled)
+//       = "opponent" when MY team is OFF the spot (opponent_turn enabled)
+// forceLocked is hint from the current round so we can disable duplicate
+// Force Lock attempts (only opponent_turn token in Tier 1).
 function TokenTray({
-  tokens, onClose, onUse,
+  tokens, onClose, onUse, phase, forceLocked,
 }: {
-  tokens: TlTeamToken[];
-  onClose: () => void;
-  onUse:   (token: TlTeamToken) => void;
+  tokens:      TlTeamToken[];
+  onClose:     () => void;
+  onUse:       (token: TlTeamToken) => void;
+  phase:       "active" | "opponent";
+  forceLocked: boolean;
 }) {
   // Group by category for a clearer layout.
   const groups: Record<string, TlTeamToken[]> = {};
@@ -2734,26 +2774,43 @@ function TokenTray({
                   {list.map(t => {
                     const spec = TOKEN_CATALOG[t.type as TokenType];
                     if (!spec) return null;
+                    // Phase gate: during_listen + before_pass only enabled
+                    // when MY team is the active one; opponent_turn only when
+                    // we're off-spot; anytime always; before_song neither yet.
+                    const phaseOk =
+                      spec.category === "anytime"      ? true :
+                      spec.category === "during_listen" || spec.category === "before_pass" ? phase === "active" :
+                      spec.category === "opponent_turn" ? phase === "opponent" :
+                      false;
+                    // Force Lock is the only opponent_turn token; once
+                    // round.force_locked is set, no team can play another.
+                    const alreadyForceLocked = spec.type === "force_lock" && forceLocked;
+                    const canUse = spec.implemented && phaseOk && !alreadyForceLocked;
+                    const reason = !spec.implemented      ? "soon" :
+                                   !phaseOk               ? "wrong phase" :
+                                   alreadyForceLocked     ? "used"  :
+                                   null;
                     return (
                       <button
                         key={t.id}
-                        onClick={() => spec.implemented && onUse(t)}
-                        disabled={!spec.implemented}
+                        onClick={() => canUse && onUse(t)}
+                        disabled={!canUse}
                         className="text-left rounded-md p-3 transition-all disabled:cursor-not-allowed"
+                        title={reason === "wrong phase" ? "Only playable in a different turn phase" : undefined}
                         style={{
-                          background: spec.implemented ? "rgb(var(--surface-raised-rgb))" : "transparent",
-                          border:     `1px solid rgba(var(--color-primary-rgb), ${spec.implemented ? 0.4 : 0.15})`,
-                          opacity:    spec.implemented ? 1 : 0.55,
+                          background: canUse ? "rgb(var(--surface-raised-rgb))" : "transparent",
+                          border:     `1px solid rgba(var(--color-primary-rgb), ${canUse ? 0.4 : 0.15})`,
+                          opacity:    canUse ? 1 : 0.55,
                         }}
                       >
                         <p className="font-bold flex items-center gap-2" style={{ fontSize: "var(--text-base)" }}>
                           <span>{spec.icon}</span> {spec.name}
-                          {!spec.implemented && (
+                          {reason && (
                             <span
                               className="ml-auto text-[10px] uppercase tracking-wider"
                               style={{ color: "rgb(var(--text-muted-rgb))" }}
                             >
-                              soon
+                              {reason}
                             </span>
                           )}
                         </p>

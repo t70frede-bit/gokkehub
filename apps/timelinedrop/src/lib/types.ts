@@ -124,12 +124,16 @@ export interface TlRound {
   staged_left_year:    number | null;
   staged_right_year:   number | null;
   outcome:             "correct" | "incorrect" | null;
-  // Token-state flags (migration 009)
+  // Token-state flags (migration 009 + 012)
   skipped:             boolean;
   cover_revealed:      boolean;
   year_tolerance:      number;
   more_or_less_card_id: string | null;
   recovery_armed:      boolean;
+  /** Force Lock — when true the active team can't trigger "next" after a
+   *  correct placement; their turn ends after this song. Set by an opposing
+   *  captain spending a force_lock token. */
+  force_locked:        boolean;
   artist_guess:        string | null;
   songname_guess:      string | null;
   artist_correct:      boolean | null;

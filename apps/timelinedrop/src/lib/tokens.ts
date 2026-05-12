@@ -183,7 +183,7 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     short: "Lock",
     description: "Lock all of the opponent's pending cards. Their turn ends after this song.",
     icon: "🔒",
-    implemented: false,
+    implemented: true,
   },
   song_limiter: {
     type: "song_limiter",

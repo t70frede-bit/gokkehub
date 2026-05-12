@@ -22,7 +22,20 @@ const ALLOWED_TYPES = new Set([
   "more_or_less",
   "recovery_arm",
   "year_span_5",
+  "force_lock",
 ]);
+
+// Phase category per token type — drives auth (who can play it). Kept local
+// to the server because src/lib/tokens.ts imports from React; this map
+// reflects the same shape but only what the server needs.
+type TokenCategory = "during_listen" | "before_song" | "before_pass" | "opponent_turn" | "anytime";
+const CATEGORY_BY_TYPE: Record<string, TokenCategory> = {
+  cover_reveal: "during_listen",
+  more_or_less: "during_listen",
+  year_span_5:  "during_listen",
+  recovery_arm: "before_pass",
+  force_lock:   "opponent_turn",
+};
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -49,23 +62,42 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const activeTeam = teams.find(t => t.id === room.active_team_id);
     if (!activeTeam) return json({ error: "No active team" }, 400, req);
 
-    const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
-    const isCaptain = !!captain && captain.id === player_id;
+    // Resolve the using team. Opponent-turn tokens (Force Lock) come from a
+    // non-active team's captain; during_listen tokens from the active team's
+    // captain. Host bypass under single-screen mode routes to the right
+    // team based on the token's category.
+    const category = CATEGORY_BY_TYPE[type] ?? "anytime";
+    const requester = players.find(p => p.id === player_id);
     const isHostBypass = !!room.settings?.singleScreenMode && room.host_id === player_id;
-    if (!isCaptain && !isHostBypass) {
-      return json({ error: "Only the captain can use a token" }, 403, req);
+
+    let usingTeamId: number | null = null;
+    if (isHostBypass) {
+      if (category === "opponent_turn") {
+        // Route to a non-active team (2-team rooms unambiguous; 3+ teams
+        // currently picks the first non-active team).
+        const other = teams.find(t => t.id !== activeTeam.id);
+        usingTeamId = other?.id ?? null;
+      } else {
+        usingTeamId = activeTeam.id;
+      }
+    } else if (requester && requester.is_captain && requester.team_id !== null) {
+      usingTeamId = requester.team_id;
+    }
+    if (usingTeamId === null) {
+      return json({ error: "Only a team captain can use a token" }, 403, req);
     }
 
-    // One-token-per-song rule is PER TEAM, not global — each team gets one
-    // token use per round, so the active team can spend on their own turn
-    // and the opposing team can still spend an opponent-turn token (e.g.
-    // Force Lock). Resolve the using team from the requester rather than
-    // assuming activeTeam; future opponent-turn tokens will route through
-    // the same code path with a non-active team_id.
-    const requester = players.find(p => p.id === player_id);
-    const usingTeamId =
-      isHostBypass ? activeTeam.id :
-      requester?.team_id ?? activeTeam.id;
+    // Phase validation: token category must match the current turn phase.
+    if ((category === "during_listen" || category === "before_pass") && usingTeamId !== activeTeam.id) {
+      return json({ error: "This token can only be played during your team's turn" }, 403, req);
+    }
+    if (category === "opponent_turn" && usingTeamId === activeTeam.id) {
+      return json({ error: "This token can only be played while the other team is on the spot" }, 403, req);
+    }
+
+    // One-token-per-song rule is PER TEAM. Active team can spend on their
+    // own turn and the opposing team can still spend a Force Lock or
+    // similar opponent-turn token on the same round.
     if (await teamAlreadyUsedTokenThisRound(env, round.id, usingTeamId)) {
       return json({ error: "Your team already used a token this song" }, 409, req);
     }
@@ -78,10 +110,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       type === "cover_reveal" ? "cover_reveal" :
       type === "more_or_less" ? "more_or_less" :
       type === "year_span_5"  ? "year_span_5" :
+      type === "force_lock"   ? "force_lock"  :
       type;
 
-    // Find + mark used.
-    const burned = await findAndUseToken(env, activeTeam.id, tokenType, round.id);
+    // Find + mark used. usingTeamId — NOT necessarily activeTeam — owns the
+    // token being burned. Critical for opponent-turn tokens like Force Lock.
+    const burned = await findAndUseToken(env, usingTeamId, tokenType, round.id);
     if (!burned) return json({ error: `No ${tokenType} token available` }, 400, req);
 
     // Apply the effect.
@@ -97,6 +131,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // Widens the captain's placement window by ±5 years. handlePlace reads
       // round.year_tolerance when validating correctness.
       await updateRound(env, round.id, { year_tolerance: 5 });
+    } else if (type === "force_lock") {
+      // Active team's turn ends after this song regardless of outcome.
+      // handleTurnAction rejects action="next" while this flag is set.
+      await updateRound(env, round.id, { force_locked: true });
     }
 
     return json({ ok: true, token_id: burned }, 200, req);
