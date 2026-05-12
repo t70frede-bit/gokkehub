@@ -131,7 +131,14 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
             }
             return {
               ...s,
-              room: newRoom,
+              // MERGE rather than replace. Supabase realtime CAN ship rows
+              // where some columns (notably JSONB ones like track_pool) are
+              // missing from payload.new under certain replica-identity or
+              // partial-update configurations. Replacing wholesale would set
+              // room.track_pool to undefined and crash any render that reads
+              // .length on it. Spreading the previous room first preserves
+              // every known column.
+              room: { ...s.room, ...newRoom },
               // Clear the stale round so the resolved reveal overlay dismounts
               // immediately. Will be repopulated by the refetch above (or by
               // the tl_rounds INSERT event if it arrives first).
