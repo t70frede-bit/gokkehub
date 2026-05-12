@@ -105,9 +105,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "during_listen",
     name: "+/- 5 Years",
     short: "± 5",
-    description: "Instead of placing between two cards, drop the song into a ±5 year window of one card.",
+    description: "Widens your placement window by 5 years on each side. Place between cards and you're correct if the actual year is within ±5 of either edge.",
     icon: "📐",
-    implemented: false,
+    implemented: true,
   },
   cover_reveal: {
     type: "cover_reveal",

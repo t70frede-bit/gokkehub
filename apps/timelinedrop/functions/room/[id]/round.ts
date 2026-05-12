@@ -134,9 +134,12 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
 
   // Use host-approved corrected year when present (overrides Spotify default).
   const actualYear = round.corrected_year ?? round.track.releaseYear;
+  // year_tolerance widens both edges of the placement window. ±5 Years token
+  // sets this to 5; default is 0.
+  const tolerance = round.year_tolerance ?? 0;
   const correct =
-    (left_year === null || left_year <= actualYear) &&
-    (right_year === null || actualYear <= right_year);
+    (left_year === null  || (left_year - tolerance) <= actualYear) &&
+    (right_year === null || actualYear <= (right_year + tolerance));
 
   const outcome = correct ? "correct" : "incorrect";
   const update: Partial<TlRound> = {
@@ -372,9 +375,10 @@ async function handleUseToken(req: Request, roomId: string, env: Env, waitUntil?
     return json({ error: "Only the captain can use a token" }, 403, req);
   }
 
-  // One-token-per-song rule — check tl_team_tokens for any already burned
-  // against this round. Mirrors the same guard in token.ts.
-  const usedUrl = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${round.id}&select=id&limit=1`;
+  // One-token-per-song rule — PER TEAM, not global (so opponents using an
+  // opponent-turn token doesn't block the active team's Song Skipper).
+  // Song Skipper is by definition the active team, so we filter on activeTeam.id.
+  const usedUrl = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${round.id}&team_id=eq.${activeTeam.id}&select=id&limit=1`;
   const usedRes = await fetch(usedUrl, {
     headers: {
       apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
@@ -384,7 +388,7 @@ async function handleUseToken(req: Request, roomId: string, env: Env, waitUntil?
   if (usedRes.ok) {
     const usedRows = await usedRes.json() as Array<{ id: number }>;
     if (usedRows.length > 0) {
-      return json({ error: "Only one token may be used per song" }, 409, req);
+      return json({ error: "Your team already used a token this song" }, 409, req);
     }
   }
 

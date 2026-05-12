@@ -1699,14 +1699,18 @@ export default function GamePage() {
 
   const { room, teams, round, timelines, notes, pings, myPlayer } = state;
   const activeTeam = teams.find(t => t.id === room.active_team_id);
-  // One-token-per-song rule (server-enforced in token.ts + round.ts). The UI
-  // disables the token tray once any of these flags is set so the captain
-  // doesn't try a second token and hit a 409.
+  // One-token-per-song rule (server-enforced in token.ts + round.ts). The
+  // UI disables the active team's token tray once any flag on the current
+  // round indicates the team has burned a token. The rule is per-TEAM on
+  // the server, but until opponent-turn tokens land we only need to gate
+  // the active team's tray; all the flags below are set by active-team
+  // tokens so the check stays correct.
   const tokenUsedThisRound = !!round && (
     round.skipped ||
     round.cover_revealed ||
     !!round.more_or_less_card_id ||
-    round.recovery_armed
+    round.recovery_armed ||
+    (round.year_tolerance ?? 0) > 0
   );
   // Pings persist on the timeline until dismissed (right-click / × button).
   // Players can dismiss their own; captain & host can dismiss any.
@@ -2143,6 +2147,23 @@ export default function GamePage() {
                     Clickable — opens the same enlarge modal as the bottom-
                     left floating thumbnail. */}
                 <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
+                  {/* ±N years active — surfaces the year_span_5 token effect
+                      so the captain knows the placement window is widened. */}
+                  {isActive && round && (round.year_tolerance ?? 0) > 0 && (
+                    <span
+                      className="font-extrabold flex-shrink-0 px-2 py-1 rounded-md uppercase tracking-wider"
+                      title={`Placement allows ±${round.year_tolerance} years either side`}
+                      style={{
+                        fontSize:   "var(--text-xs)",
+                        fontFamily: "var(--font-mono)",
+                        background: `rgba(var(--team-${color}-rgb), 0.18)`,
+                        border:     `1px solid rgba(var(--team-${color}-rgb), 0.6)`,
+                        color:      `rgb(var(--team-${color}-rgb))`,
+                      }}
+                    >
+                      ± {round.year_tolerance}y
+                    </span>
+                  )}
                   {isActive && round && round.cover_revealed && round.track.coverUrl && (
                     <button
                       type="button"

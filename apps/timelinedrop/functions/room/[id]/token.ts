@@ -21,6 +21,7 @@ const ALLOWED_TYPES = new Set([
   "cover_reveal",
   "more_or_less",
   "recovery_arm",
+  "year_span_5",
 ]);
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -55,10 +56,18 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       return json({ error: "Only the captain can use a token" }, 403, req);
     }
 
-    // One-token-per-song rule: reject if any token has already been burned
-    // against this round id, regardless of type.
-    if (await tokenAlreadyUsedThisRound(env, round.id)) {
-      return json({ error: "Only one token may be used per song" }, 409, req);
+    // One-token-per-song rule is PER TEAM, not global — each team gets one
+    // token use per round, so the active team can spend on their own turn
+    // and the opposing team can still spend an opponent-turn token (e.g.
+    // Force Lock). Resolve the using team from the requester rather than
+    // assuming activeTeam; future opponent-turn tokens will route through
+    // the same code path with a non-active team_id.
+    const requester = players.find(p => p.id === player_id);
+    const usingTeamId =
+      isHostBypass ? activeTeam.id :
+      requester?.team_id ?? activeTeam.id;
+    if (await teamAlreadyUsedTokenThisRound(env, round.id, usingTeamId)) {
+      return json({ error: "Your team already used a token this song" }, 409, req);
     }
 
     // Map UI type → token type stored in tl_team_tokens.
@@ -68,6 +77,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       type === "recovery_arm" ? "recovery" :
       type === "cover_reveal" ? "cover_reveal" :
       type === "more_or_less" ? "more_or_less" :
+      type === "year_span_5"  ? "year_span_5" :
       type;
 
     // Find + mark used.
@@ -83,6 +93,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       await updateRound(env, round.id, { more_or_less_card_id: cardId });
     } else if (type === "recovery_arm") {
       await updateRound(env, round.id, { recovery_armed: true });
+    } else if (type === "year_span_5") {
+      // Widens the captain's placement window by ±5 years. handlePlace reads
+      // round.year_tolerance when validating correctness.
+      await updateRound(env, round.id, { year_tolerance: 5 });
     }
 
     return json({ ok: true, token_id: burned }, 200, req);
@@ -91,8 +105,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   }
 };
 
-async function tokenAlreadyUsedThisRound(env: Env, roundId: number): Promise<boolean> {
-  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${roundId}&select=id&limit=1`;
+async function teamAlreadyUsedTokenThisRound(env: Env, roundId: number, teamId: number): Promise<boolean> {
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?used_round=eq.${roundId}&team_id=eq.${teamId}&select=id&limit=1`;
   const res = await fetch(url, {
     headers: {
       apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
