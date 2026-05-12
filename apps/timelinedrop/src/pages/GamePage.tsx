@@ -2139,21 +2139,31 @@ export default function GamePage() {
                   />
                 </div>
 
-                {/* Right: cover reveal thumbnail (when token used) + tokens */}
+                {/* Right: cover reveal thumbnail (when token used) + tokens.
+                    Clickable — opens the same enlarge modal as the bottom-
+                    left floating thumbnail. */}
                 <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
                   {isActive && round && round.cover_revealed && round.track.coverUrl && (
-                    <img
-                      src={round.track.coverUrl}
-                      alt="Album cover"
-                      draggable={false}
-                      className="rounded-md object-cover flex-shrink-0"
-                      title="Cover revealed by token"
+                    <button
+                      type="button"
+                      onClick={() => setCoverEnlarged(true)}
+                      className="rounded-md overflow-hidden flex-shrink-0 transition-transform active:scale-[0.94] cursor-zoom-in"
+                      title="Tap to enlarge the cover"
                       style={{
                         width:  40,
                         height: 40,
                         border: `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
+                        padding: 0,
+                        background: "transparent",
                       }}
-                    />
+                    >
+                      <img
+                        src={round.track.coverUrl}
+                        alt="Album cover"
+                        draggable={false}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
                   )}
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
@@ -2502,58 +2512,59 @@ export default function GamePage() {
         />
       )}
 
-      {/* ── Cover Reveal floating thumbnail (bottom-right) ──────────────── */}
+      {/* ── Cover Reveal floating thumbnail (bottom-left) ───────────────── */}
       {/* Visible to every active-team member (the audio bar is captain-only,
-          and the spotlight header thumbnail can scroll out of view). Click to
-          enlarge into a modal; click off / on it to dismiss. */}
+          and the spotlight header thumbnail can scroll out of view). */}
       {round && round.cover_revealed && round.track.coverUrl && isMyTurn && (
-        <>
-          <button
-            type="button"
-            onClick={() => setCoverEnlarged(true)}
-            className="fixed z-30 rounded-md overflow-hidden transition-all active:scale-[0.96]"
-            style={{
-              left:         16,
-              bottom:       16,
-              width:        56,
-              height:       56,
-              border:       "1px solid rgba(var(--color-primary-rgb), 0.55)",
-              boxShadow:    "0 6px 18px rgba(0,0,0,0.55)",
-              background:   "rgb(var(--surface-overlay-rgb))",
-              cursor:       "pointer",
-            }}
-            title="Tap to enlarge the cover"
-          >
-            <img
-              src={round.track.coverUrl}
-              alt="Album cover (tap to enlarge)"
-              draggable={false}
-              className="w-full h-full object-cover"
-            />
-          </button>
+        <button
+          type="button"
+          onClick={() => setCoverEnlarged(true)}
+          className="fixed z-30 rounded-md overflow-hidden transition-all active:scale-[0.96]"
+          style={{
+            left:         16,
+            bottom:       16,
+            width:        56,
+            height:       56,
+            border:       "1px solid rgba(var(--color-primary-rgb), 0.55)",
+            boxShadow:    "0 6px 18px rgba(0,0,0,0.55)",
+            background:   "rgb(var(--surface-overlay-rgb))",
+            cursor:       "pointer",
+          }}
+          title="Tap to enlarge the cover"
+        >
+          <img
+            src={round.track.coverUrl}
+            alt="Album cover (tap to enlarge)"
+            draggable={false}
+            className="w-full h-full object-cover"
+          />
+        </button>
+      )}
 
-          {coverEnlarged && (
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center p-6 cursor-zoom-out"
-              style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)" }}
-              onClick={() => setCoverEnlarged(false)}
-            >
-              <img
-                src={round.track.coverUrl}
-                alt="Album cover"
-                draggable={false}
-                onClick={() => setCoverEnlarged(false)}
-                style={{
-                  maxWidth:  "min(80vw, 80vh)",
-                  maxHeight: "min(80vw, 80vh)",
-                  borderRadius: 12,
-                  boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
-                  border:    "2px solid rgba(var(--color-primary-rgb), 0.6)",
-                }}
-              />
-            </div>
-          )}
-        </>
+      {/* Enlarge modal — renders for ANYONE who triggered coverEnlarged,
+          not just active-team members. The spotlight-header thumbnail is
+          visible to spectators and opponents too, and they should be able
+          to enlarge it the same way. */}
+      {coverEnlarged && round && round.cover_revealed && round.track.coverUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6 cursor-zoom-out"
+          style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)" }}
+          onClick={() => setCoverEnlarged(false)}
+        >
+          <img
+            src={round.track.coverUrl}
+            alt="Album cover"
+            draggable={false}
+            onClick={() => setCoverEnlarged(false)}
+            style={{
+              maxWidth:  "min(80vw, 80vh)",
+              maxHeight: "min(80vw, 80vh)",
+              borderRadius: 12,
+              boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
+              border:    "2px solid rgba(var(--color-primary-rgb), 0.6)",
+            }}
+          />
+        </div>
       )}
 
       {/* ── Before-or-After hint (after the captain picks a card) ──────── */}
