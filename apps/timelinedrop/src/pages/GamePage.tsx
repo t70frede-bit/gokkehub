@@ -300,11 +300,26 @@ function Timeline({
                 const cardPings = pings.filter(p => p.year === item.year);
                 const canCardPing = !!onPingYear && isActive && !isCaptain;
                 const lockedEntry = item.locked ? entries.find(e => e.track_id === item.track.id) : null;
-                const canCardSelect = !!onCardClick && !!lockedEntry;
+                // Allow card selection (Before/After token picker) on BOTH
+                // locked AND pending cards. Spec: any card on the captain's
+                // timeline except the one currently being placed (which
+                // isn't in entries or pending yet — it lives on round.track).
+                const canCardSelect = !!onCardClick;
                 const cardClickable = canCardSelect || canCardPing;
 
+                // Pending cards aren't in the tl_timeline table yet, so build
+                // a synthetic TlTimelineEntry for the onCardClick callback.
+                // Consumers only read track_id from the entry.
+                const syntheticEntry: TlTimelineEntry = lockedEntry ?? {
+                  team_id:        -1,
+                  track_id:       item.track.id,
+                  year:           item.year,
+                  position:       0,
+                  track:          item.track,
+                  corrected_year: null,
+                };
                 const handleCardClick = () => {
-                  if (canCardSelect && lockedEntry && onCardClick) { onCardClick(lockedEntry); return; }
+                  if (canCardSelect && onCardClick) { onCardClick(syntheticEntry); return; }
                   if (canCardPing && onPingYear) onPingYear(item.year);
                 };
 
@@ -2578,8 +2593,12 @@ export default function GamePage() {
         );
       })()}
 
-      {/* ── Spotify-style audio bar at the very bottom (captain only) ──────── */}
-      {iAmCaptain && (
+      {/* ── Spotify-style audio bar at the very bottom (HOST only) ─────────
+          The host is the one running Spotify; everybody else is hearing the
+          room audio via whatever the host plays. Non-host captains don't
+          need playback controls and the strip + its embedded cover are
+          irrelevant noise for them. */}
+      {isHost && (
         <AudioPlayerUI
           isDJ={isDJ}
           isMyTurn={isMyTurn}
@@ -2727,10 +2746,18 @@ export default function GamePage() {
 
       {/* ── Before-or-After hint (after the captain picks a card) ──────── */}
       {round && round.more_or_less_card_id && (() => {
-        const target = (timelines[activeTeam?.id ?? -1] ?? [])
+        // The picked card might be locked (in tl_timeline) OR pending
+        // (earned this turn, lives on the team row).
+        const lockedTarget = (timelines[activeTeam?.id ?? -1] ?? [])
           .find(e => e.track_id === round.more_or_less_card_id);
-        if (!target) return null;
-        const cardYear = target.corrected_year ?? target.year;
+        const pendingTarget = lockedTarget
+          ? null
+          : ((activeTeam?.pending_tracks ?? []) as SpotifyTrack[])
+              .find(p => p.id === round.more_or_less_card_id);
+        if (!lockedTarget && !pendingTarget) return null;
+        const cardYear = lockedTarget
+          ? (lockedTarget.corrected_year ?? lockedTarget.year)
+          : (pendingTarget as SpotifyTrack).releaseYear;
         const songYear = round.corrected_year ?? round.track.releaseYear;
         const verdict = songYear < cardYear ? "before" : "after";
         return (

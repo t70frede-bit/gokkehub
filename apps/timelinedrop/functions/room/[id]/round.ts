@@ -320,6 +320,42 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
     },
     body: JSON.stringify({ corrected_year: year, year }),
   });
+
+  // Re-evaluate placement against the corrected year. If a wrong placement
+  // now falls within the captain's window, flip outcome to "correct" and
+  // restore the track into the active team's pending pile. Only upgrades —
+  // we never demote a correct round (would punish accidental wins from a
+  // bad Spotify year that happened to land in the right slot).
+  if (round.outcome === "incorrect") {
+    const tolerance = round.year_tolerance ?? 0;
+    const nowCorrect =
+      (round.left_year  === null || (round.left_year  - tolerance) <= year) &&
+      (round.right_year === null || year <= (round.right_year + tolerance));
+    if (nowCorrect) {
+      await updateRound(env, round.id, { outcome: "correct" } as Partial<TlRound>);
+      // Restore the track to pending. Previous-round pending cards already
+      // lost from the wrong placement aren't recoverable (we don't track
+      // pre-placement state) — but the current track being placed is.
+      const teamRes = await fetch(
+        `${env.SUPABASE_URL}/rest/v1/tl_teams?id=eq.${round.team_id}&select=pending_tracks`,
+        {
+          headers: {
+            apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+        },
+      );
+      if (teamRes.ok) {
+        const rows = await teamRes.json() as Array<{ pending_tracks?: Array<{ id: string }> }>;
+        const current = rows[0]?.pending_tracks ?? [];
+        if (!current.some(t => t.id === round.track.id)) {
+          await updateTeam(env, round.team_id, {
+            pending_tracks: [...current, round.track] as never,
+          });
+        }
+      }
+    }
+  }
 }
 
 // ── Recovery pick (save one pending card after wrong placement) ─────────────
