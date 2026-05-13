@@ -1,0 +1,27 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- GokkeHub favicon — vinyl record, warm-charcoal + amber per the v0.2
+       "vinyl liner notes" design system. Single .svg works at every size
+       (16/32/180/etc) so we don't need a multi-resolution .ico pack. -->
+  <defs>
+    <radialGradient id="sheen" cx="32%" cy="28%" r="62%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="70%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Warm-charcoal rounded backplate so the icon reads against any tab
+       colour. Slightly lighter than the page bg so the disc edge separates. -->
+  <rect width="64" height="64" rx="12" fill="#221E1B"/>
+  <!-- Vinyl disc -->
+  <circle cx="32" cy="32" r="25" fill="#0E0B09"/>
+  <!-- Subtle top-left sheen for material feel -->
+  <circle cx="32" cy="32" r="25" fill="url(#sheen)"/>
+  <!-- Grooves — opacity stepped so each pass reads at 32px+ but they
+       collapse into a single dark disc at 16px (still legible). -->
+  <circle cx="32" cy="32" r="21" fill="none" stroke="#D4A04A" stroke-width="0.7" opacity="0.30"/>
+  <circle cx="32" cy="32" r="17" fill="none" stroke="#D4A04A" stroke-width="0.7" opacity="0.28"/>
+  <circle cx="32" cy="32" r="13" fill="none" stroke="#D4A04A" stroke-width="0.7" opacity="0.22"/>
+  <!-- Amber centre label — the brand mark at small sizes -->
+  <circle cx="32" cy="32" r="9.5" fill="#D4A04A"/>
+  <!-- Spindle hole punched through -->
+  <circle cx="32" cy="32" r="1.6" fill="#221E1B"/>
+</svg>
