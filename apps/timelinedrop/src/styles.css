@@ -306,24 +306,18 @@ input[type="range"].orange-range::-moz-range-thumb {
 }
 
 @keyframes coinFlip {
-  /* Coin starts ~1100px behind the screen plane (looks small via
-     perspective), arcs forward and upward, then drops back into the
-     viewer's space (positive Z). Final translateZ(160px) lands the coin
-     visibly in front of where the surface "is" — that's the
-     coming-out-of-the-screen punch. */
+  /* Coin spawns from nothing (scale 0) in the screen plane, grows and
+     spins as it travels forward into the viewer's space. No parabolic
+     arc — pure "emerges from the screen toward you" motion. Final
+     translateZ(160px) keeps the coin visibly in front of the surrounding
+     UI; 1080° of X-rotation lands the front face up. */
   0%   {
-    transform: translate3d(0, -80px, -1100px) rotateX(0deg)    rotateZ(-10deg);
+    transform: translateZ(0) rotateX(0deg) scale(0);
     opacity: 0;
   }
-  10%  { opacity: 1; }
-  45%  {
-    transform: translate3d(0, -110px, -300px) rotateX(540deg)  rotateZ(-4deg);
-  }
-  78%  {
-    transform: translate3d(0, -10px,   100px) rotateX(900deg)  rotateZ(-1deg);
-  }
+  15%  { opacity: 1; }
   100% {
-    transform: translate3d(0,  0,      160px) rotateX(1080deg) rotateZ(0deg);
+    transform: translateZ(160px) rotateX(1080deg) scale(1);
     opacity: 1;
   }
 }
