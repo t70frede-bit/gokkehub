@@ -25,6 +25,7 @@ const ALLOWED_TYPES = new Set([
   "year_span_5",
   "force_lock",
   "reference_point",
+  "card_remover",
 ]);
 
 // Phase category per token type — drives auth (who can play it). Kept local
@@ -39,6 +40,7 @@ const CATEGORY_BY_TYPE: Record<string, TokenCategory> = {
   recovery_arm:        "before_pass",
   force_lock:          "opponent_turn",
   reference_point:     "during_listen",
+  card_remover:        "during_listen",
 };
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -127,7 +129,36 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       type === "year_span_5"         ? "year_span_5" :
       type === "force_lock"          ? "force_lock"  :
       type === "reference_point"     ? "reference_point" :
+      type === "card_remover"        ? "card_remover" :
       type;
+
+    // Pre-burn payload validation for tokens that target opponent state —
+    // we don't want to consume the token on a bad request. card_remover
+    // requires the target team to actually own the named track.
+    let cardRemoverTarget: { team_id: number; track_id: string } | null = null;
+    if (type === "card_remover") {
+      const targetTeamId  = typeof payload?.target_team_id === "number" ? payload.target_team_id : null;
+      const targetTrackId = typeof payload?.track_id === "string"      ? payload.track_id      : null;
+      if (targetTeamId === null || !targetTrackId) {
+        return json({ error: "target_team_id and track_id required" }, 400, req);
+      }
+      if (targetTeamId === activeTeam.id) {
+        return json({ error: "Pick an opponent's card, not your own team's" }, 400, req);
+      }
+      const checkUrl = `${env.SUPABASE_URL}/rest/v1/tl_timeline?team_id=eq.${targetTeamId}&track_id=eq.${encodeURIComponent(targetTrackId)}&select=team_id&limit=1`;
+      const checkRes = await fetch(checkUrl, {
+        headers: {
+          apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      });
+      if (!checkRes.ok) return json({ error: "Failed to verify target card" }, 500, req);
+      const checkRows = await checkRes.json() as Array<{ team_id: number }>;
+      if (checkRows.length === 0) {
+        return json({ error: "That card isn't on the target team's timeline anymore" }, 404, req);
+      }
+      cardRemoverTarget = { team_id: targetTeamId, track_id: targetTrackId };
+    }
 
     // Find + mark used. usingTeamId — NOT necessarily activeTeam — owns the
     // token being burned. Critical for opponent-turn tokens like Force Lock.
@@ -155,6 +186,19 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // Active team's turn ends after this song regardless of outcome.
       // handleTurnAction rejects action="next" while this flag is set.
       await updateRound(env, round.id, { force_locked: true });
+    } else if (type === "card_remover" && cardRemoverTarget) {
+      // DELETE the targeted card from the opposing team's timeline. The
+      // target team's score (= timeline.length) drops by one — see roadmap
+      // decision on "keep the point" (we don't).
+      const delUrl = `${env.SUPABASE_URL}/rest/v1/tl_timeline?team_id=eq.${cardRemoverTarget.team_id}&track_id=eq.${encodeURIComponent(cardRemoverTarget.track_id)}`;
+      await fetch(delUrl, {
+        method: "DELETE",
+        headers: {
+          apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          Prefer:        "return=minimal",
+        },
+      });
     } else if (type === "reference_point") {
       // Scan the track_pool for a same-year reference (excluding the
       // current round's own track). Fall back to the nearest year if no

@@ -188,15 +188,21 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
             return { ...s, round: newRound };
           });
         })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "tl_timeline" },
+      // event "*" catches INSERT (new card locked) and DELETE (Card Remover
+      // token wiping a card from an opponent's timeline). Either way, reload
+      // the timelines for this room — INSERT payload.new has team_id; DELETE
+      // payload.old has only the PK (team_id, track_id) under REPLICA
+      // IDENTITY DEFAULT but the full reload handles both.
+      .on("postgres_changes", { event: "*", schema: "public", table: "tl_timeline" },
         (payload) => {
-          const inserted = payload.new as TlTimelineEntry;
           setState(s => {
             if (!s) return s;
             const teamIds = s.teams.map(t => t.id);
-            // Ignore inserts from other rooms
-            if (!teamIds.includes(inserted.team_id)) return s;
-            // Reload timelines for this room's teams only
+            // For INSERTs, scope-check the team_id; for DELETEs payload.new
+            // is undefined so we just unconditionally reload (still scoped
+            // to this room's teams in the query below).
+            const insertedTeam = (payload.new as TlTimelineEntry | undefined)?.team_id;
+            if (typeof insertedTeam === "number" && !teamIds.includes(insertedTeam)) return s;
             supabase.from("tl_timeline")
               .select("*")
               .in("team_id", teamIds)

@@ -96,9 +96,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "during_listen",
     name: "Card Remover",
     short: "Remove",
-    description: "Remove a card from your timeline but keep the point.",
+    description: "Pick a card on an opponent's timeline — it's wiped and their score drops with it.",
     icon: "🗑️",
-    implemented: false,
+    implemented: true,
   },
   year_span_5: {
     type: "year_span_5",

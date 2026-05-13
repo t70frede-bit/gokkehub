@@ -1589,6 +1589,9 @@ export default function GamePage() {
   const [tokenTrayTeamId, setTokenTrayTeamId] = useState<number | null>(null);
   // More-or-less is interactive — once armed, the captain has to pick a card.
   const [moreOrLessArmed, setMoreOrLessArmed] = useState(false);
+  // Card Remover arming — captain clicks the token, picks an opposing card
+  // in the picker modal, then the POST burns the token + deletes the card.
+  const [cardRemoverArmed, setCardRemoverArmed] = useState(false);
   // Cover-reveal floating thumbnail: click to enlarge.
   const [coverEnlarged, setCoverEnlarged] = useState(false);
 
@@ -1885,6 +1888,15 @@ export default function GamePage() {
         return;
       }
     }
+    if (type === "card_remover") {
+      // Two-phase like more_or_less. First click arms the picker modal;
+      // the modal POSTs once the captain picks an opponent card.
+      if (!payload?.target_team_id) {
+        setCardRemoverArmed(true);
+        setTokenTrayOpen(false);
+        return;
+      }
+    }
     const apiType =
       type === "cover_reveal" ? "cover_reveal" :
       type === "more_or_less" ? "more_or_less" :
@@ -1900,6 +1912,7 @@ export default function GamePage() {
     }
     setTokenTrayOpen(false);
     setMoreOrLessArmed(false);
+    setCardRemoverArmed(false);
   }
 
   async function finalizeJudgment() {
@@ -2760,6 +2773,95 @@ export default function GamePage() {
             Cancel
           </button>
         </div>
+      )}
+
+      {/* ── Card Remover picker ────────────────────────────────────────── */}
+      {cardRemoverArmed && (
+        <Modal open onClose={() => setCardRemoverArmed(false)} maxWidth="520px">
+          <h2
+            className="font-extrabold mb-1"
+            style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
+          >
+            🗑️ Pick an opponent's card to remove
+          </h2>
+          <p
+            className="mb-4"
+            style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
+          >
+            The card disappears from their timeline. Their score drops with it.
+          </p>
+          <div className="flex flex-col gap-4">
+            {teams
+              .filter(t => t.id !== room.active_team_id)
+              .map(t => {
+                const c = getTeamColor(t.sort_order);
+                const cards = timelines[t.id] ?? [];
+                return (
+                  <div key={t.id}>
+                    <p
+                      className="font-bold mb-2 flex items-center gap-2"
+                      style={{
+                        fontSize: "var(--text-sm)",
+                        color:    `rgb(var(--team-${c}-rgb))`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          display:      "inline-block",
+                          width:        10,
+                          height:       10,
+                          borderRadius: "50%",
+                          background:   `rgb(var(--team-${c}-rgb))`,
+                        }}
+                      />
+                      {t.name}
+                      <span className="ml-auto text-[10px] opacity-50 uppercase tracking-wider">
+                        {cards.length} card{cards.length !== 1 ? "s" : ""}
+                      </span>
+                    </p>
+                    {cards.length === 0 ? (
+                      <p className="text-xs opacity-40 italic">No cards yet — nothing to remove.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {cards.map(entry => (
+                          <button
+                            key={entry.track_id}
+                            onClick={() => useTypedToken("card_remover", { target_team_id: t.id, track_id: entry.track_id })}
+                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-transform active:scale-[0.97]"
+                            style={{
+                              background: "rgb(var(--surface-raised-rgb))",
+                              border:     `1px solid rgba(var(--team-${c}-rgb), 0.45)`,
+                            }}
+                            title={`Remove from ${t.name}`}
+                          >
+                            {entry.track.coverUrl && (
+                              <img
+                                src={entry.track.coverUrl}
+                                alt=""
+                                draggable={false}
+                                style={{ display: "block", width: 28, height: 28, borderRadius: 3, objectFit: "cover" }}
+                              />
+                            )}
+                            <div className="min-w-0 max-w-[180px]">
+                              <p className="font-semibold text-xs truncate">{entry.track.name}</p>
+                              <p className="text-[10px] opacity-60 truncate">{entry.track.artist} · {entry.corrected_year ?? entry.year}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+          <button
+            onClick={() => setCardRemoverArmed(false)}
+            className="mt-4 w-full text-center"
+            style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Cancel — keep the token
+          </button>
+        </Modal>
       )}
 
       {/* ── Token activation cinematic ─────────────────────────────────── */}
