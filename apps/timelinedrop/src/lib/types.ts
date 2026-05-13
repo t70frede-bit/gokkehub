@@ -190,8 +190,9 @@ export interface TlNote {
   player_name: string;
   content:     string;
   /** Migration 010 — "free" is legacy chat; "song"/"artist" are structured
-   *  suggestions for the captain's guess inputs. */
-  kind:        "free" | "song" | "artist";
+   *  suggestions for the captain's guess inputs; "reference" is a system
+   *  note from the Reference Point token surfacing a same-year hint. */
+  kind:        "free" | "song" | "artist" | "reference";
   created_at:  string;
 }
 

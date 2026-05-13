@@ -2368,6 +2368,9 @@ export default function GamePage() {
       {round && round.outcome === null && (() => {
         const songSuggestions   = notes.filter(n => n.kind === "song");
         const artistSuggestions = notes.filter(n => n.kind === "artist");
+        // Reference Point notes — surface the most recent one as a hint chip
+        // above the suggestion fields. Same anchor song from the same year.
+        const referenceNote     = [...notes].reverse().find(n => n.kind === "reference");
 
         const iAmActiveTeam      = !!myPlayer && myPlayer.team_id === room.active_team_id;
         const isCaptainHere      = iAmCaptain && isMyTurn;
@@ -2404,6 +2407,26 @@ export default function GamePage() {
                 <span className="text-[11px] opacity-50">📍 {persistentPings.length}</span>
               )}
             </div>
+
+            {/* Reference Point hint — same-year anchor song surfaced by the
+                token. Visible to everyone; the active team is the one that
+                paid for it, but others seeing it doesn't change gameplay. */}
+            {referenceNote && (
+              <div
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md"
+                style={{
+                  background: "rgba(var(--color-secondary-rgb), 0.10)",
+                  border:     "1px solid rgba(var(--color-secondary-rgb), 0.35)",
+                  color:      "rgb(var(--color-secondary-rgb))",
+                  fontSize:   "var(--text-sm)",
+                }}
+                title="Reference from the same year — use it to anchor your guess"
+              >
+                <span>📍</span>
+                <span className="opacity-75 uppercase tracking-wider text-[10px]">Same year:</span>
+                <span className="font-semibold truncate">{referenceNote.content}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <SuggestionField

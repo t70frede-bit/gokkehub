@@ -24,6 +24,7 @@ const ALLOWED_TYPES = new Set([
   "recovery_arm",
   "year_span_5",
   "force_lock",
+  "reference_point",
 ]);
 
 // Phase category per token type — drives auth (who can play it). Kept local
@@ -37,6 +38,7 @@ const CATEGORY_BY_TYPE: Record<string, TokenCategory> = {
   year_span_5:         "during_listen",
   recovery_arm:        "before_pass",
   force_lock:          "opponent_turn",
+  reference_point:     "during_listen",
 };
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -124,6 +126,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       type === "more_or_less"        ? "more_or_less" :
       type === "year_span_5"         ? "year_span_5" :
       type === "force_lock"          ? "force_lock"  :
+      type === "reference_point"     ? "reference_point" :
       type;
 
     // Find + mark used. usingTeamId — NOT necessarily activeTeam — owns the
@@ -152,6 +155,43 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // Active team's turn ends after this song regardless of outcome.
       // handleTurnAction rejects action="next" while this flag is set.
       await updateRound(env, round.id, { force_locked: true });
+    } else if (type === "reference_point") {
+      // Scan the track_pool for a same-year reference (excluding the
+      // current round's own track). Fall back to the nearest year if no
+      // exact match. Reference is surfaced as a tl_notes row with
+      // kind="reference" — UI subscribes and shows it as a hint chip.
+      const targetYear = round.corrected_year ?? round.track.releaseYear;
+      const candidates = (room.track_pool ?? []).filter(t => t.id !== round.track.id);
+      let pick: typeof candidates[number] | null = null;
+      const sameYear = candidates.filter(t => t.releaseYear === targetYear);
+      if (sameYear.length > 0) {
+        pick = sameYear[Math.floor(Math.random() * sameYear.length)];
+      } else if (candidates.length > 0) {
+        let bestDelta = Number.POSITIVE_INFINITY;
+        for (const t of candidates) {
+          const d = Math.abs(t.releaseYear - targetYear);
+          if (d < bestDelta) { bestDelta = d; pick = t; }
+        }
+      }
+      if (pick) {
+        const noteRows = [{
+          round_id:    round.id,
+          player_id:   "system",
+          player_name: "Reference",
+          content:     `${pick.artist} — ${pick.name}`,
+          kind:        "reference",
+        }];
+        await fetch(`${env.SUPABASE_URL}/rest/v1/tl_notes`, {
+          method:  "POST",
+          headers: {
+            "Content-Type":  "application/json",
+            apikey:          env.SUPABASE_SERVICE_ROLE_KEY,
+            Authorization:   `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+            Prefer:          "return=minimal",
+          },
+          body: JSON.stringify(noteRows),
+        });
+      }
     }
 
     return json({ ok: true, token_id: burned }, 200, req);

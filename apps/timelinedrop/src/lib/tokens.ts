@@ -132,9 +132,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "during_listen",
     name: "Reference Point",
     short: "Ref",
-    description: "Get a fresh song from the same year as the current one to compare against.",
+    description: "Reveal another song from the same year as a reference to anchor your guess.",
     icon: "📍",
-    implemented: false,
+    implemented: true,
   },
 
   // ── before_pass ──────────────────────────────────────────────────────────
