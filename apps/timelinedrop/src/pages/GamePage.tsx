@@ -2197,8 +2197,9 @@ export default function GamePage() {
                       style={{
                         width:  40,
                         height: 40,
-                        border: `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
-                        padding: 0,
+                        padding:    0,
+                        boxSizing:  "border-box",
+                        border:     `1px solid rgba(var(--team-${color}-rgb), 0.55)`,
                         background: "transparent",
                       }}
                     >
@@ -2206,7 +2207,7 @@ export default function GamePage() {
                         src={round.track.coverUrl}
                         alt="Album cover"
                         draggable={false}
-                        className="w-full h-full object-cover"
+                        style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
                       />
                     </button>
                   )}
@@ -2581,6 +2582,8 @@ export default function GamePage() {
             bottom:       16,
             width:        56,
             height:       56,
+            padding:      0,                       // strip default <button> padding so the image fills
+            boxSizing:    "border-box",            // 1px border doesn't grow the square
             border:       "1px solid rgba(var(--color-primary-rgb), 0.55)",
             boxShadow:    "0 6px 18px rgba(0,0,0,0.55)",
             background:   "rgb(var(--surface-overlay-rgb))",
@@ -2592,7 +2595,7 @@ export default function GamePage() {
             src={round.track.coverUrl}
             alt="Album cover (tap to enlarge)"
             draggable={false}
-            className="w-full h-full object-cover"
+            style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
           />
         </button>
       )}
