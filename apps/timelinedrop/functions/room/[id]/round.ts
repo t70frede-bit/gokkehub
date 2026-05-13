@@ -48,6 +48,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env, wait
   if (action === "turn")         return handleTurnAction(req, roomId, env, waitUntil);
   if (action === "propose-year") return handleProposeYear(req, roomId, env);
   if (action === "approve-year") return handleApproveYear(req, roomId, env);
+  if (action === "recovery-pick") return handleRecoveryPick(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
 
@@ -319,6 +320,53 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
     },
     body: JSON.stringify({ corrected_year: year, year }),
   });
+}
+
+// ── Recovery pick (save one pending card after wrong placement) ─────────────
+
+interface RecoveryPickRequest {
+  round_id:  number;
+  player_id: string;
+  track_id:  string;
+}
+
+async function handleRecoveryPick(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as RecoveryPickRequest;
+  const { round_id, player_id, track_id } = body;
+
+  const [room, round, players, teams] = await Promise.all([
+    getRoom(env, roomId), getRound(env, round_id),
+    getPlayers(env, roomId), getTeams(env, roomId),
+  ]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  if (round.outcome !== "incorrect") {
+    return json({ error: "Recovery only applies after a wrong placement" }, 409, req);
+  }
+  if (!round.recovery_armed) {
+    return json({ error: "Recovery token not active on this round" }, 409, req);
+  }
+
+  const activeTeam = teams.find(t => t.id === room.active_team_id);
+  if (!activeTeam) return json({ error: "No active team" }, 400, req);
+
+  const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
+  if (!actsAsCaptain(room, captain, player_id)) {
+    return json({ error: "Only the captain can pick a recovery card" }, 403, req);
+  }
+
+  const pending = (activeTeam.pending_tracks ?? []) as Array<{ id: string; releaseYear: number; [k: string]: unknown }>;
+  const picked  = pending.find(p => p.id === track_id);
+  if (!picked) {
+    return json({ error: "That card isn't in your pending pile" }, 400, req);
+  }
+
+  // Save ONLY the picked card. Other pending tracks are lost (standard
+  // "save one" semantics — see roadmap decision).
+  await lockPendingTracks(env, activeTeam.id, [picked]);
+  await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+  await updateRound(env, round.id, { recovery_armed: false });
+
+  return json({ ok: true }, 200, req);
 }
 
 // ── Finalize (vote-all timer expiry) ─────────────────────────────────────────

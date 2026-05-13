@@ -1019,18 +1019,23 @@ interface RevealProps {
   myPlayerId:           string;
   totalEligibleVoters:  number;
   pendingCount:         number;
+  /** Pending tracks for the active team. Drives the Recovery picker on a
+   *  wrong placement when round.recovery_armed is true. */
+  pendingTracks:        SpotifyTrack[];
   onJudge:              (verdict: boolean) => Promise<void>;
   onFinalize:           () => Promise<void>;
   onStop:               () => void;
   onNext:               () => void;
   onProposeYear:        (year: number) => Promise<void>;
   onApproveYear:        (approve: boolean) => Promise<void>;
+  onRecoveryPick:       (trackId: string) => Promise<void>;
 }
 
 function RevealOverlay({
   round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost,
-  myPlayerId, totalEligibleVoters, pendingCount,
+  myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
   onJudge, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
+  onRecoveryPick,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
@@ -1131,12 +1136,51 @@ function RevealOverlay({
           <div className="rounded-xl p-3"
             style={{ background: "rgba(220,60,60,0.1)", border: "1px solid rgba(220,60,60,0.2)" }}>
             <p className="text-sm font-semibold text-red-400">
-              Wrong placement — {pendingCount > 0 ? `${pendingCount} pending card${pendingCount > 1 ? "s" : ""} lost. Turn ends.` : "Turn ends."}
+              Wrong placement — {round.recovery_armed && pendingTracks.length > 0
+                ? `pick one card to save (Recovery), the others are lost.`
+                : (pendingCount > 0 ? `${pendingCount} pending card${pendingCount > 1 ? "s" : ""} lost. Turn ends.` : "Turn ends.")}
             </p>
           </div>
 
+          {/* Recovery picker — only when token is armed, captain, and there's
+              something to save. Picking burns the recovery and saves only the
+              chosen card into the timeline. */}
+          {isCaptain && round.recovery_armed && pendingTracks.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-wider opacity-60">🛟 Pick a card to save</p>
+              <div className="flex flex-col gap-2">
+                {pendingTracks.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => onRecoveryPick(t.id)}
+                    className="flex items-center gap-3 rounded-md p-2 text-left transition-transform active:scale-[0.98]"
+                    style={{
+                      background: "rgb(var(--surface-raised-rgb))",
+                      border:     "1px solid rgba(var(--color-secondary-rgb), 0.45)",
+                    }}
+                  >
+                    {t.coverUrl && (
+                      <img
+                        src={t.coverUrl}
+                        alt=""
+                        draggable={false}
+                        style={{ display: "block", width: 32, height: 32, borderRadius: 4, objectFit: "cover" }}
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate">{t.name}</p>
+                      <p className="text-xs opacity-60 truncate">{t.artist} · {t.releaseYear}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isCaptain ? (
-            <Button onClick={onStop} className="w-full">Continue → next team</Button>
+            <Button onClick={onStop} className="w-full">
+              {round.recovery_armed && pendingTracks.length > 0 ? "Skip recovery — end turn" : "Continue → next team"}
+            </Button>
           ) : (
             <p className="text-xs opacity-50">Waiting for captain to continue…</p>
           )}
@@ -1866,6 +1910,23 @@ export default function GamePage() {
     });
   }
 
+  // Recovery — after a wrong placement, captain picks one pending card to
+  // save. The picked card locks into the timeline; the others are lost.
+  // Server validates outcome=incorrect && recovery_armed.
+  async function recoveryPick(track_id: string) {
+    if (!round) return;
+    const res = await fetch(`/room/${roomId}/round?action=recovery-pick`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ round_id: round.id, player_id: myPlayerId, track_id }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("[musix] recovery-pick failed:", res.status, text.slice(0, 200));
+    }
+  }
+
   // Submit a structured suggestion (song name or artist) into tl_notes.
   // Captains use these chips to fill their own inputs — they do NOT submit
   // suggestions themselves; their typing only places the actual guess.
@@ -2562,12 +2623,14 @@ export default function GamePage() {
             myPlayerId={myPlayerId ?? ""}
             totalEligibleVoters={totalEligibleVoters}
             pendingCount={activeTeam?.pending_tracks?.length ?? 0}
+            pendingTracks={(activeTeam?.pending_tracks ?? []) as SpotifyTrack[]}
             onJudge={judge}
             onFinalize={finalizeJudgment}
             onStop={() => doTurnAction("stop")}
             onNext={() => doTurnAction("next")}
             onProposeYear={proposeYearCorrection}
             onApproveYear={approveYearCorrection}
+            onRecoveryPick={recoveryPick}
           />
         );
       })()}

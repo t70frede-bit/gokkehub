@@ -145,7 +145,7 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     short: "Save 1",
     description: "If you guess wrong, pick one card from your pending pile to save.",
     icon: "🛟",
-    implemented: false,
+    implemented: true,
   },
   pass_along: {
     type: "pass_along",
