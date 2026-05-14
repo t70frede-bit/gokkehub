@@ -43,19 +43,33 @@ helps with the related "remaster year is wrong" problem.
 
 ## Setup (one-time, for the bot operator)
 
-### 1. Create a Discord application
+### 1. Discord application
 
-1. Go to <https://discord.com/developers/applications>, **New Application**,
-   name it whatever (e.g. "GokkeHub Musix").
-2. Sidebar → **Bot** → **Reset Token**, copy the token (you'll set this as
-   `DISCORD_BOT_TOKEN`).
-3. Enable the **Server Members Intent** and **Message Content Intent**
-   under Privileged Gateway Intents (only Server Members is strictly needed
-   for our case, but Message Content allows future text commands).
-4. Sidebar → **OAuth2** → **URL Generator**. Scopes: `bot`,
-   `applications.commands`. Bot permissions: `Connect`, `Speak`, `Use Voice
-   Activity`, `Send Messages` (the last one is just for status replies).
-5. Open the generated URL and add the bot to your Discord server.
+You can reuse an existing GokkeHub Discord app (the same one that powers
+the OAuth login on account.gokkehub.com is fine — bot and OAuth coexist on
+one application). Or create a fresh one at
+<https://discord.com/developers/applications>.
+
+Then on that application:
+
+1. Sidebar → **Bot**. If the page shows **Add Bot**, click it. Otherwise
+   the bot already exists.
+2. **Reset Token**, copy it — this is `DISCORD_BOT_TOKEN`. It's distinct
+   from the OAuth client secret on the General Information page; don't
+   confuse them.
+3. Turn **Public Bot** OFF if you want to be the only one who can invite
+   the bot.
+4. **Privileged Gateway Intents:** leave them OFF. Slash commands + voice
+   don't need any privileged intent; turning them on would require
+   Discord's gateway review for any future scaling.
+5. Sidebar → **OAuth2** → **URL Generator**. Scopes: `bot`,
+   `applications.commands`. Bot permissions: `Connect`, `Speak`, `Use
+   Voice Activity`. Open the generated URL and add the bot to your
+   Discord server.
+
+**OAuth redirects + secrets:** don't touch them. The bot doesn't use OAuth
+redirect URIs or the OAuth client secret — those continue serving the
+account.gokkehub.com login flow.
 
 ### 2. Set environment variables
 
