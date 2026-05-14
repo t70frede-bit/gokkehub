@@ -4,6 +4,7 @@ import { json, handlePreflight } from "../../_cors";
 import {
   getRoom, updateRoom, getTeams, getPlayers, getRound, updateRound,
   createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
+  batchLookupCorrections, lookupCorrectedYear, upsertSongCorrection,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -295,6 +296,9 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
 
   if (approve) {
     await applyYearCorrection(env, round, round.year_correction_proposed);
+    // Persist the correction so every future game inherits it (migration
+    // 013). Latest-wins — overwrites any prior correction for this track.
+    await upsertSongCorrection(env, round.track.id, round.year_correction_proposed, roomId);
   }
   // Clear the proposal either way
   await updateRound(env, round_id, {
@@ -574,12 +578,14 @@ async function handleTurnAction(req: Request, roomId: string, env: Env, waitUnti
     const nextTrack = room.track_pool[room.track_cursor];
     if (!nextTrack) return json({ error: "No more tracks" }, 400, req);
 
+    const nextCorrected = await lookupCorrectedYear(env, nextTrack.id);
     const round = await createRound(env, {
-      room_id:     roomId,
-      team_id:     activeTeam.id,
-      track:       nextTrack,
-      outcome:     null,
-      revealed_at: null,
+      room_id:        roomId,
+      team_id:        activeTeam.id,
+      track:          nextTrack,
+      outcome:        null,
+      revealed_at:    null,
+      corrected_year: nextCorrected,
     });
     await recordPlayedTracks(
       env, roomId,
@@ -738,14 +744,22 @@ async function lockPendingTracks(
   tracks: Array<{ id: string; releaseYear: number; [k: string]: unknown }>,
 ) {
   const existing = await getTimeline(env, teamId);
-  for (const track of tracks) {
-    if (existing.some(e => e.track_id === track.id)) continue;
+  const newTracks = tracks.filter(t => !existing.some(e => e.track_id === t.id));
+  if (newTracks.length === 0) return;
+  // Apply persistent global corrections (migration 013) — a track that was
+  // year-corrected in any past room locks in with the corrected year here
+  // too, so the timeline orders correctly without needing to re-correct.
+  const corrections = await batchLookupCorrections(env, newTracks.map(t => t.id));
+  for (const track of newTracks) {
+    const corrected = corrections.get(track.id) ?? null;
+    const year = corrected ?? track.releaseYear;
     await insertTimelineEntry(env, {
-      team_id:  teamId,
-      track_id: track.id,
-      year:     track.releaseYear,
-      position: 0,
-      track:    track as never,
+      team_id:        teamId,
+      track_id:       track.id,
+      year,
+      position:       0,
+      track:          track as never,
+      corrected_year: corrected,
     });
   }
 }
@@ -779,12 +793,14 @@ async function advanceTurn(
     return;
   }
 
+  const nextCorrected = await lookupCorrectedYear(env, nextTrack.id);
   const round = await createRound(env, {
-    room_id:     roomId,
-    team_id:     nextTeam.id,
-    track:       nextTrack,
-    outcome:     null,
-    revealed_at: null,
+    room_id:        roomId,
+    team_id:        nextTeam.id,
+    track:          nextTrack,
+    outcome:        null,
+    revealed_at:    null,
+    corrected_year: nextCorrected,
   });
 
   // Recently-heard blacklist — every non-spectator player just heard this.

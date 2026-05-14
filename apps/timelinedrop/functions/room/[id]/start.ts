@@ -5,6 +5,7 @@ import { getSessionId } from "@gokkehub/auth/session";
 import {
   getRoom, updateRoom, getTeams, getPlayers, updatePlayer,
   createRound, insertTimelineEntry, recordPlayedTracks,
+  lookupCorrectedYear,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -100,12 +101,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
   // 3) First round uses the next track after the starter cards.
   const firstTrack = pool[teams.length];
+  // Pre-fill corrected_year from the global corrections table so a song
+  // that's been corrected in any past room plays at the right year here.
+  const firstCorrected = await lookupCorrectedYear(env, firstTrack.id);
   const round = await createRound(env, {
-    room_id:     roomId,
-    team_id:     teams[0].id,
-    track:       firstTrack,
-    outcome:     null,
-    revealed_at: null,
+    room_id:        roomId,
+    team_id:        teams[0].id,
+    track:          firstTrack,
+    outcome:        null,
+    revealed_at:    null,
+    corrected_year: firstCorrected,
   });
 
   // Mark every non-spectator player as having heard this track so the

@@ -2,7 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, getPlayers, updateRoom } from "../../_supabase";
+import { getRoom, getPlayers, updateRoom, batchLookupCorrections } from "../../_supabase";
 import { searchTrackUri, getActiveHostToken } from "../../_spotify";
 import type { SpotifyTrack, Difficulty, TlPlayer } from "../../../src/lib/types";
 import { DEFAULT_TL_SETTINGS } from "../../../src/lib/types";
@@ -186,7 +186,22 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
     }
   }
 
-  // 8) Append to track_pool
+  // 9) Apply persistent global year corrections (migration 013) — a track
+  // that's been year-corrected in any past room gets its releaseYear
+  // overwritten right here, so the pool stores the corrected year and
+  // every downstream consumer (UI, placement check, timeline ordering)
+  // sees the right number.
+  if (tracks.length > 0) {
+    const corrections = await batchLookupCorrections(env, tracks.map(t => t.id));
+    for (const t of tracks) {
+      const c = corrections.get(t.id);
+      if (typeof c === "number" && c !== t.releaseYear) {
+        t.releaseYear = c;
+      }
+    }
+  }
+
+  // 10) Append to track_pool
   const newPool = [...(room.track_pool ?? []), ...tracks];
   await updateRoom(env, roomId, { track_pool: newPool });
 

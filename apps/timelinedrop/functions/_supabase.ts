@@ -85,6 +85,74 @@ export async function createRound(env: Env, data: Partial<TlRound>): Promise<TlR
   return rows[0];
 }
 
+// ── Global song-corrections (migration 013) ─────────────────────────────────
+// Persistent year corrections. Latest-wins — see migration 013 comments and
+// the design discussion in plan_timelinedrop_roadmap.md.
+
+/**
+ * Look up corrected years for many tracks at once. Returns a Map keyed by
+ * Spotify track id. Missing entries simply aren't in the map. Empty input
+ * short-circuits without an HTTP call.
+ */
+export async function batchLookupCorrections(
+  env: Env,
+  trackIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (trackIds.length === 0) return out;
+  // PostgREST in.() with quoted comma-separated values. We dedupe + escape.
+  const seen = new Set<string>();
+  const escaped: string[] = [];
+  for (const id of trackIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    // Track ids are base62 Spotify ids — no commas or quotes to worry about
+    // but we quote defensively for PostgREST in.() syntax.
+    escaped.push(`"${id.replace(/"/g, '\\"')}"`);
+  }
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_song_corrections?track_id=in.(${escaped.join(",")})&select=track_id,corrected_year`;
+  const res = await fetch(url, {
+    headers: {
+      apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+  if (!res.ok) return out;
+  const rows = await res.json() as Array<{ track_id: string; corrected_year: number }>;
+  for (const r of rows) out.set(r.track_id, r.corrected_year);
+  return out;
+}
+
+/**
+ * Single-track convenience wrapper around batchLookupCorrections.
+ */
+export async function lookupCorrectedYear(env: Env, trackId: string): Promise<number | null> {
+  const m = await batchLookupCorrections(env, [trackId]);
+  return m.get(trackId) ?? null;
+}
+
+/**
+ * UPSERT a corrected year. Latest write wins.
+ */
+export async function upsertSongCorrection(
+  env: Env,
+  trackId: string,
+  correctedYear: number,
+  sourceRoom: string,
+): Promise<void> {
+  try {
+    await req(env, "POST", "tl_song_corrections", "on_conflict=track_id", {
+      track_id:       trackId,
+      corrected_year: correctedYear,
+      source_room:    sourceRoom,
+      corrected_at:   new Date().toISOString(),
+    }, true);
+  } catch (e) {
+    // Don't block the user's correction on a global-table hiccup.
+    console.warn("[musix] upsertSongCorrection failed:", e);
+  }
+}
+
 /**
  * Record that every non-spectator player just heard a track. Drives the
  * "Skip recently heard" filter in curate.ts — without this, the blacklist
