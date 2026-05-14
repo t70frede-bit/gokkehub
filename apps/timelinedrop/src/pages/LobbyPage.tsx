@@ -6,6 +6,15 @@ import { supabase } from "../lib/supabase";
 import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
+// Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
+// permissions 36700160 (Connect + Speak + Use Voice Activity) and both
+// scopes the bot needs (bot + applications.commands for slash commands).
+// The URL isn't secret; it just opens Discord's "add this bot to a server"
+// flow. Surface it in the Audio panel when discord-bot mode is selected so
+// the host doesn't have to hunt for it.
+const DISCORD_BOT_INVITE_URL =
+  "https://discord.com/oauth2/authorize?client_id=1495063496587481249&permissions=36700160&integration_type=0&scope=bot+applications.commands";
+
 // Map a team's sort_order (0-3) to a colour token from the design system.
 type TeamColor = "red" | "blue" | "green" | "yellow";
 const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
@@ -468,7 +477,7 @@ export default function LobbyPage() {
                 </p>
               )}
               {settings.audioMode === "discord-bot" && (
-                <div className="mt-3 flex flex-col gap-2">
+                <div className="mt-3 flex flex-col gap-3">
                   <p className="text-xs px-3 py-2 rounded-md"
                     style={{
                       background: "rgba(var(--color-secondary-rgb),0.10)",
@@ -478,9 +487,25 @@ export default function LobbyPage() {
                     🤖 A Discord bot will play the songs directly into your voice channel.
                     Spotify is used for song selection; audio is streamed via YouTube.
                   </p>
-                  <ol className="text-xs space-y-1 pl-4 list-decimal"
+                  <ol className="text-xs space-y-2 pl-4 list-decimal"
                     style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-                    <li>Make sure the GokkeHub bot is in your Discord server.</li>
+                    <li>
+                      <a
+                        href={DISCORD_BOT_INVITE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md font-semibold transition-colors hover:opacity-90"
+                        style={{
+                          background: "rgba(88, 101, 242, 0.18)",
+                          border:     "1px solid rgba(88, 101, 242, 0.55)",
+                          color:      "#8b9bff",
+                          fontSize:   "var(--text-xs)",
+                        }}
+                      >
+                        Invite GokkeHub bot to your server →
+                      </a>
+                      <span className="opacity-70 ml-1.5">(one-time per server)</span>
+                    </li>
                     <li>Join the voice channel you want to play in.</li>
                     <li>
                       Run{" "}
