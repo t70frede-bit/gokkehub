@@ -1770,6 +1770,18 @@ export default function GamePage() {
     });
   }, [isDJ, djAudio.ready, state?.round?.id, state?.round?.outcome, state?.room.status]);
 
+  // Song Limiter — opposing team's token cuts the active team's listening
+  // window. Host-side auto-pause once positionMs crosses the threshold.
+  // pause() is idempotent so re-firing on subsequent position ticks is fine.
+  useEffect(() => {
+    if (!isHost || !djAudio.playing) return;
+    const limit = state?.round?.song_limit_seconds;
+    if (!limit) return;
+    if (djAudio.positionMs > limit * 1000) {
+      djAudio.pause();
+    }
+  }, [isHost, djAudio.playing, djAudio.positionMs, state?.round?.song_limit_seconds]);
+
   const onTimerExpire = useCallback(async () => {
     if (!isMyTurn || !iAmCaptain || !state?.round || state.round.outcome !== null) return;
     await fetch(`/room/${roomId}/round?action=place`, {
@@ -2275,6 +2287,24 @@ export default function GamePage() {
                       }}
                     >
                       ± {round.year_tolerance}y
+                    </span>
+                  )}
+                  {/* Song Limiter — opposing token has cut the active team's
+                      listening window. Visible to everyone so the active
+                      team knows time is short and observers see the sabotage. */}
+                  {isActive && round && round.song_limit_seconds && (
+                    <span
+                      className="font-extrabold flex-shrink-0 px-2 py-1 rounded-md uppercase tracking-wider"
+                      title={`Opposing team limited this song to ${round.song_limit_seconds} seconds`}
+                      style={{
+                        fontSize:   "var(--text-xs)",
+                        fontFamily: "var(--font-mono)",
+                        background: "rgba(var(--color-danger-rgb, 220,60,60), 0.18)",
+                        border:     "1px solid rgba(var(--color-danger-rgb, 220,60,60), 0.6)",
+                        color:      "rgb(var(--color-danger-rgb, 220,60,60))",
+                      }}
+                    >
+                      ⏱ {round.song_limit_seconds}s
                     </span>
                   )}
                   {isActive && round && round.cover_revealed && round.track.coverUrl && (

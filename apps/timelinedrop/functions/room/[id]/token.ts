@@ -26,6 +26,7 @@ const ALLOWED_TYPES = new Set([
   "force_lock",
   "reference_point",
   "card_remover",
+  "song_limiter",
 ]);
 
 // Phase category per token type — drives auth (who can play it). Kept local
@@ -41,7 +42,12 @@ const CATEGORY_BY_TYPE: Record<string, TokenCategory> = {
   force_lock:          "opponent_turn",
   reference_point:     "during_listen",
   card_remover:        "during_listen",
+  song_limiter:        "opponent_turn",
 };
+
+// How many seconds the opposing team gets to listen once song_limiter is
+// burned. Catalog description is "20 seconds"; tune here if needed.
+const SONG_LIMITER_SECONDS = 20;
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -130,6 +136,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       type === "force_lock"          ? "force_lock"  :
       type === "reference_point"     ? "reference_point" :
       type === "card_remover"        ? "card_remover" :
+      type === "song_limiter"        ? "song_limiter" :
       type;
 
     // Pre-burn payload validation for tokens that target opponent state —
@@ -186,6 +193,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // Active team's turn ends after this song regardless of outcome.
       // handleTurnAction rejects action="next" while this flag is set.
       await updateRound(env, round.id, { force_locked: true });
+    } else if (type === "song_limiter") {
+      // Cut the active team's listening window. The host's audio player
+      // watches this column and auto-pauses once playback crosses the
+      // threshold. UI shows a "⏱ Ns left" chip while it's active.
+      await updateRound(env, round.id, { song_limit_seconds: SONG_LIMITER_SECONDS });
     } else if (type === "card_remover" && cardRemoverTarget) {
       // DELETE the targeted card from the opposing team's timeline. The
       // target team's score (= timeline.length) drops by one — see roadmap

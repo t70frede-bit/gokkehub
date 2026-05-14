@@ -134,6 +134,10 @@ export interface TlRound {
    *  correct placement; their turn ends after this song. Set by an opposing
    *  captain spending a force_lock token. */
   force_locked:        boolean;
+  /** Song Limiter (migration 014) — when set, the host's audio player
+   *  auto-pauses once positionMs exceeds this many seconds. Played by an
+   *  opposing captain via song_limiter token. */
+  song_limit_seconds:  number | null;
   artist_guess:        string | null;
   songname_guess:      string | null;
   artist_correct:      boolean | null;

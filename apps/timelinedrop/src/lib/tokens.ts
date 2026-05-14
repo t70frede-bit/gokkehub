@@ -190,9 +190,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "opponent_turn",
     name: "Song Limiter",
     short: "20s",
-    description: "Cut the opponent's song to 20 seconds.",
+    description: "Cut the opponent's song to 20 seconds. The host's player auto-pauses when time runs out.",
     icon: "⏱️",
-    implemented: false,
+    implemented: true,
   },
 
   // ── anytime ──────────────────────────────────────────────────────────────
