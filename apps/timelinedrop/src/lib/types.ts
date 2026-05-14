@@ -28,6 +28,16 @@ export type PlaylistMode = "as-is" | "inspiration" | "smart-filter";
 // from a Spotify playlist URL.
 export type SongSource = "group-taste" | "playlist";
 
+// How audio actually plays during a round.
+// "browser"     — the host's browser runs the Spotify Web Playback SDK.
+//                 Standard mode; players hear it via whatever shared audio
+//                 the host has set up (Discord screen-share, in-person…).
+// "discord-bot" — a Discord bot in the host's voice channel plays the track.
+//                 Audio comes from YouTube (Spotify ToS forbids server-side
+//                 streaming). Bot runs as a separate Node.js process — see
+//                 bots/musix-discord/README.md.
+export type AudioMode = "browser" | "discord-bot";
+
 export interface TlRoomSettings {
   lateJoinMode?:       LateJoinMode;
   streamerMode?:       boolean;
@@ -41,6 +51,7 @@ export interface TlRoomSettings {
   skipRecentlyHeard?:  boolean;       // 14-day blacklist toggle
   singleScreenMode?:   boolean;       // host plays for every team on one device
   songSource?:         SongSource;    // group-taste (default) | playlist
+  audioMode?:          AudioMode;     // browser (default) | discord-bot
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -55,6 +66,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   skipRecentlyHeard: true,
   singleScreenMode:  false,
   songSource:        "group-taste",
+  audioMode:         "browser",
 };
 
 export interface TlRoom {

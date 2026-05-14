@@ -1689,6 +1689,11 @@ export default function GamePage() {
   const isDJ       = state?.myPlayer?.is_host ?? false;
   const isHost     = state?.myPlayer?.is_host ?? false;
   const singleScreen = !!state?.room.settings?.singleScreenMode;
+  // Audio source — browser (Spotify Web SDK in this tab) vs discord-bot
+  // (separate Node.js bot in the host's voice channel; see bots/musix-discord).
+  // Default is browser to preserve the original behaviour.
+  const audioMode  = state?.room.settings?.audioMode ?? "browser";
+  const browserAudio = audioMode === "browser";
   // In single-screen mode the host stands in for whoever's playing. They get
   // captain powers on whatever team is currently active.
   const isMyTurn   = !!(state?.room.active_team_id && (
@@ -1761,6 +1766,9 @@ export default function GamePage() {
   const lastAutoPlayedRoundRef = useRef<number | null>(null);
   useEffect(() => {
     if (!isDJ || !djAudio.ready) return;
+    // In discord-bot mode the external bot handles playback — don't fire the
+    // Spotify SDK at all, otherwise audio doubles up.
+    if (!browserAudio) return;
     if (!state?.round || state.round.outcome !== null) return;
     if (state.room.status !== "playing") return;
     if (lastAutoPlayedRoundRef.current === state.round.id) return;
@@ -1768,7 +1776,7 @@ export default function GamePage() {
     djAudio.play(state.round.track.uri).catch(err => {
       console.error("[musix] auto-play failed:", err);
     });
-  }, [isDJ, djAudio.ready, state?.round?.id, state?.round?.outcome, state?.room.status]);
+  }, [isDJ, djAudio.ready, browserAudio, state?.round?.id, state?.round?.outcome, state?.room.status]);
 
   // Song Limiter — opposing team's token cuts the active team's listening
   // window. Host-side auto-pause once positionMs crosses the threshold.
@@ -2623,12 +2631,32 @@ export default function GamePage() {
         );
       })()}
 
+      {/* ── Discord-bot mode banner ────────────────────────────────────────
+          When the host has chosen discord-bot audio mode, surface a small
+          status chip in the same place the audio bar would normally live
+          so it's clear playback is happening elsewhere. */}
+      {isHost && !browserAudio && (
+        <div
+          className="flex-shrink-0 px-3 py-2 flex items-center justify-center gap-2 text-sm"
+          style={{
+            background: "rgba(var(--color-secondary-rgb), 0.10)",
+            borderTop:  "1px solid rgba(var(--color-secondary-rgb), 0.30)",
+            color:      "rgb(var(--color-secondary-rgb))",
+          }}
+          title="The Discord bot is handling playback; the browser SDK is disabled."
+        >
+          <span>🤖</span>
+          <span>Discord bot mode — playback handled in your voice channel.</span>
+        </div>
+      )}
+
       {/* ── Spotify-style audio bar at the very bottom (HOST only) ─────────
           The host is the one running Spotify; everybody else is hearing the
           room audio via whatever the host plays. Non-host captains don't
           need playback controls and the strip + its embedded cover are
-          irrelevant noise for them. */}
-      {isHost && (
+          irrelevant noise for them. Also hidden when discord-bot mode is
+          active — the bot handles playback, browser controls are noise. */}
+      {isHost && browserAudio && (
         <AudioPlayerUI
           isDJ={isDJ}
           isMyTurn={isMyTurn}

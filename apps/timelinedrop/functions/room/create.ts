@@ -37,6 +37,9 @@ function sanitizeSettings(input: unknown): TlRoomSettings {
   if (s.songSource === "group-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }
+  if (s.audioMode === "browser" || s.audioMode === "discord-bot") {
+    out.audioMode = s.audioMode;
+  }
   return out;
 }
 

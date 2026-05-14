@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Map a team's sort_order (0-3) to a colour token from the design system.
@@ -438,6 +438,59 @@ export default function LobbyPage() {
                       song{trackCount === 1 ? "" : "s"} loaded. Add more playlists to mix them in.
                     </span>
                   </p>
+                </div>
+              )}
+            </Panel>
+          )}
+
+          {/* Audio source — Browser (default) vs Discord bot. The bot lives
+              in a separate Node.js process; see bots/musix-discord/README. */}
+          {isHost && (
+            <Panel className="p-5">
+              <h2 className="font-bold text-lg mb-3">Audio</h2>
+              <Toggle
+                options={[
+                  { value: "browser",     label: "🌐 Browser" },
+                  { value: "discord-bot", label: "🤖 Discord bot" },
+                ]}
+                value={settings.audioMode}
+                onChange={v => saveSettings({ audioMode: v as AudioMode })}
+              />
+              {settings.audioMode === "browser" && (
+                <p className="text-xs mt-3 px-3 py-2 rounded-md"
+                  style={{
+                    background: "rgba(var(--color-primary-rgb),0.08)",
+                    border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
+                    color:      "rgb(var(--text-secondary-rgb))",
+                  }}>
+                  🌐 The host's browser plays each song. Share your tab audio in Discord (or be
+                  in person) so everyone hears the same thing.
+                </p>
+              )}
+              {settings.audioMode === "discord-bot" && (
+                <div className="mt-3 flex flex-col gap-2">
+                  <p className="text-xs px-3 py-2 rounded-md"
+                    style={{
+                      background: "rgba(var(--color-secondary-rgb),0.10)",
+                      border:     "1px solid rgba(var(--color-secondary-rgb),0.30)",
+                      color:      "rgb(var(--text-secondary-rgb))",
+                    }}>
+                    🤖 A Discord bot will play the songs directly into your voice channel.
+                    Spotify is used for song selection; audio is streamed via YouTube.
+                  </p>
+                  <ol className="text-xs space-y-1 pl-4 list-decimal"
+                    style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                    <li>Make sure the GokkeHub bot is in your Discord server.</li>
+                    <li>Join the voice channel you want to play in.</li>
+                    <li>
+                      Run{" "}
+                      <code className="px-1.5 py-0.5 rounded"
+                        style={{ background: "rgba(255,255,255,0.08)", fontFamily: "var(--font-mono)" }}>
+                        /musix join {roomId}
+                      </code>{" "}
+                      — the bot joins and waits for the game to start.
+                    </li>
+                  </ol>
                 </div>
               )}
             </Panel>
