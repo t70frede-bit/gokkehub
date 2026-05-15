@@ -37,6 +37,7 @@ import {
   createAudioResource,
   StreamType,
   VoiceConnectionStatus,
+  AudioPlayerStatus,
   entersState,
   AudioPlayer,
   VoiceConnection,
@@ -131,25 +132,116 @@ function playTestTone(player: AudioPlayer, frequencyHz: number, durationSec: num
   console.log(`[voice] playing ${label} (${frequencyHz} Hz, ${durationSec}s)`);
 }
 
-// ── Sessions ────────────────────────────────────────────────────────────────
-// One session per guild. The bot can be in many guilds at once but only one
-// active room per guild (a new /musix join replaces the prior session).
+// ── Sessions + queues ──────────────────────────────────────────────────────
+// One session per guild — represents the live voice connection. A session
+// is in one of two modes: "music" (queue-driven, via /musix play) or "game"
+// (round-driven, via /musix join). Switching modes tears down the session
+// but the queue lives separately in `queues` so it survives the switch.
+
+type SessionMode = "music" | "game";
 
 interface Session {
-  roomId:           string | null;        // null for ad-hoc /musix test sessions
+  mode:             SessionMode;
+  roomId:           string | null;        // set in game mode; null in music
   guildId:          string;
   voiceChannelId:   string;
   invitedByUserId:  string;
   startedAt:        number;
-  realtime:         RealtimeChannel | null; // null for ad-hoc /musix test sessions
+  realtime:         RealtimeChannel | null;
   voice:            VoiceConnection;
   player:           AudioPlayer;
 }
 
 const sessions = new Map<string, Session>(); // key: guildId
 
+interface QueueItem {
+  videoId:     string;
+  title:       string;       // full display label; may already include "Artist - Title"
+  durationSec: number;
+  requestedBy: string;       // Discord user tag, for "added by X" UX
+}
+
+interface QueueState {
+  upcoming:               QueueItem[];   // FIFO; queue[0] is next to play
+  current:                QueueItem | null;
+  notificationChannelId:  string | null; // where to post auto-advance messages
+}
+
+const queues = new Map<string, QueueState>(); // key: guildId
+
+function getOrCreateQueue(guildId: string): QueueState {
+  let q = queues.get(guildId);
+  if (!q) {
+    q = { upcoming: [], current: null, notificationChannelId: null };
+    queues.set(guildId, q);
+  }
+  return q;
+}
+
+function fmtSec(seconds: number): string {
+  if (!seconds || seconds < 1) return "?:??";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function nowPlayingText(item: QueueItem): string {
+  return `**🎵 Now playing — ${item.title}** (${fmtSec(item.durationSec)}) · requested by ${item.requestedBy}`;
+}
+
+// Pops the next item off the queue, resolves a fresh audio stream, and
+// starts it. By default posts a "Now playing" message in the queue's
+// saved notification channel; `notify:false` skips that for the very
+// first song (where the /play slash reply already shows the same info).
+// Errors are logged + skip to the following item.
+async function advanceQueue(session: Session, opts: { notify?: boolean } = {}): Promise<void> {
+  if (session.mode !== "music") return;
+  const q = queues.get(session.guildId);
+  if (!q) return;
+  const next = q.upcoming.shift();
+  if (!next) {
+    q.current = null;
+    console.log(`[queue] queue empty for guild ${session.guildId}`);
+    return;
+  }
+  q.current = next;
+  try {
+    const resource = await createStreamResource(next.videoId);
+    session.player.play(resource);
+    console.log(`[queue] ▶ "${next.title}" (${fmtSec(next.durationSec)})`);
+  } catch (err) {
+    console.warn(`[queue] failed to play "${next.title}":`, err);
+    void advanceQueue(session); // skip and try next
+    return;
+  }
+  if ((opts.notify ?? true) && q.notificationChannelId) {
+    try {
+      const channel = await client.channels.fetch(q.notificationChannelId);
+      if (channel && channel.isSendable()) {
+        await channel.send(nowPlayingText(next));
+      }
+    } catch (err) {
+      console.warn(`[queue] couldn't post now-playing message:`, err);
+    }
+  }
+}
+
+// Wires the audio player's Idle event to the queue so that finishing one
+// song automatically pulls the next. The Idle event also fires on manual
+// stop, which is fine — when /stop clears the queue, advance just finds an
+// empty queue and clears `current`. Per-session, removed when the session
+// is replaced (the player object goes with it).
+function attachQueueAutoAdvance(session: Session) {
+  session.player.on(AudioPlayerStatus.Idle, () => {
+    const stillSession = sessions.get(session.guildId);
+    if (!stillSession || stillSession !== session) return;
+    if (stillSession.mode !== "music") return;
+    void advanceQueue(stillSession);
+  });
+}
+
 function describeSession(s: Session) {
-  return `room=${s.roomId ?? "(none)"} guild=${s.guildId} channel=${s.voiceChannelId}`;
+  return `mode=${s.mode} room=${s.roomId ?? "(none)"} guild=${s.guildId} channel=${s.voiceChannelId}`;
 }
 
 async function teardownSession(guildId: string): Promise<Session | null> {
@@ -428,6 +520,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   });
 
   const session: Session = {
+    mode:            "game",
     roomId:          roomCode,
     guildId:         ix.guildId,
     voiceChannelId:  conn.voiceChannelId,
@@ -467,7 +560,8 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
 
 // Shared core for /musix play and /musix test. Resolves a free-text query,
 // a YouTube URL, or a bare 11-char video ID; auto-joins the caller's voice
-// channel if no session is active; streams via yt-dlp.
+// channel if no music-mode session is active; appends to the per-guild
+// queue and kicks off playback if nothing is playing.
 async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | "test") {
   if (!ix.guildId) {
     await ix.reply({ content: "This command only works in a server.", flags: MessageFlags.Ephemeral });
@@ -477,11 +571,12 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
   const query = ix.options.getString("query", true).trim();
   await ix.deferReply();
 
-  let session = sessions.get(ix.guildId);
+  let session: Session | undefined = sessions.get(ix.guildId);
   if (!session) {
     const conn = await setupVoiceConnection(ix);
     if (!conn) return;
-    session = {
+    const fresh: Session = {
+      mode:            "music",
       roomId:          null,
       guildId:         ix.guildId,
       voiceChannelId:  conn.voiceChannelId,
@@ -491,12 +586,14 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       voice:           conn.voice,
       player:          conn.player,
     };
-    sessions.set(ix.guildId, session);
-    console.log(`[musix-bot] /${label} created ad-hoc session: ${describeSession(session)}`);
+    sessions.set(ix.guildId, fresh);
+    attachQueueAutoAdvance(fresh);
+    session = fresh;
+    console.log(`[musix-bot] /${label} created music session: ${describeSession(session)}`);
   }
 
-  // If the user pasted a URL or ID (or picked an autocomplete choice whose
-  // value is a videoId), skip search and stream directly.
+  // Resolve the query into a QueueItem. URL/ID skips search and goes
+  // straight to getBasicInfo; free text goes through search.
   const directId = extractVideoId(query);
   let resolved: ResolvedTrack | null;
   if (directId) {
@@ -513,31 +610,29 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
     }
   }
 
-  let resource;
-  try {
-    resource = await createStreamResource(resolved.videoId);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[musix-bot] stream failed for ${resolved.videoUrl}:`, err);
-    await ix.editReply(
-      `Resolved **${resolved.videoTitle}** but YouTube refused to stream it ` +
-      `(${msg}). Try a different query.`,
-    );
-    return;
+  const item: QueueItem = {
+    videoId:     resolved.videoId,
+    title:       resolved.videoTitle,
+    durationSec: resolved.durationSec,
+    requestedBy: ix.user.username,
+  };
+
+  const queue = getOrCreateQueue(ix.guildId);
+  if (ix.channelId) queue.notificationChannelId = ix.channelId;
+  queue.upcoming.push(item);
+
+  // If nothing is currently playing, advance immediately — that pops the
+  // item we just queued (or the head of a preserved queue) into current.
+  const idle = session.player.state.status === AudioPlayerStatus.Idle;
+  const noCurrent = queue.current === null;
+  if (idle && noCurrent) {
+    await ix.editReply(nowPlayingText(item));
+    void advanceQueue(session, { notify: false });
+  } else {
+    const position = queue.upcoming.length;
+    await ix.editReply(`➕ Queued **${item.title}** (${fmtSec(item.durationSec)}) at position #${position}.`);
   }
-
-  session.player.play(resource);
-  await ix.editReply(
-    `▶️ Playing **${resolved.videoTitle}** (${resolved.durationSec}s)\n${resolved.videoUrl}`,
-  );
-  console.log(`[musix-bot] /${label} → ${resolved.videoTitle} in ${describeSession(session)}`);
-}
-
-function fmtDuration(seconds: number): string {
-  if (!seconds || seconds < 1) return "?:??";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+  console.log(`[musix-bot] /${label} → queued "${item.title}" (queue=${queue.upcoming.length}, current=${queue.current?.title ?? "(none)"})`);
 }
 
 async function handleAutocomplete(ix: AutocompleteInteraction) {
@@ -561,7 +656,7 @@ async function handleAutocomplete(ix: AutocompleteInteraction) {
   }
   const hits = await searchSuggestions(partial, 5);
   const choices = hits.map((h) => {
-    const namePrefix = `${h.title} (${fmtDuration(h.durationSec)})`;
+    const namePrefix = `${h.title} (${fmtSec(h.durationSec)})`;
     return {
       // Discord caps option names at 100 chars.
       name:  namePrefix.length > 100 ? namePrefix.slice(0, 97) + "..." : namePrefix,
