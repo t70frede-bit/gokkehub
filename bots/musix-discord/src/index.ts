@@ -231,10 +231,30 @@ async function setupVoiceConnection(
   return { voice, player, voiceChannelId };
 }
 
-function startRealtimeForRoom(roomId: string, onNewRound: () => void): RealtimeChannel {
+// Subset of timelinedrop's SpotifyTrack we actually need — see
+// apps/timelinedrop/src/lib/types.ts for the full shape. Bot only needs id
+// (cache key), name (search query), artist (search query).
+interface BotSpotifyTrack {
+  id:     string;
+  name:   string;
+  artist: string;
+}
+
+interface BotRound {
+  id?:                  number;
+  outcome?:             string | null;
+  track?:               BotSpotifyTrack | null;
+  song_limit_seconds?:  number | null;
+}
+
+interface RealtimeCallbacks {
+  onRoundInsert: (round: BotRound) => void;
+}
+
+function startRealtimeForRoom(roomId: string, cb: RealtimeCallbacks): RealtimeChannel {
   // Subscribes to the same Postgres change streams the React clients use.
-  // Phase 3: round INSERTs trigger a test tone via the passed-in callback.
-  // Phase 5 will replace the test tone with the actual track resolver.
+  // Round INSERTs drive song playback; room UPDATEs (Phase 5 step 2) will
+  // drive pause/resume sync.
   const channel = supabase
     .channel(`bot-room:${roomId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "tl_rooms",  filter: `id=eq.${roomId}` },
@@ -248,19 +268,47 @@ function startRealtimeForRoom(roomId: string, onNewRound: () => void): RealtimeC
       })
     .on("postgres_changes", { event: "*", schema: "public", table: "tl_rounds", filter: `room_id=eq.${roomId}` },
       (payload) => {
-        const n = payload.new as { id?: number; outcome?: string | null; track?: { artist?: string; name?: string } } | null;
+        const n = payload.new as BotRound | null;
         console.log(`[realtime] round ${n?.id ?? "?"} ${payload.eventType} (room ${roomId})`, {
           outcome: n?.outcome,
           track:   n?.track ? `${n.track.artist} — ${n.track.name}` : undefined,
+          limit:   n?.song_limit_seconds,
         });
-        if (payload.eventType === "INSERT") {
-          onNewRound();
+        if (payload.eventType === "INSERT" && n) {
+          cb.onRoundInsert(n);
         }
       })
     .subscribe((status) => {
       console.log(`[realtime] room ${roomId} subscription → ${status}`);
     });
   return channel;
+}
+
+// Resolves the round's SpotifyTrack to a YouTube video and starts streaming
+// it through the given player. Replaces whatever was playing before.
+// Logs and returns on errors so a single bad song doesn't take the bot down.
+async function playRoundTrack(player: AudioPlayer, round: BotRound) {
+  if (!round.track) {
+    console.warn(`[round] insert without a track on round ${round.id}; skipping`);
+    return;
+  }
+  const { track } = round;
+  try {
+    const resolved = await resolveTrack({
+      id:      track.id,
+      name:    track.name,
+      artists: [track.artist],
+    });
+    if (!resolved) {
+      console.warn(`[round] no YouTube match for "${track.artist} — ${track.name}"`);
+      return;
+    }
+    const resource = await createStreamResource(resolved.videoId);
+    player.play(resource);
+    console.log(`[round] ▶ playing "${resolved.videoTitle}" for round ${round.id}`);
+  } catch (err) {
+    console.warn(`[round] playback failed for round ${round.id}:`, err);
+  }
 }
 
 // ── Slash commands ──────────────────────────────────────────────────────────
@@ -372,10 +420,11 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   const conn = await setupVoiceConnection(ix);
   if (!conn) return;
 
-  // Subscribe to realtime; round INSERTs trigger a test tone (Phase 5
-  // replaces this with the real song stream).
-  const realtime = startRealtimeForRoom(roomCode, () => {
-    playTestTone(conn.player, 440, 1.2, "round-start tone");
+  // Subscribe to realtime; round INSERTs trigger song playback via the
+  // YouTube resolver + yt-dlp stream. Phase 5 step 2 will add pause/resume
+  // sync from tl_rooms.playing_since.
+  const realtime = startRealtimeForRoom(roomCode, {
+    onRoundInsert: (round) => { void playRoundTrack(conn.player, round); },
   });
 
   const session: Session = {
@@ -394,8 +443,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
 
   await ix.editReply(
     `🎵 Joined <#${conn.voiceChannelId}> and following room **${roomCode}**. ` +
-    `(Phase 3 — you'll hear a chime now and a tone on each new round. ` +
-    `Real song playback ships in Phase 5.)`,
+    `Each new round will play the song in voice automatically.`,
   );
   console.log(`[musix-bot] /join → ${describeSession(session)} by user ${ix.user.tag}`);
 }
