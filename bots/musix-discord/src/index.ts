@@ -26,6 +26,7 @@ import {
   Routes,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  AutocompleteInteraction,
   Events,
   MessageFlags,
 } from "discord.js";
@@ -42,7 +43,14 @@ import {
 } from "@discordjs/voice";
 import { spawn } from "node:child_process";
 import ffmpegPath from "ffmpeg-static";
-import { resolveTrack, createStreamResource } from "./resolver.js";
+import {
+  resolveTrack,
+  resolveByVideoId,
+  createStreamResource,
+  extractVideoId,
+  searchSuggestions,
+  type ResolvedTrack,
+} from "./resolver.js";
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const {
@@ -279,13 +287,28 @@ const musixCommand = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub
-      .setName("test")
-      .setDescription("Resolve a YouTube query and play it in the current voice channel (Phase 4 test)")
+      .setName("play")
+      .setDescription("Play a song in your voice channel (search query, YouTube URL, or video ID)")
       .addStringOption(opt =>
         opt
           .setName("query")
-          .setDescription("Artist + title, e.g. 'Queen Bohemian Rhapsody'")
+          .setDescription("Song title, 'artist - title', YouTube URL, or video ID")
           .setRequired(true)
+          .setAutocomplete(true)
+          .setMinLength(2)
+          .setMaxLength(200),
+      ),
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName("test")
+      .setDescription("Alias of /musix play — kept for parity with the Phase 4 verification flow")
+      .addStringOption(opt =>
+        opt
+          .setName("query")
+          .setDescription("Song title, 'artist - title', YouTube URL, or video ID")
+          .setRequired(true)
+          .setAutocomplete(true)
           .setMinLength(2)
           .setMaxLength(200),
       ),
@@ -394,12 +417,10 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
   console.log(`[musix-bot] /leave → cleared session: ${describeSession(cleared)}`);
 }
 
-// Phase 4 verification — resolve a free-text query through the YouTube
-// resolver and play it. If there's no existing session, the bot joins the
-// caller's current voice channel as an ad-hoc session (no realtime
-// subscription). Phase 5 will replace this with auto-playback driven by
-// tl_rounds INSERTs.
-async function handleTest(ix: ChatInputCommandInteraction) {
+// Shared core for /musix play and /musix test. Resolves a free-text query,
+// a YouTube URL, or a bare 11-char video ID; auto-joins the caller's voice
+// channel if no session is active; streams via yt-dlp.
+async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | "test") {
   if (!ix.guildId) {
     await ix.reply({ content: "This command only works in a server.", flags: MessageFlags.Ephemeral });
     return;
@@ -423,17 +444,25 @@ async function handleTest(ix: ChatInputCommandInteraction) {
       player:          conn.player,
     };
     sessions.set(ix.guildId, session);
-    console.log(`[musix-bot] /test created ad-hoc session: ${describeSession(session)}`);
+    console.log(`[musix-bot] /${label} created ad-hoc session: ${describeSession(session)}`);
   }
 
-  const resolved = await resolveTrack({
-    id:      `test-${Date.now()}`,
-    name:    query,
-    artists: [],
-  });
-  if (!resolved) {
-    await ix.editReply(`Couldn't find a YouTube result for **${query}**.`);
-    return;
+  // If the user pasted a URL or ID (or picked an autocomplete choice whose
+  // value is a videoId), skip search and stream directly.
+  const directId = extractVideoId(query);
+  let resolved: ResolvedTrack | null;
+  if (directId) {
+    resolved = await resolveByVideoId(directId);
+    if (!resolved) {
+      await ix.editReply(`Couldn't load video metadata for **${directId}** — is the ID valid?`);
+      return;
+    }
+  } else {
+    resolved = await resolveTrack({ id: `${label}-${Date.now()}`, name: query, artists: [] });
+    if (!resolved) {
+      await ix.editReply(`Couldn't find a YouTube result for **${query}**.`);
+      return;
+    }
   }
 
   let resource;
@@ -453,7 +482,45 @@ async function handleTest(ix: ChatInputCommandInteraction) {
   await ix.editReply(
     `▶️ Playing **${resolved.videoTitle}** (${resolved.durationSec}s)\n${resolved.videoUrl}`,
   );
-  console.log(`[musix-bot] /test → ${resolved.videoTitle} in ${describeSession(session)}`);
+  console.log(`[musix-bot] /${label} → ${resolved.videoTitle} in ${describeSession(session)}`);
+}
+
+function fmtDuration(seconds: number): string {
+  if (!seconds || seconds < 1) return "?:??";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+async function handleAutocomplete(ix: AutocompleteInteraction) {
+  if (ix.commandName !== "musix") return;
+  const focused = ix.options.getFocused(true);
+  if (focused.name !== "query") {
+    await ix.respond([]);
+    return;
+  }
+  const partial = (focused.value as string).trim();
+  if (partial.length < 2) {
+    await ix.respond([]);
+    return;
+  }
+  // If the user already pasted a URL / ID, we don't need to search — just
+  // confirm the input as the only choice so they can submit cleanly.
+  const directId = extractVideoId(partial);
+  if (directId) {
+    await ix.respond([{ name: `▶ Video ID ${directId}`, value: `https://www.youtube.com/watch?v=${directId}` }]);
+    return;
+  }
+  const hits = await searchSuggestions(partial, 5);
+  const choices = hits.map((h) => {
+    const namePrefix = `${h.title} (${fmtDuration(h.durationSec)})`;
+    return {
+      // Discord caps option names at 100 chars.
+      name:  namePrefix.length > 100 ? namePrefix.slice(0, 97) + "..." : namePrefix,
+      value: `https://www.youtube.com/watch?v=${h.id}`,
+    };
+  });
+  await ix.respond(choices);
 }
 
 // ── Discord client ──────────────────────────────────────────────────────────
@@ -474,13 +541,19 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (ix) => {
+  if (ix.isAutocomplete()) {
+    try { await handleAutocomplete(ix); }
+    catch (err) { console.warn(`[musix-bot] autocomplete threw:`, err); }
+    return;
+  }
   if (!ix.isChatInputCommand()) return;
   if (ix.commandName !== "musix") return;
   const sub = ix.options.getSubcommand();
   try {
     if      (sub === "join")  await handleJoin(ix);
     else if (sub === "leave") await handleLeave(ix);
-    else if (sub === "test")  await handleTest(ix);
+    else if (sub === "play")  await handlePlayQuery(ix, "play");
+    else if (sub === "test")  await handlePlayQuery(ix, "test");
     else await ix.reply({ content: `Unknown subcommand: ${sub}`, flags: MessageFlags.Ephemeral });
   } catch (err) {
     console.error(`[musix-bot] /musix ${sub} threw:`, err);

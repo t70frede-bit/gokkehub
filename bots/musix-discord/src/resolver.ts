@@ -49,10 +49,19 @@ function isLikelyBadMatch(title: string): boolean {
   return /\b(live|concert|cover|reaction|tutorial|karaoke|instrumental|lyrics? video|hour)\b/i.test(title);
 }
 
-interface SearchHit {
+export interface SearchHit {
   id:          string;
   title:       string;
   durationSec: number;
+}
+
+// Match a YouTube video ID out of a URL, a youtu.be short link, a /shorts/
+// link, a music.youtube.com link, or a bare 11-char video ID.
+const VIDEO_ID_RE = /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|^)([A-Za-z0-9_-]{11})(?:\b|$)/;
+
+export function extractVideoId(input: string): string | null {
+  const m = input.trim().match(VIDEO_ID_RE);
+  return m ? m[1] : null;
 }
 
 // youtubei.js's typed result shape varies by node type; we only read a few
@@ -109,6 +118,54 @@ export async function resolveTrack(track: ResolvableTrack): Promise<ResolvedTrac
   cache.set(track.id, resolved);
   console.log(`[resolver] "${query}" → "${resolved.videoTitle}" (${resolved.durationSec}s) ${resolved.videoUrl}`);
   return resolved;
+}
+
+// Direct lookup by video ID — used when the user passes a URL / video ID
+// to /musix play instead of a search query, and as the backing implementation
+// for autocomplete suggestions submitted as videoId values.
+export async function resolveByVideoId(videoId: string): Promise<ResolvedTrack | null> {
+  try {
+    const yt = await getInnertube();
+    const info = await yt.getBasicInfo(videoId);
+    const details = info.basic_info;
+    return {
+      spotifyId:   `yt-${videoId}`,
+      videoUrl:    `https://www.youtube.com/watch?v=${videoId}`,
+      videoId,
+      videoTitle:  details.title ?? videoId,
+      durationSec: details.duration ?? 0,
+      resolvedAt:  Date.now(),
+    };
+  } catch (err) {
+    console.warn(`[resolver] getBasicInfo failed for ${videoId}:`, err);
+    return null;
+  }
+}
+
+// Search suggestions for slash-command autocomplete. Returns flat hits
+// (videoId + title + duration) so the bot can render them as choices and
+// the handler can stream directly via the selected videoId. Caches by
+// query to avoid hammering YouTube while the user types.
+const suggestCache = new Map<string, { at: number; hits: SearchHit[] }>();
+const SUGGEST_TTL_MS = 60_000;
+
+export async function searchSuggestions(query: string, limit = 5): Promise<SearchHit[]> {
+  const key = query.trim().toLowerCase();
+  if (!key) return [];
+  const cached = suggestCache.get(key);
+  if (cached && Date.now() - cached.at < SUGGEST_TTL_MS) {
+    return cached.hits.slice(0, limit);
+  }
+  try {
+    const yt = await getInnertube();
+    const results = await yt.search(key, { type: "video" });
+    const hits = extractHits(results).slice(0, limit);
+    suggestCache.set(key, { at: Date.now(), hits });
+    return hits;
+  } catch (err) {
+    console.warn(`[resolver] suggestion search failed for "${key}":`, err);
+    return [];
+  }
 }
 
 // Streaming via yt-dlp subprocess. yt-dlp is THE actively-maintained YouTube
