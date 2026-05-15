@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@discordjs/voice": "^0.18.0",
+    "@discordjs/voice": "^0.19.2",
     "@noble/ciphers": "^1.2.0",
     "@supabase/supabase-js": "^2.45.0",
     "discord.js": "^14.16.0",

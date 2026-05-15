@@ -288,14 +288,22 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
       channelId:      voiceChannelId,
       guildId:        ix.guildId,
       adapterCreator: ix.guild.voiceAdapterCreator,
-      selfDeaf:       true,   // bot doesn't need to hear others
+      selfDeaf:       true,
       selfMute:       false,
     });
-    // Log every state transition so we can see where the handshake stalls
-    // if Ready never fires. Useful for diagnosing UDP-blocked / encryption
-    // / Discord-gateway issues — paste these into the chat if /join fails.
+    voice.on("error", (err) => console.warn(`[voice/error]`, err));
+    // Lightweight observability: log voice state transitions and any underlying
+    // networking close code. Only fires on transitions, not per-packet — so
+    // production-safe but still useful when the handshake fails. (Failures
+    // surface as "code=4017" etc.; 4014 = bot kicked / channel deleted.)
+    const hookedNetworkings = new WeakSet<object>();
     voice.on("stateChange", (oldState, newState) => {
       console.log(`[voice] state: ${oldState.status} → ${newState.status}`);
+      const net = (newState as { networking?: { on: (e: string, fn: (...args: unknown[]) => void) => void } }).networking;
+      if (net && !hookedNetworkings.has(net)) {
+        hookedNetworkings.add(net);
+        net.on("close", (code) => console.log(`[voice/close] networking closed code=${code}`));
+      }
     });
     await entersState(voice, VoiceConnectionStatus.Ready, 20_000);
   } catch (err) {
