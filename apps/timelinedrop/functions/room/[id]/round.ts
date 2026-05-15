@@ -139,7 +139,13 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
   // year_tolerance widens both edges of the placement window. ±5 Years token
   // sets this to 5; default is 0.
   const tolerance = round.year_tolerance ?? 0;
-  const correct =
+  // At least one bound must be set: both-null means "no placement attempted"
+  // and is the auto-fail path used when the turn timer expires without the
+  // captain dragging the card. Without this guard, both-null collapsed the
+  // boolean to `(true && true) === true` and silently marked the round
+  // correct — the bug the timer-expiry behaviour was originally hitting.
+  const placed = left_year !== null || right_year !== null;
+  const correct = placed &&
     (left_year === null  || (left_year - tolerance) <= actualYear) &&
     (right_year === null || actualYear <= (right_year + tolerance));
 

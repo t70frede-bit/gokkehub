@@ -1792,9 +1792,18 @@ export default function GamePage() {
 
   const onTimerExpire = useCallback(async () => {
     if (!isMyTurn || !iAmCaptain || !state?.round || state.round.outcome !== null) return;
+    // Submit whatever the captain has staged (if anything). If they never
+    // dragged the card, both staged years are null and the server treats
+    // that as an auto-fail (the both-null guard added to handlePlace).
+    const r = state.round;
     await fetch(`/room/${roomId}/round?action=place`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ round_id: state.round.id, left_year: null, right_year: null, player_id: myPlayerId }),
+      body: JSON.stringify({
+        round_id:   r.id,
+        left_year:  r.staged_left_year  ?? null,
+        right_year: r.staged_right_year ?? null,
+        player_id:  myPlayerId,
+      }),
     });
   }, [isMyTurn, iAmCaptain, state?.round, roomId, myPlayerId]);
 
