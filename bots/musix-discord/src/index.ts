@@ -155,10 +155,12 @@ interface Session {
   voice:            VoiceConnection;
   player:           AudioPlayer;
   // Game-mode state (unused in music mode).
-  currentRoundId:        number | null;
-  currentRoundTeamId:    number | null;
-  currentRoundDurationSec: number;
-  songLimitTimer:        NodeJS.Timeout | null;
+  currentRoundId:           number | null;
+  currentRoundTeamId:       number | null;
+  currentRoundDurationSec:  number;
+  currentVideoId:           string | null; // for Restart / +30s re-spawn
+  currentSongLimitSeconds:  number | null;
+  songLimitTimer:           NodeJS.Timeout | null;
   // Playback timing (game-mode round) — shape matches QueueState so
   // computeElapsedMs + renderProgressBar can be reused.
   playStartedAt:       number;
@@ -639,6 +641,24 @@ async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): 
   return { teams, currentTeamId, currentTeamName };
 }
 
+function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>[] {
+  if (!session.currentVideoId) return [];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("musix-game-restart")
+        .setLabel("Restart")
+        .setEmoji("⏮")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId("musix-game-skip30")
+        .setLabel("+30s")
+        .setEmoji("⏩")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
 function buildGameNowPlayingMessage(session: Session, snapshot: GameSnapshot): {
   content:    string;
   components: ActionRowBuilder<ButtonBuilder>[];
@@ -671,7 +691,45 @@ function buildGameNowPlayingMessage(session: Session, snapshot: GameSnapshot): {
     lines.push("🏆 **Scores**");
     lines.push(scoreLines);
   }
-  return { content: lines.join("\n"), components: [] };
+  return { content: lines.join("\n"), components: buildGameModeButtons(session) };
+}
+
+// Re-streams the current round's song from a given offset. Used by the
+// Restart (seek=0) and +30s buttons. yt-dlp does the actual seek via its
+// --download-sections flag; the bot just patches its timing state so the
+// progress bar shows the new position and re-arms the Song Limiter.
+async function seekGameRound(session: Session, seekSec: number): Promise<void> {
+  if (!session.currentVideoId) return;
+  const total = session.currentRoundDurationSec;
+  // Clamp to a sensible range.
+  if (total > 0) seekSec = Math.min(Math.max(seekSec, 0), Math.max(0, total - 2));
+  else           seekSec = Math.max(seekSec, 0);
+
+  try {
+    const resource = await createStreamResource(session.currentVideoId, { seekSec });
+    session.player.play(resource);
+    session.playStartedAt       = Date.now() - seekSec * 1000;
+    session.pauseStartedAt      = null;
+    session.pausedAccumulatedMs = 0;
+    console.log(`[round] ⏯ seek to ${seekSec}s for round ${session.currentRoundId}`);
+  } catch (err) {
+    console.warn(`[round] seek to ${seekSec}s failed:`, err);
+    return;
+  }
+  if (session.roomId) {
+    try {
+      await supabase
+        .from("tl_rooms")
+        .update({ playing_since: session.playStartedAt, paused_at_ms: null })
+        .eq("id", session.roomId);
+    } catch (err) {
+      console.warn(`[round] couldn't update DB on seek:`, err);
+    }
+  }
+  // Re-arm the Song Limiter based on the new elapsed time. If the seek
+  // landed past the limit, fireSongLimitPause runs immediately.
+  maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
+  void tickGameNowPlaying(session);
 }
 
 // Refresh the game-mode Now-Playing message in place. Called by the 10s
@@ -793,9 +851,11 @@ async function playRoundTrack(session: Session, round: BotRound) {
     const resource = await createStreamResource(resolved.videoId);
     session.player.play(resource);
     resolvedDurationSec     = resolved.durationSec;
-    session.currentRoundId  = round.id ?? null;
-    session.currentRoundTeamId      = round.team_id ?? null;
-    session.currentRoundDurationSec = resolvedDurationSec;
+    session.currentRoundId           = round.id ?? null;
+    session.currentRoundTeamId       = round.team_id ?? null;
+    session.currentRoundDurationSec  = resolvedDurationSec;
+    session.currentVideoId           = resolved.videoId;
+    session.currentSongLimitSeconds  = round.song_limit_seconds ?? null;
     session.playStartedAt       = Date.now();
     session.pauseStartedAt      = null;
     session.pausedAccumulatedMs = 0;
@@ -965,6 +1025,8 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     currentRoundId:          null,
     currentRoundTeamId:      null,
     currentRoundDurationSec: 0,
+    currentVideoId:          null,
+    currentSongLimitSeconds: null,
     songLimitTimer:          null,
     playStartedAt:           0,
     pauseStartedAt:          null,
@@ -981,7 +1043,8 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
       // changes don't drive playback but we refresh the message so the
       // scoreboard stays current.
       if (round.id === session.currentRoundId) {
-        maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
+        session.currentSongLimitSeconds = round.song_limit_seconds ?? null;
+        maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
       }
       void tickGameNowPlaying(session);
     },
@@ -1060,6 +1123,8 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentRoundId:          null,
       currentRoundTeamId:      null,
       currentRoundDurationSec: 0,
+      currentVideoId:          null,
+      currentSongLimitSeconds: null,
       songLimitTimer:          null,
       playStartedAt:           0,
       pauseStartedAt:          null,
@@ -1133,8 +1198,33 @@ async function handleButton(ix: ButtonInteraction) {
   if (!ix.customId.startsWith("musix-")) return;
   if (!ix.guildId) return;
   const session = sessions.get(ix.guildId);
-  const queue   = queues.get(ix.guildId);
-  if (!session || session.mode !== "music" || !queue) {
+  if (!session) {
+    await ix.reply({ content: "No bot session active in this server.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // Game-mode buttons (musix-game-*) route separately.
+  if (ix.customId.startsWith("musix-game-")) {
+    if (session.mode !== "game") {
+      await ix.reply({ content: "Game-mode controls only apply during a musix room.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    if (!session.currentVideoId) {
+      await ix.reply({ content: "No round is currently playing.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await ix.deferUpdate();
+    if (ix.customId === "musix-game-restart") {
+      await seekGameRound(session, 0);
+    } else if (ix.customId === "musix-game-skip30") {
+      const currentElapsedSec = Math.floor(computeElapsedMs(session) / 1000);
+      await seekGameRound(session, currentElapsedSec + 30);
+    }
+    return;
+  }
+
+  const queue = queues.get(ix.guildId);
+  if (session.mode !== "music" || !queue) {
     await ix.reply({ content: "No music session active in this server.", flags: MessageFlags.Ephemeral });
     return;
   }

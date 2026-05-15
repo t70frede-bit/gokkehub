@@ -205,21 +205,26 @@ function ensureYtDlp(): Promise<string> {
   return ytDlpReadyPromise;
 }
 
-export async function createStreamResource(videoId: string): Promise<AudioResource> {
+export async function createStreamResource(
+  videoId: string,
+  opts: { seekSec?: number } = {},
+): Promise<AudioResource> {
   const binPath  = await ensureYtDlp();
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const proc = spawn(
-    binPath,
-    [
-      "--quiet",
-      "--no-warnings",
-      "--no-playlist",
-      "--format", "bestaudio/best",
-      "--output", "-",
-      videoUrl,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
+  const args = [
+    "--quiet",
+    "--no-warnings",
+    "--no-playlist",
+    "--format", "bestaudio/best",
+    "--output", "-",
+  ];
+  // yt-dlp's --download-sections "*N-" remuxes the audio starting at N
+  // seconds. Used for the in-game Restart (seek=0 → omit) and +30s buttons.
+  if (opts.seekSec && opts.seekSec > 0) {
+    args.push("--download-sections", `*${opts.seekSec}-`);
+  }
+  args.push(videoUrl);
+  const proc = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
   proc.stderr.on("data", (chunk: Buffer) => {
     const msg = chunk.toString().trim();
