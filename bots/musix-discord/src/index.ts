@@ -154,10 +154,21 @@ interface Session {
   realtime:         RealtimeChannel | null;
   voice:            VoiceConnection;
   player:           AudioPlayer;
-  // Game-mode state for Song Limiter enforcement. Updated each round.
-  currentRoundId:   number | null;
-  roundStartedAt:   number;               // ms epoch; 0 if no round playing
-  songLimitTimer:   NodeJS.Timeout | null;
+  // Game-mode state (unused in music mode).
+  currentRoundId:        number | null;
+  currentRoundTeamId:    number | null;
+  currentRoundDurationSec: number;
+  songLimitTimer:        NodeJS.Timeout | null;
+  // Playback timing (game-mode round) — shape matches QueueState so
+  // computeElapsedMs + renderProgressBar can be reused.
+  playStartedAt:       number;
+  pauseStartedAt:      number | null;
+  pausedAccumulatedMs: number;
+  // Game-mode Now-Playing message — posted on round INSERT, refreshed on
+  // round/room updates and on a 10-second progress-bar tick.
+  notificationChannelId: string | null;
+  currentMessage:        { channelId: string; messageId: string } | null;
+  progressTimer:         NodeJS.Timeout | null;
 }
 
 const sessions = new Map<string, Session>(); // key: guildId
@@ -201,11 +212,16 @@ function getOrCreateQueue(guildId: string): QueueState {
   return q;
 }
 
-function computeElapsedMs(q: QueueState): number {
-  if (!q.playStartedAt) return 0;
+interface TimingState {
+  playStartedAt:       number;
+  pauseStartedAt:      number | null;
+  pausedAccumulatedMs: number;
+}
+function computeElapsedMs(t: TimingState): number {
+  if (!t.playStartedAt) return 0;
   const now = Date.now();
-  const pausedNow = q.pauseStartedAt ? now - q.pauseStartedAt : 0;
-  return Math.max(0, now - q.playStartedAt - q.pausedAccumulatedMs - pausedNow);
+  const pausedNow = t.pauseStartedAt ? now - t.pauseStartedAt : 0;
+  return Math.max(0, now - t.playStartedAt - t.pausedAccumulatedMs - pausedNow);
 }
 
 function renderProgressBar(elapsedSec: number, totalSec: number, width = 20): string {
@@ -398,6 +414,8 @@ async function teardownSession(guildId: string): Promise<Session | null> {
     clearTimeout(existing.songLimitTimer);
     existing.songLimitTimer = null;
   }
+  stopGameProgressTimer(existing);
+  await disableOldGameMessage(existing);
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
   try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
   if (existing.realtime) {
@@ -503,6 +521,7 @@ interface BotSpotifyTrack {
 
 interface BotRound {
   id?:                  number;
+  team_id?:             number;
   outcome?:             string | null;
   track?:               BotSpotifyTrack | null;
   song_limit_seconds?:  number | null;
@@ -558,16 +577,145 @@ function startRealtimeForRoom(roomId: string, cb: RealtimeCallbacks): RealtimeCh
 // Mirror room.playing_since into the bot's audio player. Anywhere can flip
 // it — the React host UI, this same bot when the Song Limiter fires, a
 // future remote control — and the bot follows along. Idempotent: if the
-// player is already in the desired state, this is a no-op.
-function syncPauseFromRoom(player: AudioPlayer, room: BotRoom) {
+// player is already in the desired state, this is a no-op. Also tracks
+// pause-elapsed timing so the game-mode progress bar pauses cleanly.
+function syncPauseFromRoom(session: Session, room: BotRoom) {
   const wantsPlaying = room.playing_since !== null && room.playing_since !== undefined;
-  const status = player.state.status;
+  const status = session.player.state.status;
   if (wantsPlaying && status === AudioPlayerStatus.Paused) {
-    player.unpause();
+    if (session.pauseStartedAt !== null) {
+      session.pausedAccumulatedMs += Date.now() - session.pauseStartedAt;
+      session.pauseStartedAt = null;
+    }
+    session.player.unpause();
     console.log(`[round] resumed via room.playing_since=${room.playing_since}`);
+    void tickGameNowPlaying(session);
   } else if (!wantsPlaying && status === AudioPlayerStatus.Playing) {
-    player.pause();
+    session.pauseStartedAt = Date.now();
+    session.player.pause();
     console.log(`[round] paused via room.playing_since=null`);
+    void tickGameNowPlaying(session);
+  }
+}
+
+// ── Game-mode display ───────────────────────────────────────────────────────
+// Posts and refreshes a public "Now playing" message in the channel where
+// /musix join was invoked. By design this NEVER shows song name/artist —
+// musix is a guess-the-song game and revealing the track would defeat it.
+// What it does show: round duration, whose turn it is, all-team scores,
+// and a progress bar that ticks every 10 seconds.
+
+interface GameTeam {
+  id:     number;
+  name:   string;
+  score:  number;
+}
+
+interface GameSnapshot {
+  teams:           GameTeam[];
+  currentTeamId:   number | null;
+  currentTeamName: string | null;
+}
+
+async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): Promise<GameSnapshot> {
+  const [teamsRes, timelineRes] = await Promise.all([
+    supabase.from("tl_teams").select("id, name, sort_order").eq("room_id", roomId).order("sort_order"),
+    supabase.from("tl_timeline").select("team_id").eq("room_id", roomId),
+  ]);
+  const teamRows = (teamsRes.data ?? []) as { id: number; name: string; sort_order: number }[];
+  const timelineRows = (timelineRes.data ?? []) as { team_id: number }[];
+  const counts = new Map<number, number>();
+  for (const row of timelineRows) {
+    counts.set(row.team_id, (counts.get(row.team_id) ?? 0) + 1);
+  }
+  const teams: GameTeam[] = teamRows.map(t => ({
+    id:    t.id,
+    name:  t.name,
+    score: counts.get(t.id) ?? 0,
+  }));
+  const currentTeamName = currentTeamId != null
+    ? (teams.find(t => t.id === currentTeamId)?.name ?? null)
+    : null;
+  return { teams, currentTeamId, currentTeamName };
+}
+
+function buildGameNowPlayingMessage(session: Session, snapshot: GameSnapshot): {
+  content:    string;
+  components: ActionRowBuilder<ButtonBuilder>[];
+} {
+  const paused     = session.pauseStartedAt !== null;
+  const elapsedSec = Math.floor(computeElapsedMs(session) / 1000);
+  const totalSec   = session.currentRoundDurationSec;
+  const indicator  = paused ? "⏸" : "🎵";
+  const bar        = renderProgressBar(elapsedSec, totalSec);
+  const turn       = snapshot.currentTeamName
+    ? `🎯 **${snapshot.currentTeamName}**'s turn`
+    : "🎯 Between rounds";
+
+  const ranked = [...snapshot.teams]
+    .map((t, idx) => ({ ...t, _origIdx: idx }))
+    .sort((a, b) => b.score - a.score || a._origIdx - b._origIdx);
+  const medals = ["🥇", "🥈", "🥉"];
+  const scoreLines = ranked
+    .map((t, i) => `${medals[i] ?? "•"} ${t.name} — **${t.score}**`)
+    .join("\n");
+
+  const lines = [
+    `${indicator} **Now playing** · ${fmtSec(totalSec)}`,
+    turn,
+    "",
+    bar,
+  ];
+  if (scoreLines) {
+    lines.push("");
+    lines.push("🏆 **Scores**");
+    lines.push(scoreLines);
+  }
+  return { content: lines.join("\n"), components: [] };
+}
+
+// Refresh the game-mode Now-Playing message in place. Called by the 10s
+// tick, by round-update events, and by pause/resume sync.
+async function tickGameNowPlaying(session: Session): Promise<void> {
+  if (session.mode !== "game") return;
+  if (!session.roomId || !session.currentMessage) return;
+  try {
+    const snapshot = await fetchGameSnapshot(session.roomId, session.currentRoundTeamId);
+    const channel  = await client.channels.fetch(session.currentMessage.channelId);
+    if (!channel || !channel.isSendable() || !("messages" in channel)) return;
+    const msg = await channel.messages.fetch(session.currentMessage.messageId);
+    await msg.edit(buildGameNowPlayingMessage(session, snapshot));
+  } catch (err) {
+    console.warn(`[round] game now-playing edit failed:`, err);
+    stopGameProgressTimer(session);
+  }
+}
+
+function startGameProgressTimer(session: Session): void {
+  stopGameProgressTimer(session);
+  session.progressTimer = setInterval(() => { void tickGameNowPlaying(session); }, 10_000);
+  session.progressTimer.unref?.();
+}
+
+function stopGameProgressTimer(session: Session): void {
+  if (session.progressTimer) {
+    clearInterval(session.progressTimer);
+    session.progressTimer = null;
+  }
+}
+
+async function disableOldGameMessage(session: Session): Promise<void> {
+  const ref = session.currentMessage;
+  session.currentMessage = null;
+  if (!ref) return;
+  try {
+    const channel = await client.channels.fetch(ref.channelId);
+    if (channel && channel.isSendable() && "messages" in channel) {
+      const msg = await channel.messages.fetch(ref.messageId);
+      await msg.edit({ components: [] });
+    }
+  } catch {
+    // Message may have been deleted; nothing to clean up.
   }
 }
 
@@ -585,8 +733,8 @@ function clearSongLimitTimer(session: Session) {
 function maybeScheduleSongLimit(session: Session, songLimitSeconds: number | null | undefined) {
   clearSongLimitTimer(session);
   if (!songLimitSeconds || songLimitSeconds <= 0) return;
-  if (!session.roundStartedAt) return;
-  const elapsedMs   = Date.now() - session.roundStartedAt;
+  if (!session.playStartedAt) return;
+  const elapsedMs   = Date.now() - session.playStartedAt;
   const remainingMs = (songLimitSeconds * 1000) - elapsedMs;
   if (remainingMs <= 0) {
     void fireSongLimitPause(session, songLimitSeconds);
@@ -605,6 +753,7 @@ async function fireSongLimitPause(session: Session, limitSeconds: number) {
   console.log(`[round] ⏱ song-limit reached (${limitSeconds}s) for round ${session.currentRoundId}`);
   if (session.player.state.status === AudioPlayerStatus.Playing) {
     session.player.pause();
+    session.pauseStartedAt = Date.now();
   }
   if (session.roomId) {
     try {
@@ -616,18 +765,21 @@ async function fireSongLimitPause(session: Session, limitSeconds: number) {
       console.warn(`[round] couldn't update DB on song-limit pause:`, err);
     }
   }
+  void tickGameNowPlaying(session);
 }
 
 // Resolves the round's SpotifyTrack to a YouTube video and starts streaming
-// it through the session's player. Replaces whatever was playing before.
-// Also updates room.playing_since so React clients see the bot started
-// playback, and arms the Song Limiter timer if the round carries one.
+// it. Replaces whatever was playing before. Also updates room.playing_since
+// so React clients see the bot started playback, arms the Song Limiter,
+// and posts the public Now-Playing message (which carefully omits the
+// song name — that's the whole point of musix).
 async function playRoundTrack(session: Session, round: BotRound) {
   if (!round.track) {
     console.warn(`[round] insert without a track on round ${round.id}; skipping`);
     return;
   }
   const { track } = round;
+  let resolvedDurationSec = 0;
   try {
     const resolved = await resolveTrack({
       id:      track.id,
@@ -635,14 +787,19 @@ async function playRoundTrack(session: Session, round: BotRound) {
       artists: [track.artist],
     });
     if (!resolved) {
-      console.warn(`[round] no YouTube match for "${track.artist} — ${track.name}"`);
+      console.warn(`[round] no YouTube match for round ${round.id}`);
       return;
     }
     const resource = await createStreamResource(resolved.videoId);
     session.player.play(resource);
-    session.currentRoundId = round.id ?? null;
-    session.roundStartedAt = Date.now();
-    console.log(`[round] ▶ playing "${resolved.videoTitle}" for round ${round.id}`);
+    resolvedDurationSec     = resolved.durationSec;
+    session.currentRoundId  = round.id ?? null;
+    session.currentRoundTeamId      = round.team_id ?? null;
+    session.currentRoundDurationSec = resolvedDurationSec;
+    session.playStartedAt       = Date.now();
+    session.pauseStartedAt      = null;
+    session.pausedAccumulatedMs = 0;
+    console.log(`[round] ▶ playing round ${round.id} (${resolvedDurationSec}s)`);
   } catch (err) {
     console.warn(`[round] playback failed for round ${round.id}:`, err);
     return;
@@ -652,13 +809,31 @@ async function playRoundTrack(session: Session, round: BotRound) {
     try {
       await supabase
         .from("tl_rooms")
-        .update({ playing_since: session.roundStartedAt, paused_at_ms: null })
+        .update({ playing_since: session.playStartedAt, paused_at_ms: null })
         .eq("id", session.roomId);
     } catch (err) {
       console.warn(`[round] couldn't update DB on round-start:`, err);
     }
   }
   maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
+  await postGameNowPlayingMessage(session);
+  startGameProgressTimer(session);
+}
+
+// Strip buttons from the previous round's Now-Playing message (if any),
+// fetch a fresh game snapshot, and post the new Now-Playing message.
+async function postGameNowPlayingMessage(session: Session) {
+  if (!session.roomId || !session.notificationChannelId) return;
+  await disableOldGameMessage(session);
+  try {
+    const channel = await client.channels.fetch(session.notificationChannelId);
+    if (!channel || !channel.isSendable()) return;
+    const snapshot = await fetchGameSnapshot(session.roomId, session.currentRoundTeamId);
+    const sent     = await channel.send(buildGameNowPlayingMessage(session, snapshot));
+    session.currentMessage = { channelId: sent.channelId, messageId: sent.id };
+  } catch (err) {
+    console.warn(`[round] couldn't post game now-playing message:`, err);
+  }
 }
 
 // ── Slash commands ──────────────────────────────────────────────────────────
@@ -778,29 +953,39 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   // it — they need access to the live session state (current round, song
   // limit timer) for the room-update pause sync and Song Limiter.
   const session: Session = {
-    mode:            "game",
-    roomId:          roomCode,
-    guildId:         ix.guildId,
-    voiceChannelId:  conn.voiceChannelId,
-    invitedByUserId: ix.user.id,
-    startedAt:       Date.now(),
-    realtime:        null,
-    voice:           conn.voice,
-    player:          conn.player,
-    currentRoundId:  null,
-    roundStartedAt:  0,
-    songLimitTimer:  null,
+    mode:                    "game",
+    roomId:                  roomCode,
+    guildId:                 ix.guildId,
+    voiceChannelId:          conn.voiceChannelId,
+    invitedByUserId:         ix.user.id,
+    startedAt:               Date.now(),
+    realtime:                null,
+    voice:                   conn.voice,
+    player:                  conn.player,
+    currentRoundId:          null,
+    currentRoundTeamId:      null,
+    currentRoundDurationSec: 0,
+    songLimitTimer:          null,
+    playStartedAt:           0,
+    pauseStartedAt:          null,
+    pausedAccumulatedMs:     0,
+    notificationChannelId:   ix.channelId,
+    currentMessage:          null,
+    progressTimer:           null,
   };
 
   session.realtime = startRealtimeForRoom(roomCode, {
     onRoundInsert: (round) => { void playRoundTrack(session, round); },
     onRoundUpdate: (round) => {
-      // Song Limiter token can change song_limit_seconds mid-round.
+      // Song Limiter token can change song_limit_seconds mid-round; outcome
+      // changes don't drive playback but we refresh the message so the
+      // scoreboard stays current.
       if (round.id === session.currentRoundId) {
         maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
       }
+      void tickGameNowPlaying(session);
     },
-    onRoomUpdate: (room) => { syncPauseFromRoom(session.player, room); },
+    onRoomUpdate: (room) => { syncPauseFromRoom(session, room); },
   });
 
   sessions.set(ix.guildId, session);
@@ -863,18 +1048,25 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
     const conn = await setupVoiceConnection(ix);
     if (!conn) return;
     const fresh: Session = {
-      mode:            "music",
-      roomId:          null,
-      guildId:         ix.guildId,
-      voiceChannelId:  conn.voiceChannelId,
-      invitedByUserId: ix.user.id,
-      startedAt:       Date.now(),
-      realtime:        null,
-      voice:           conn.voice,
-      player:          conn.player,
-      currentRoundId:  null,
-      roundStartedAt:  0,
-      songLimitTimer:  null,
+      mode:                    "music",
+      roomId:                  null,
+      guildId:                 ix.guildId,
+      voiceChannelId:          conn.voiceChannelId,
+      invitedByUserId:         ix.user.id,
+      startedAt:               Date.now(),
+      realtime:                null,
+      voice:                   conn.voice,
+      player:                  conn.player,
+      currentRoundId:          null,
+      currentRoundTeamId:      null,
+      currentRoundDurationSec: 0,
+      songLimitTimer:          null,
+      playStartedAt:           0,
+      pauseStartedAt:          null,
+      pausedAccumulatedMs:     0,
+      notificationChannelId:   null,
+      currentMessage:          null,
+      progressTimer:           null,
     };
     sessions.set(ix.guildId, fresh);
     attachQueueAutoAdvance(fresh);
