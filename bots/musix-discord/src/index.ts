@@ -154,6 +154,10 @@ interface Session {
   realtime:         RealtimeChannel | null;
   voice:            VoiceConnection;
   player:           AudioPlayer;
+  // Game-mode state for Song Limiter enforcement. Updated each round.
+  currentRoundId:   number | null;
+  roundStartedAt:   number;               // ms epoch; 0 if no round playing
+  songLimitTimer:   NodeJS.Timeout | null;
 }
 
 const sessions = new Map<string, Session>(); // key: guildId
@@ -390,6 +394,10 @@ async function teardownSession(guildId: string): Promise<Session | null> {
     stopProgressTimer(q);
     await disableOldNowPlayingMessage(q);
   }
+  if (existing.songLimitTimer) {
+    clearTimeout(existing.songLimitTimer);
+    existing.songLimitTimer = null;
+  }
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
   try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
   if (existing.realtime) {
@@ -500,24 +508,34 @@ interface BotRound {
   song_limit_seconds?:  number | null;
 }
 
+interface BotRoom {
+  playing_since?:    number | null;
+  paused_at_ms?:     number | null;
+  current_round_id?: number | null;
+  status?:           string;
+}
+
 interface RealtimeCallbacks {
-  onRoundInsert: (round: BotRound) => void;
+  onRoundInsert:   (round: BotRound) => void;
+  onRoundUpdate?:  (round: BotRound) => void;
+  onRoomUpdate?:   (room: BotRoom) => void;
 }
 
 function startRealtimeForRoom(roomId: string, cb: RealtimeCallbacks): RealtimeChannel {
-  // Subscribes to the same Postgres change streams the React clients use.
-  // Round INSERTs drive song playback; room UPDATEs (Phase 5 step 2) will
-  // drive pause/resume sync.
   const channel = supabase
     .channel(`bot-room:${roomId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "tl_rooms",  filter: `id=eq.${roomId}` },
       (payload) => {
+        const n = payload.new as BotRoom | null;
         console.log(`[realtime] room ${roomId} ${payload.eventType}`, {
-          status:           (payload.new as { status?: string } | null)?.status,
-          current_round_id: (payload.new as { current_round_id?: number } | null)?.current_round_id,
-          playing_since:    (payload.new as { playing_since?: number } | null)?.playing_since,
-          paused_at_ms:     (payload.new as { paused_at_ms?: number } | null)?.paused_at_ms,
+          status:           n?.status,
+          current_round_id: n?.current_round_id,
+          playing_since:    n?.playing_since,
+          paused_at_ms:     n?.paused_at_ms,
         });
+        if (payload.eventType === "UPDATE" && n && cb.onRoomUpdate) {
+          cb.onRoomUpdate(n);
+        }
       })
     .on("postgres_changes", { event: "*", schema: "public", table: "tl_rounds", filter: `room_id=eq.${roomId}` },
       (payload) => {
@@ -527,9 +545,9 @@ function startRealtimeForRoom(roomId: string, cb: RealtimeCallbacks): RealtimeCh
           track:   n?.track ? `${n.track.artist} — ${n.track.name}` : undefined,
           limit:   n?.song_limit_seconds,
         });
-        if (payload.eventType === "INSERT" && n) {
-          cb.onRoundInsert(n);
-        }
+        if (!n) return;
+        if (payload.eventType === "INSERT")      cb.onRoundInsert(n);
+        else if (payload.eventType === "UPDATE" && cb.onRoundUpdate) cb.onRoundUpdate(n);
       })
     .subscribe((status) => {
       console.log(`[realtime] room ${roomId} subscription → ${status}`);
@@ -537,10 +555,74 @@ function startRealtimeForRoom(roomId: string, cb: RealtimeCallbacks): RealtimeCh
   return channel;
 }
 
+// Mirror room.playing_since into the bot's audio player. Anywhere can flip
+// it — the React host UI, this same bot when the Song Limiter fires, a
+// future remote control — and the bot follows along. Idempotent: if the
+// player is already in the desired state, this is a no-op.
+function syncPauseFromRoom(player: AudioPlayer, room: BotRoom) {
+  const wantsPlaying = room.playing_since !== null && room.playing_since !== undefined;
+  const status = player.state.status;
+  if (wantsPlaying && status === AudioPlayerStatus.Paused) {
+    player.unpause();
+    console.log(`[round] resumed via room.playing_since=${room.playing_since}`);
+  } else if (!wantsPlaying && status === AudioPlayerStatus.Playing) {
+    player.pause();
+    console.log(`[round] paused via room.playing_since=null`);
+  }
+}
+
+function clearSongLimitTimer(session: Session) {
+  if (session.songLimitTimer) {
+    clearTimeout(session.songLimitTimer);
+    session.songLimitTimer = null;
+  }
+}
+
+// Schedules the Song Limiter token pause. Recomputes from now whenever
+// song_limit_seconds changes (token can activate mid-round), so a longer
+// timer replaces a shorter one and vice versa. If the limit is already
+// past, fires immediately.
+function maybeScheduleSongLimit(session: Session, songLimitSeconds: number | null | undefined) {
+  clearSongLimitTimer(session);
+  if (!songLimitSeconds || songLimitSeconds <= 0) return;
+  if (!session.roundStartedAt) return;
+  const elapsedMs   = Date.now() - session.roundStartedAt;
+  const remainingMs = (songLimitSeconds * 1000) - elapsedMs;
+  if (remainingMs <= 0) {
+    void fireSongLimitPause(session, songLimitSeconds);
+  } else {
+    session.songLimitTimer = setTimeout(
+      () => void fireSongLimitPause(session, songLimitSeconds),
+      remainingMs,
+    );
+    session.songLimitTimer.unref?.();
+    console.log(`[round] song-limit timer armed: ${songLimitSeconds}s total, pausing in ${Math.round(remainingMs / 1000)}s`);
+  }
+}
+
+async function fireSongLimitPause(session: Session, limitSeconds: number) {
+  session.songLimitTimer = null;
+  console.log(`[round] ⏱ song-limit reached (${limitSeconds}s) for round ${session.currentRoundId}`);
+  if (session.player.state.status === AudioPlayerStatus.Playing) {
+    session.player.pause();
+  }
+  if (session.roomId) {
+    try {
+      await supabase
+        .from("tl_rooms")
+        .update({ playing_since: null, paused_at_ms: limitSeconds * 1000 })
+        .eq("id", session.roomId);
+    } catch (err) {
+      console.warn(`[round] couldn't update DB on song-limit pause:`, err);
+    }
+  }
+}
+
 // Resolves the round's SpotifyTrack to a YouTube video and starts streaming
-// it through the given player. Replaces whatever was playing before.
-// Logs and returns on errors so a single bad song doesn't take the bot down.
-async function playRoundTrack(player: AudioPlayer, round: BotRound) {
+// it through the session's player. Replaces whatever was playing before.
+// Also updates room.playing_since so React clients see the bot started
+// playback, and arms the Song Limiter timer if the round carries one.
+async function playRoundTrack(session: Session, round: BotRound) {
   if (!round.track) {
     console.warn(`[round] insert without a track on round ${round.id}; skipping`);
     return;
@@ -557,11 +639,26 @@ async function playRoundTrack(player: AudioPlayer, round: BotRound) {
       return;
     }
     const resource = await createStreamResource(resolved.videoId);
-    player.play(resource);
+    session.player.play(resource);
+    session.currentRoundId = round.id ?? null;
+    session.roundStartedAt = Date.now();
     console.log(`[round] ▶ playing "${resolved.videoTitle}" for round ${round.id}`);
   } catch (err) {
     console.warn(`[round] playback failed for round ${round.id}:`, err);
+    return;
   }
+  // Tell React clients we started playback.
+  if (session.roomId) {
+    try {
+      await supabase
+        .from("tl_rooms")
+        .update({ playing_since: session.roundStartedAt, paused_at_ms: null })
+        .eq("id", session.roomId);
+    } catch (err) {
+      console.warn(`[round] couldn't update DB on round-start:`, err);
+    }
+  }
+  maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
 }
 
 // ── Slash commands ──────────────────────────────────────────────────────────
@@ -677,13 +774,9 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   const conn = await setupVoiceConnection(ix);
   if (!conn) return;
 
-  // Subscribe to realtime; round INSERTs trigger song playback via the
-  // YouTube resolver + yt-dlp stream. Phase 5 step 2 will add pause/resume
-  // sync from tl_rooms.playing_since.
-  const realtime = startRealtimeForRoom(roomCode, {
-    onRoundInsert: (round) => { void playRoundTrack(conn.player, round); },
-  });
-
+  // Build the session first so the realtime callbacks below can close over
+  // it — they need access to the live session state (current round, song
+  // limit timer) for the room-update pause sync and Song Limiter.
   const session: Session = {
     mode:            "game",
     roomId:          roomCode,
@@ -691,10 +784,25 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     voiceChannelId:  conn.voiceChannelId,
     invitedByUserId: ix.user.id,
     startedAt:       Date.now(),
-    realtime,
+    realtime:        null,
     voice:           conn.voice,
     player:          conn.player,
+    currentRoundId:  null,
+    roundStartedAt:  0,
+    songLimitTimer:  null,
   };
+
+  session.realtime = startRealtimeForRoom(roomCode, {
+    onRoundInsert: (round) => { void playRoundTrack(session, round); },
+    onRoundUpdate: (round) => {
+      // Song Limiter token can change song_limit_seconds mid-round.
+      if (round.id === session.currentRoundId) {
+        maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
+      }
+    },
+    onRoomUpdate: (room) => { syncPauseFromRoom(session.player, room); },
+  });
+
   sessions.set(ix.guildId, session);
 
   playTestTone(conn.player, 660, 0.8, "welcome chime");
@@ -764,6 +872,9 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       realtime:        null,
       voice:           conn.voice,
       player:          conn.player,
+      currentRoundId:  null,
+      roundStartedAt:  0,
+      songLimitTimer:  null,
     };
     sessions.set(ix.guildId, fresh);
     attachQueueAutoAdvance(fresh);
