@@ -27,6 +27,10 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   AutocompleteInteraction,
+  ButtonInteraction,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Events,
   MessageFlags,
 } from "discord.js";
@@ -165,6 +169,7 @@ interface QueueState {
   upcoming:               QueueItem[];   // FIFO; queue[0] is next to play
   current:                QueueItem | null;
   notificationChannelId:  string | null; // where to post auto-advance messages
+  currentMessage:         { channelId: string; messageId: string } | null;
 }
 
 const queues = new Map<string, QueueState>(); // key: guildId
@@ -172,10 +177,58 @@ const queues = new Map<string, QueueState>(); // key: guildId
 function getOrCreateQueue(guildId: string): QueueState {
   let q = queues.get(guildId);
   if (!q) {
-    q = { upcoming: [], current: null, notificationChannelId: null };
+    q = { upcoming: [], current: null, notificationChannelId: null, currentMessage: null };
     queues.set(guildId, q);
   }
   return q;
+}
+
+// Build the control row that hangs under every "Now Playing" message.
+// `paused` flips Pause↔Resume; `hasUpcoming` greys out Skip when there's
+// nothing to skip to (clicking Skip with an empty queue ends playback,
+// which is also fine — we just nudge users away from it).
+function buildPlayerButtons(state: { paused: boolean; hasUpcoming: boolean }): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(state.paused ? "musix-resume" : "musix-pause")
+      .setLabel(state.paused ? "Resume" : "Pause")
+      .setEmoji(state.paused ? "▶️" : "⏸️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("musix-skip")
+      .setLabel("Skip")
+      .setEmoji("⏭️")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!state.hasUpcoming),
+    new ButtonBuilder()
+      .setCustomId("musix-stop")
+      .setLabel("Stop")
+      .setEmoji("⏹️")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("musix-queue")
+      .setLabel("Queue")
+      .setEmoji("📋")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Edits the previous "Now Playing" message to strip its buttons — used
+// when the song advances or stops, so the dead message can't be clicked.
+async function disableOldNowPlayingMessage(q: QueueState): Promise<void> {
+  const ref = q.currentMessage;
+  q.currentMessage = null;
+  if (!ref) return;
+  try {
+    const channel = await client.channels.fetch(ref.channelId);
+    if (channel && channel.isSendable() && "messages" in channel) {
+      const msg = await channel.messages.fetch(ref.messageId);
+      await msg.edit({ components: [] });
+    }
+  } catch (err) {
+    // Message may have been deleted; not worth surfacing.
+    console.warn(`[queue] couldn't strip buttons from old now-playing message:`, err);
+  }
 }
 
 function fmtSec(seconds: number): string {
@@ -198,6 +251,11 @@ async function advanceQueue(session: Session, opts: { notify?: boolean } = {}): 
   if (session.mode !== "music") return;
   const q = queues.get(session.guildId);
   if (!q) return;
+
+  // Strip buttons from the previous Now-Playing message before posting the
+  // new one — otherwise dead messages still look interactive.
+  await disableOldNowPlayingMessage(q);
+
   const next = q.upcoming.shift();
   if (!next) {
     q.current = null;
@@ -218,7 +276,11 @@ async function advanceQueue(session: Session, opts: { notify?: boolean } = {}): 
     try {
       const channel = await client.channels.fetch(q.notificationChannelId);
       if (channel && channel.isSendable()) {
-        await channel.send(nowPlayingText(next));
+        const sent = await channel.send({
+          content:    nowPlayingText(next),
+          components: [buildPlayerButtons({ paused: false, hasUpcoming: q.upcoming.length > 0 })],
+        });
+        q.currentMessage = { channelId: sent.channelId, messageId: sent.id };
       }
     } catch (err) {
       console.warn(`[queue] couldn't post now-playing message:`, err);
@@ -626,13 +688,77 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
   const idle = session.player.state.status === AudioPlayerStatus.Idle;
   const noCurrent = queue.current === null;
   if (idle && noCurrent) {
-    await ix.editReply(nowPlayingText(item));
+    const reply = await ix.editReply({
+      content:    nowPlayingText(item),
+      components: [buildPlayerButtons({ paused: false, hasUpcoming: queue.upcoming.length - 1 > 0 })],
+    });
+    queue.currentMessage = { channelId: reply.channelId, messageId: reply.id };
     void advanceQueue(session, { notify: false });
   } else {
     const position = queue.upcoming.length;
     await ix.editReply(`➕ Queued **${item.title}** (${fmtSec(item.durationSec)}) at position #${position}.`);
   }
   console.log(`[musix-bot] /${label} → queued "${item.title}" (queue=${queue.upcoming.length}, current=${queue.current?.title ?? "(none)"})`);
+}
+
+async function handleButton(ix: ButtonInteraction) {
+  if (!ix.customId.startsWith("musix-")) return;
+  if (!ix.guildId) return;
+  const session = sessions.get(ix.guildId);
+  const queue   = queues.get(ix.guildId);
+  if (!session || session.mode !== "music" || !queue) {
+    await ix.reply({ content: "No music session active in this server.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  switch (ix.customId) {
+    case "musix-pause": {
+      session.player.pause();
+      await ix.update({
+        components: [buildPlayerButtons({ paused: true, hasUpcoming: queue.upcoming.length > 0 })],
+      });
+      return;
+    }
+    case "musix-resume": {
+      session.player.unpause();
+      await ix.update({
+        components: [buildPlayerButtons({ paused: false, hasUpcoming: queue.upcoming.length > 0 })],
+      });
+      return;
+    }
+    case "musix-skip": {
+      // Stopping the player triggers Idle → advanceQueue, which strips
+      // these buttons from the old message and posts a fresh now-playing.
+      await ix.deferUpdate();
+      session.player.stop();
+      return;
+    }
+    case "musix-stop": {
+      queue.upcoming = [];
+      queue.current  = null;
+      session.player.stop(true);
+      await ix.update({ content: "⏹ Stopped. Queue cleared.", components: [] });
+      queue.currentMessage = null;
+      return;
+    }
+    case "musix-queue": {
+      const list = queue.current ? [queue.current, ...queue.upcoming] : queue.upcoming;
+      if (list.length === 0) {
+        await ix.reply({ content: "Queue is empty.", flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const shown = list.slice(0, 10).map((item, i) =>
+        i === 0
+          ? `▶ **${item.title}** (${fmtSec(item.durationSec)})`
+          : `${i}. ${item.title} (${fmtSec(item.durationSec)})`,
+      ).join("\n");
+      const extra = list.length > 10 ? `\n…and ${list.length - 10} more` : "";
+      await ix.reply({ content: shown + extra, flags: MessageFlags.Ephemeral });
+      return;
+    }
+    default:
+      await ix.reply({ content: `Unknown button: ${ix.customId}`, flags: MessageFlags.Ephemeral });
+  }
 }
 
 async function handleAutocomplete(ix: AutocompleteInteraction) {
@@ -687,6 +813,16 @@ client.on(Events.InteractionCreate, async (ix) => {
   if (ix.isAutocomplete()) {
     try { await handleAutocomplete(ix); }
     catch (err) { console.warn(`[musix-bot] autocomplete threw:`, err); }
+    return;
+  }
+  if (ix.isButton()) {
+    try { await handleButton(ix); }
+    catch (err) {
+      console.error(`[musix-bot] button ${ix.customId} threw:`, err);
+      const message = "Something went wrong handling that button.";
+      if (ix.replied || ix.deferred) await ix.followUp({ content: message, flags: MessageFlags.Ephemeral });
+      else                            await ix.reply({ content: message, flags: MessageFlags.Ephemeral });
+    }
     return;
   }
   if (!ix.isChatInputCommand()) return;
