@@ -1,16 +1,22 @@
-// musix Discord bot — Phase 2 (hello-world)
+// musix Discord bot — Phase 3 (voice connection + test tones)
 //
-// Connects to Discord, registers `/musix join <room>` and `/musix leave`
-// slash commands, validates rooms against Supabase, and subscribes to
-// realtime updates for joined rooms. Logs everything to the console.
-// No voice connection or audio playback yet — that lands in Phase 3.
+// On /musix join the bot actually joins the host's voice channel and plays a
+// short welcome chime. Whenever a new round INSERT comes through realtime,
+// the bot plays a slightly longer test tone — proves the realtime → voice
+// pipeline is live. Audio is generated on the fly via the bundled
+// ffmpeg-static binary (no system ffmpeg needed). Opus encoding uses
+// opusscript (pure JS) and packet encryption uses libsodium-wrappers
+// (pure WASM) — both avoid native compilation on Windows.
+//
+// Real song playback (YouTube resolver) lands in Phase 4. Phase 3 just
+// proves "bot joins channel, audio comes out, audio reacts to game state".
 //
 // Run:
 //   1. Copy .env.example to .env, fill in DISCORD_BOT_TOKEN +
 //      DISCORD_CLIENT_ID + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
 //      (and DISCORD_DEV_GUILD_ID for fast slash-command sync).
-//   2. pnpm install
-//   3. pnpm dev
+//   2. npm install
+//   3. npm run dev
 
 import "dotenv/config";
 import {
@@ -24,6 +30,18 @@ import {
   MessageFlags,
 } from "discord.js";
 import { createClient, RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  StreamType,
+  VoiceConnectionStatus,
+  entersState,
+  AudioPlayer,
+  VoiceConnection,
+} from "@discordjs/voice";
+import { spawn } from "node:child_process";
+import ffmpegPath from "ffmpeg-static";
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const {
@@ -46,6 +64,10 @@ const BOT_TOKEN     = requireEnv("DISCORD_BOT_TOKEN", DISCORD_BOT_TOKEN);
 const CLIENT_ID     = requireEnv("DISCORD_CLIENT_ID", DISCORD_CLIENT_ID);
 const SB_URL        = requireEnv("SUPABASE_URL", SUPABASE_URL);
 const SB_SERVICE    = requireEnv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY);
+
+if (!ffmpegPath) {
+  console.warn("[musix-bot] ffmpeg-static didn't resolve a binary path — voice playback won't work.");
+}
 
 // ── Supabase ────────────────────────────────────────────────────────────────
 const supabase: SupabaseClient = createClient(SB_URL, SB_SERVICE, {
@@ -76,9 +98,33 @@ async function fetchRoom(roomId: string): Promise<TlRoomLite | null> {
   return data as TlRoomLite;
 }
 
+// ── Audio: synthesised test tones ───────────────────────────────────────────
+// Generates a sine-wave PCM stream through ffmpeg, hands it to the audio
+// player as a raw 48 kHz / 16-bit / stereo resource (Discord's native voice
+// format). Phase 4 swaps this for play-dl's YouTube stream.
+function playTestTone(player: AudioPlayer, frequencyHz: number, durationSec: number, label: string) {
+  if (!ffmpegPath) {
+    console.warn(`[voice] cannot play ${label}: ffmpeg-static binary missing`);
+    return;
+  }
+  const ff = spawn(ffmpegPath as string, [
+    "-loglevel", "error",
+    "-f", "lavfi",
+    "-i", `sine=frequency=${frequencyHz}:duration=${durationSec}`,
+    "-f", "s16le",
+    "-ar", "48000",
+    "-ac", "2",
+    "pipe:1",
+  ], { stdio: ["ignore", "pipe", "ignore"] });
+  ff.on("error", (err) => console.warn(`[voice] ffmpeg ${label} failed:`, err));
+  const resource = createAudioResource(ff.stdout, { inputType: StreamType.Raw });
+  player.play(resource);
+  console.log(`[voice] playing ${label} (${frequencyHz} Hz, ${durationSec}s)`);
+}
+
 // ── Sessions ────────────────────────────────────────────────────────────────
 // One session per guild. The bot can be in many guilds at once but only one
-// active room per guild (you'd start a different /musix join to switch).
+// active room per guild (a new /musix join replaces the prior session).
 
 interface Session {
   roomId:           string;
@@ -87,6 +133,8 @@ interface Session {
   invitedByUserId:  string;
   startedAt:        number;
   realtime:         RealtimeChannel;
+  voice:            VoiceConnection;
+  player:           AudioPlayer;
 }
 
 const sessions = new Map<string, Session>(); // key: guildId
@@ -99,15 +147,18 @@ async function teardownSession(guildId: string): Promise<Session | null> {
   const existing = sessions.get(guildId);
   if (!existing) return null;
   sessions.delete(guildId);
+  try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
+  try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
   await existing.realtime.unsubscribe().catch(err => {
     console.warn(`[musix-bot] unsubscribe failed for ${describeSession(existing)}:`, err);
   });
   return existing;
 }
 
-function startRealtimeForRoom(roomId: string): RealtimeChannel {
+function startRealtimeForRoom(roomId: string, onNewRound: () => void): RealtimeChannel {
   // Subscribes to the same Postgres change streams the React clients use.
-  // Phase 2: just log. Phase 3 will turn round changes into play/pause.
+  // Phase 3: round INSERTs trigger a test tone via the passed-in callback.
+  // Phase 5 will replace the test tone with the actual track resolver.
   const channel = supabase
     .channel(`bot-room:${roomId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "tl_rooms",  filter: `id=eq.${roomId}` },
@@ -126,6 +177,9 @@ function startRealtimeForRoom(roomId: string): RealtimeChannel {
           outcome: n?.outcome,
           track:   n?.track ? `${n.track.artist} — ${n.track.name}` : undefined,
         });
+        if (payload.eventType === "INSERT") {
+          onNewRound();
+        }
       })
     .subscribe((status) => {
       console.log(`[realtime] room ${roomId} subscription → ${status}`);
@@ -223,7 +277,48 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     console.log(`[musix-bot] /join replaced prior session: ${describeSession(prior)}`);
   }
 
-  const realtime = startRealtimeForRoom(roomCode);
+  // Defer — joining voice can take a few seconds (handshake, opus init, etc.)
+  // and Discord requires a reply within 3s. defer buys us 15 minutes.
+  await ix.deferReply();
+
+  // Join the voice channel.
+  let voice: VoiceConnection;
+  try {
+    voice = joinVoiceChannel({
+      channelId:      voiceChannelId,
+      guildId:        ix.guildId,
+      adapterCreator: ix.guild.voiceAdapterCreator,
+      selfDeaf:       true,   // bot doesn't need to hear others
+      selfMute:       false,
+    });
+    await entersState(voice, VoiceConnectionStatus.Ready, 15_000);
+  } catch (err) {
+    console.error("[musix-bot] voice connection failed:", err);
+    try { (voice!).destroy(); } catch { /* may not exist */ }
+    await ix.editReply(
+      "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
+      "permissions on that channel, then try again.",
+    );
+    return;
+  }
+
+  // Audio player — one per session. Subscribing the connection routes
+  // whatever the player plays into the channel.
+  const player = createAudioPlayer();
+  voice.subscribe(player);
+
+  // Log voice lifecycle events. Phase 6 will reconnect on transient
+  // disconnects; for now we just observe.
+  voice.on(VoiceConnectionStatus.Disconnected, () =>
+    console.log(`[voice] disconnected from guild ${ix.guildId}`));
+  voice.on(VoiceConnectionStatus.Destroyed, () =>
+    console.log(`[voice] destroyed for guild ${ix.guildId}`));
+
+  // Subscribe to realtime; round INSERTs trigger a test tone.
+  const realtime = startRealtimeForRoom(roomCode, () => {
+    playTestTone(player, 440, 1.2, "round-start tone");
+  });
+
   const session: Session = {
     roomId:          roomCode,
     guildId:         ix.guildId,
@@ -231,12 +326,18 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     invitedByUserId: ix.user.id,
     startedAt:       Date.now(),
     realtime,
+    voice,
+    player,
   };
   sessions.set(ix.guildId, session);
 
-  await ix.reply(
-    `🎵 Following room **${roomCode}**. (Phase 2 stub — voice connection lands in Phase 3.) ` +
-    `Your voice channel: <#${voiceChannelId}>`,
+  // Welcome chime — proves the audio pipeline is alive right after /join.
+  playTestTone(player, 660, 0.8, "welcome chime");
+
+  await ix.editReply(
+    `🎵 Joined <#${voiceChannelId}> and following room **${roomCode}**. ` +
+    `(Phase 3 — you'll hear a chime now and a tone on each new round. ` +
+    `Real song playback ships in Phase 4.)`,
   );
   console.log(`[musix-bot] /join → ${describeSession(session)} by user ${ix.user.tag}`);
 }
@@ -254,7 +355,7 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
     });
     return;
   }
-  await ix.reply(`👋 Left room **${cleared.roomId}**.`);
+  await ix.reply(`👋 Left room **${cleared.roomId}** and disconnected from the voice channel.`);
   console.log(`[musix-bot] /leave → cleared session: ${describeSession(cleared)}`);
 }
 
