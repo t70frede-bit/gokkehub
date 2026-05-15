@@ -386,7 +386,10 @@ async function teardownSession(guildId: string): Promise<Session | null> {
   if (!existing) return null;
   sessions.delete(guildId);
   const q = queues.get(guildId);
-  if (q) stopProgressTimer(q);
+  if (q) {
+    stopProgressTimer(q);
+    await disableOldNowPlayingMessage(q);
+  }
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
   try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
   if (existing.realtime) {
@@ -395,6 +398,25 @@ async function teardownSession(guildId: string): Promise<Session | null> {
     });
   }
   return existing;
+}
+
+// Before a music session is torn down (because /musix join is switching to
+// game mode), put the currently-playing item back at the head of upcoming
+// so when /play later resumes, it picks up the same song from the start.
+// We don't try to preserve elapsed position — the yt-dlp stream is gone
+// either way, so re-starting the song is the honest behaviour.
+function preserveMusicQueueBeforeTeardown(guildId: string): void {
+  const session = sessions.get(guildId);
+  if (!session || session.mode !== "music") return;
+  const q = queues.get(guildId);
+  if (!q) return;
+  if (q.current) {
+    q.upcoming.unshift(q.current);
+    q.current = null;
+  }
+  q.playStartedAt       = 0;
+  q.pauseStartedAt      = null;
+  q.pausedAccumulatedMs = 0;
 }
 
 // Joins the user's current voice channel and returns a ready-to-use voice
@@ -641,6 +663,10 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     return;
   }
 
+  // If a music queue is currently playing, snapshot it so the user can
+  // resume after the musix game finishes (next /play picks up from the
+  // interrupted song).
+  preserveMusicQueueBeforeTeardown(ix.guildId);
   const prior = await teardownSession(ix.guildId);
   if (prior) console.log(`[musix-bot] /join replaced prior session: ${describeSession(prior)}`);
 
@@ -685,15 +711,20 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
     await ix.reply({ content: "This command only works in a server.", flags: MessageFlags.Ephemeral });
     return;
   }
+  // Same queue-preservation as /musix join — if the bot's mid-song, putting
+  // current back on the queue means the next /play picks up from the same
+  // song instead of dropping it.
+  preserveMusicQueueBeforeTeardown(ix.guildId);
   const cleared = await teardownSession(ix.guildId);
   if (!cleared) {
     await ix.reply({
-      content: "I wasn't following a room here. Nothing to leave.",
+      content: "I wasn't in a voice channel here. Nothing to leave.",
       flags:   MessageFlags.Ephemeral,
     });
     return;
   }
-  await ix.reply(`👋 Left room **${cleared.roomId}** and disconnected from the voice channel.`);
+  const where = cleared.roomId ? `room **${cleared.roomId}**` : "the voice channel";
+  await ix.reply(`👋 Left ${where}. ${cleared.mode === "music" ? "Queue saved — `/musix play` to resume." : ""}`.trim());
   console.log(`[musix-bot] /leave → cleared session: ${describeSession(cleared)}`);
 }
 
@@ -711,6 +742,15 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
   await ix.deferReply();
 
   let session: Session | undefined = sessions.get(ix.guildId);
+  // If we're currently in a musix game, kick the bot out of game mode so
+  // the queue takes over. The game's realtime sub and player stop; the
+  // queue (which is per-guild and outlives sessions) carries on as soon as
+  // the new music session is wired up below.
+  if (session && session.mode === "game") {
+    console.log(`[musix-bot] /${label} ejecting game session: ${describeSession(session)}`);
+    await teardownSession(ix.guildId);
+    session = undefined;
+  }
   if (!session) {
     const conn = await setupVoiceConnection(ix);
     if (!conn) return;
