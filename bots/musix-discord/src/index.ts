@@ -170,6 +170,11 @@ interface QueueState {
   current:                QueueItem | null;
   notificationChannelId:  string | null; // where to post auto-advance messages
   currentMessage:         { channelId: string; messageId: string } | null;
+  // Playback timing — used by the progress bar. Reset on each advance.
+  playStartedAt:          number;        // ms epoch; 0 means "no song"
+  pauseStartedAt:         number | null; // ms epoch of current pause; null if playing
+  pausedAccumulatedMs:    number;        // sum of completed pauses for current song
+  progressTimer:          NodeJS.Timeout | null;
 }
 
 const queues = new Map<string, QueueState>(); // key: guildId
@@ -177,10 +182,51 @@ const queues = new Map<string, QueueState>(); // key: guildId
 function getOrCreateQueue(guildId: string): QueueState {
   let q = queues.get(guildId);
   if (!q) {
-    q = { upcoming: [], current: null, notificationChannelId: null, currentMessage: null };
+    q = {
+      upcoming:               [],
+      current:                null,
+      notificationChannelId:  null,
+      currentMessage:         null,
+      playStartedAt:          0,
+      pauseStartedAt:         null,
+      pausedAccumulatedMs:    0,
+      progressTimer:          null,
+    };
     queues.set(guildId, q);
   }
   return q;
+}
+
+function computeElapsedMs(q: QueueState): number {
+  if (!q.playStartedAt) return 0;
+  const now = Date.now();
+  const pausedNow = q.pauseStartedAt ? now - q.pauseStartedAt : 0;
+  return Math.max(0, now - q.playStartedAt - q.pausedAccumulatedMs - pausedNow);
+}
+
+function renderProgressBar(elapsedSec: number, totalSec: number, width = 20): string {
+  if (totalSec < 1) return `\`[${"░".repeat(width)}]\` ${fmtSec(elapsedSec)} / ?:??`;
+  const ratio  = Math.min(Math.max(elapsedSec / totalSec, 0), 1);
+  const filled = Math.round(ratio * width);
+  return `\`[${"█".repeat(filled)}${"░".repeat(width - filled)}]\` ${fmtSec(elapsedSec)} / ${fmtSec(totalSec)}`;
+}
+
+// Builds the full Now-Playing message payload (content + components) at the
+// current point in time. Used both when starting a song and on each
+// progress tick.
+function buildNowPlayingMessage(q: QueueState, item: QueueItem): {
+  content:    string;
+  components: ActionRowBuilder<ButtonBuilder>[];
+} {
+  const elapsedSec = Math.floor(computeElapsedMs(q) / 1000);
+  const paused     = q.pauseStartedAt !== null;
+  const indicator  = paused ? "⏸" : "🎵";
+  return {
+    content:
+      `**${indicator} Now playing — ${item.title}** · requested by ${item.requestedBy}\n` +
+      renderProgressBar(elapsedSec, item.durationSec),
+    components: [buildPlayerButtons({ paused, hasUpcoming: q.upcoming.length > 0 })],
+  };
 }
 
 // Build the control row that hangs under every "Now Playing" message.
@@ -238,8 +284,36 @@ function fmtSec(seconds: number): string {
   return `${m}:${s}`;
 }
 
-function nowPlayingText(item: QueueItem): string {
-  return `**🎵 Now playing — ${item.title}** (${fmtSec(item.durationSec)}) · requested by ${item.requestedBy}`;
+// Edit the live Now-Playing message in place. Called on a 10-second timer
+// for progress-bar updates and on every state change (pause/resume).
+async function tickNowPlaying(guildId: string): Promise<void> {
+  const q = queues.get(guildId);
+  if (!q || !q.current || !q.currentMessage) return;
+  try {
+    const channel = await client.channels.fetch(q.currentMessage.channelId);
+    if (!channel || !channel.isSendable() || !("messages" in channel)) return;
+    const msg = await channel.messages.fetch(q.currentMessage.messageId);
+    await msg.edit(buildNowPlayingMessage(q, q.current));
+  } catch (err) {
+    // Message may have been deleted; just stop the timer so we don't spam logs.
+    console.warn(`[queue] progress edit failed:`, err);
+    stopProgressTimer(q);
+  }
+}
+
+function startProgressTimer(guildId: string): void {
+  const q = queues.get(guildId);
+  if (!q) return;
+  stopProgressTimer(q);
+  q.progressTimer = setInterval(() => { void tickNowPlaying(guildId); }, 10_000);
+  q.progressTimer.unref?.();
+}
+
+function stopProgressTimer(q: QueueState): void {
+  if (q.progressTimer) {
+    clearInterval(q.progressTimer);
+    q.progressTimer = null;
+  }
 }
 
 // Pops the next item off the queue, resolves a fresh audio stream, and
@@ -266,6 +340,9 @@ async function advanceQueue(session: Session, opts: { notify?: boolean } = {}): 
   try {
     const resource = await createStreamResource(next.videoId);
     session.player.play(resource);
+    q.playStartedAt       = Date.now();
+    q.pauseStartedAt      = null;
+    q.pausedAccumulatedMs = 0;
     console.log(`[queue] ▶ "${next.title}" (${fmtSec(next.durationSec)})`);
   } catch (err) {
     console.warn(`[queue] failed to play "${next.title}":`, err);
@@ -276,16 +353,14 @@ async function advanceQueue(session: Session, opts: { notify?: boolean } = {}): 
     try {
       const channel = await client.channels.fetch(q.notificationChannelId);
       if (channel && channel.isSendable()) {
-        const sent = await channel.send({
-          content:    nowPlayingText(next),
-          components: [buildPlayerButtons({ paused: false, hasUpcoming: q.upcoming.length > 0 })],
-        });
+        const sent = await channel.send(buildNowPlayingMessage(q, next));
         q.currentMessage = { channelId: sent.channelId, messageId: sent.id };
       }
     } catch (err) {
       console.warn(`[queue] couldn't post now-playing message:`, err);
     }
   }
+  startProgressTimer(session.guildId);
 }
 
 // Wires the audio player's Idle event to the queue so that finishing one
@@ -310,6 +385,8 @@ async function teardownSession(guildId: string): Promise<Session | null> {
   const existing = sessions.get(guildId);
   if (!existing) return null;
   sessions.delete(guildId);
+  const q = queues.get(guildId);
+  if (q) stopProgressTimer(q);
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
   try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
   if (existing.realtime) {
@@ -688,12 +765,20 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
   const idle = session.player.state.status === AudioPlayerStatus.Idle;
   const noCurrent = queue.current === null;
   if (idle && noCurrent) {
-    const reply = await ix.editReply({
-      content:    nowPlayingText(item),
-      components: [buildPlayerButtons({ paused: false, hasUpcoming: queue.upcoming.length - 1 > 0 })],
-    });
-    queue.currentMessage = { channelId: reply.channelId, messageId: reply.id };
-    void advanceQueue(session, { notify: false });
+    // Either this song plays immediately (fresh queue) or a preserved
+    // queue does and this song waits at the end. advanceQueue handles
+    // playback + posting the Now-Playing message in both cases; the slash
+    // reply is a brief acknowledgement.
+    const willPlay = queue.upcoming[0]!;
+    if (willPlay === item) {
+      await ix.editReply(`▶ Starting playback — **${item.title}** (${fmtSec(item.durationSec)}).`);
+    } else {
+      await ix.editReply(
+        `➕ Queued **${item.title}** at #${queue.upcoming.length}. ` +
+        `Resuming queue from **${willPlay.title}**.`,
+      );
+    }
+    void advanceQueue(session); // default notify:true → channel.send
   } else {
     const position = queue.upcoming.length;
     await ix.editReply(`➕ Queued **${item.title}** (${fmtSec(item.durationSec)}) at position #${position}.`);
@@ -714,16 +799,19 @@ async function handleButton(ix: ButtonInteraction) {
   switch (ix.customId) {
     case "musix-pause": {
       session.player.pause();
-      await ix.update({
-        components: [buildPlayerButtons({ paused: true, hasUpcoming: queue.upcoming.length > 0 })],
-      });
+      queue.pauseStartedAt = Date.now();
+      if (queue.current) await ix.update(buildNowPlayingMessage(queue, queue.current));
+      else               await ix.deferUpdate();
       return;
     }
     case "musix-resume": {
+      if (queue.pauseStartedAt !== null) {
+        queue.pausedAccumulatedMs += Date.now() - queue.pauseStartedAt;
+        queue.pauseStartedAt = null;
+      }
       session.player.unpause();
-      await ix.update({
-        components: [buildPlayerButtons({ paused: false, hasUpcoming: queue.upcoming.length > 0 })],
-      });
+      if (queue.current) await ix.update(buildNowPlayingMessage(queue, queue.current));
+      else               await ix.deferUpdate();
       return;
     }
     case "musix-skip": {
@@ -736,6 +824,7 @@ async function handleButton(ix: ButtonInteraction) {
     case "musix-stop": {
       queue.upcoming = [];
       queue.current  = null;
+      stopProgressTimer(queue);
       session.player.stop(true);
       await ix.update({ content: "⏹ Stopped. Queue cleared.", components: [] });
       queue.currentMessage = null;
