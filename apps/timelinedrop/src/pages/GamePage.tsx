@@ -6,7 +6,7 @@ import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
-import { DEFAULT_TL_SETTINGS } from "../lib/types";
+import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
 function tokenSpec(type: string): TokenSpec {
@@ -30,16 +30,37 @@ function getTeamColor(sortOrder: number): TeamColor {
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
 
-function useTimer(startedAt: number | null, onExpire: () => void) {
-  const [remaining, setRemaining] = useState(90);
+// Pause-aware countdown. `totalSec === null` means "no timer" (used by the
+// "none" mode); the hook returns null and never fires onExpire.
+//
+// Elapsed time is computed against playing_since / paused_at_ms so the timer
+// matches the actual audio position — pauses freeze the countdown, resumes
+// pick up where they left off. Bot mode and Spotify SDK both write these
+// fields the same way (see onDJStateChange + bot's playRoundTrack).
+function useTimer(
+  totalSec:     number | null,
+  playingSince: number | null,
+  pausedAtMs:   number | null,
+  onExpire:     () => void,
+): number | null {
+  const initial = totalSec ?? 0;
+  const [remaining, setRemaining] = useState<number | null>(totalSec);
   const expiredRef = useRef(false);
 
   useEffect(() => {
-    if (!startedAt) { setRemaining(90); expiredRef.current = false; return; }
+    if (totalSec === null) { setRemaining(null); expiredRef.current = false; return; }
+    if (playingSince === null && pausedAtMs === null) {
+      setRemaining(totalSec); expiredRef.current = false; return;
+    }
     expiredRef.current = false;
+    const computeLeft = () => {
+      const elapsed = playingSince !== null
+        ? (Date.now() - playingSince) / 1000
+        : (pausedAtMs ?? 0) / 1000;
+      return Math.max(0, totalSec - elapsed);
+    };
     const tick = () => {
-      const elapsed = (Date.now() - startedAt) / 1000;
-      const left = Math.max(0, 90 - elapsed);
+      const left = computeLeft();
       setRemaining(left);
       if (left === 0 && !expiredRef.current) {
         expiredRef.current = true;
@@ -47,23 +68,35 @@ function useTimer(startedAt: number | null, onExpire: () => void) {
       }
     };
     tick();
+    // Only animate while playing; when paused, the value is frozen, no
+    // interval needed.
+    if (playingSince === null) return;
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [startedAt, onExpire]);
+  }, [totalSec, playingSince, pausedAtMs, onExpire]);
 
+  // Avoid an unused-var lint complaint on the SSR-default branch.
+  void initial;
   return remaining;
 }
 
 // ── Timer ring SVG ────────────────────────────────────────────────────────────
 
-function TimerRing({ remaining, total = 90 }: { remaining: number; total?: number }) {
+// `remaining === null` means "no timer" (mode = "none"); render nothing.
+// Otherwise show a shrinking ring. Below 20s we cross-fade to a danger
+// state; below 10s the whole ring blinks faster to grab the captain's
+// attention as the deadline approaches.
+function TimerRing({ remaining, total }: { remaining: number | null; total: number }) {
+  if (remaining === null) return null;
   const R = 18;
   const C = 2 * Math.PI * R;
-  const dash = Math.min(1, remaining / total) * C;
-  const danger = remaining < 20;
+  const dash = Math.min(1, total > 0 ? remaining / total : 0) * C;
+  const danger    = remaining < 20;
+  const critical  = remaining < 10;
+  const blinkClass = critical ? "timer-blink-fast" : danger ? "timer-blink-slow" : "";
 
   return (
-    <svg width="46" height="46" viewBox="0 0 46 46" style={{ flexShrink: 0 }}>
+    <svg width="46" height="46" viewBox="0 0 46 46" className={blinkClass} style={{ flexShrink: 0 }}>
       <circle cx="23" cy="23" r={R} className="timer-ring-track" strokeWidth="2.5" />
       <circle cx="23" cy="23" r={R}
         className={`timer-ring-fill ${danger ? "danger" : ""}`}
@@ -1807,8 +1840,26 @@ export default function GamePage() {
     });
   }, [isMyTurn, iAmCaptain, state?.round, roomId, myPlayerId]);
 
-  const timerStartedAt = state?.room.playing_since ?? null;
-  const remaining = useTimer(timerStartedAt, onTimerExpire);
+  // Compute the timer total based on the room's timer mode:
+  //   - "none"        — totalSec = null → useTimer returns null, no expiry
+  //   - "fixed"       — totalSec = settings.timerSeconds
+  //   - "song-length" — totalSec = track durationMs / 1000 (Spotify-captured),
+  //                     or browser-side djAudio.durationMs for legacy rounds
+  //                     where track.durationMs is missing; ultimate fallback
+  //                     is TIMER_DEFAULT_FALLBACK_SECONDS so the captain
+  //                     isn't stranded with an unkillable timer.
+  const timerMode    = (state?.room.settings?.timerMode ?? "song-length") as "song-length" | "fixed" | "none";
+  const fixedSec     = state?.room.settings?.timerSeconds ?? 120;
+  const trackDurMs   = state?.round?.track.durationMs;
+  const audioDurMs   = djAudio.durationMs;
+  const totalSec: number | null = timerMode === "none" ? null
+    : timerMode === "fixed" ? fixedSec
+    : (trackDurMs && trackDurMs > 0) ? (trackDurMs / 1000)
+    : (audioDurMs > 0)               ? (audioDurMs / 1000)
+    : TIMER_DEFAULT_FALLBACK_SECONDS;
+  const playingSince = state?.room.playing_since ?? null;
+  const pausedAtMs   = state?.room.paused_at_ms  ?? null;
+  const remaining = useTimer(totalSec, playingSince, pausedAtMs, onTimerExpire);
 
   if (!state) return <div className="flex-1 flex items-center justify-center opacity-50">Loading…</div>;
 
@@ -2048,13 +2099,20 @@ export default function GamePage() {
           background: isMyTurn ? "rgba(var(--color-primary-rgb), 0.10)" : "rgb(var(--surface-raised-rgb))",
           border:     `1px solid ${isMyTurn ? "rgba(var(--color-primary-rgb), 0.35)" : "rgb(var(--border-rgb))"}`,
         }}>
-        <div className="flex-shrink-0 min-w-0">
-          <p className="leading-tight uppercase" style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
-            {isMyTurn ? "Your turn" : "Active"}
-          </p>
-          <p className="font-bold leading-tight truncate" style={{ fontSize: "var(--text-base)" }}>
-            {activeTeam?.name ?? "—"}
-          </p>
+        <div className="flex-shrink-0 min-w-0 flex items-center gap-3">
+          <div className="min-w-0">
+            <p className="leading-tight uppercase" style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
+              {isMyTurn ? "Your turn" : "Active"}
+            </p>
+            <p className="font-bold leading-tight truncate" style={{ fontSize: "var(--text-base)" }}>
+              {activeTeam?.name ?? "—"}
+            </p>
+          </div>
+          {/* Timer next to the active team's name — front-and-center so every
+              player can see how much time the captain has left. */}
+          {totalSec !== null && remaining !== null && (
+            <TimerRing remaining={remaining} total={totalSec} />
+          )}
         </div>
 
         <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
@@ -2085,9 +2143,7 @@ export default function GamePage() {
               </div>
             );
           })()}
-          {/* Token overview moved to each team panel — sub-header keeps only
-              turn info, timer, and the host menu so it stays compact. */}
-          {timerStartedAt && <TimerRing remaining={remaining} />}
+          {/* Timer moved to next to the team name (above). */}
 
           {/* Host management menu */}
           {isHost && (

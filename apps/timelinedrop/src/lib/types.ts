@@ -7,7 +7,8 @@ export interface SpotifyTrack {
   albumName:   string;
   releaseYear: number;
   coverUrl:    string;
-  uri:         string; // spotify:track:ID — required for Web Playback SDK
+  uri:         string;            // spotify:track:ID — required for Web Playback SDK
+  durationMs?: number;            // captured from Spotify search; used by song-length timer mode
 }
 
 // ── Database rows ─────────────────────────────────────────────────────────────
@@ -38,6 +39,15 @@ export type SongSource = "group-taste" | "playlist";
 //                 bots/musix-discord/README.md.
 export type AudioMode = "browser" | "discord-bot";
 
+// How the turn timer behaves.
+//  - "song-length" (default) — turn lasts until the song ends. Uses
+//    track.durationMs when present (Spotify captures it; legacy rounds
+//    without it fall back to TIMER_DEFAULT_FALLBACK_SECONDS).
+//  - "fixed"       — counts down from `timerSeconds`.
+//  - "none"        — no timer; captain plays at their own pace.
+export type TimerMode = "song-length" | "fixed" | "none";
+export const TIMER_DEFAULT_FALLBACK_SECONDS = 90;
+
 export interface TlRoomSettings {
   lateJoinMode?:       LateJoinMode;
   streamerMode?:       boolean;
@@ -52,6 +62,8 @@ export interface TlRoomSettings {
   singleScreenMode?:   boolean;       // host plays for every team on one device
   songSource?:         SongSource;    // group-taste (default) | playlist
   audioMode?:          AudioMode;     // browser (default) | discord-bot
+  timerMode?:          TimerMode;     // song-length (default) | fixed | none
+  timerSeconds?:       number;        // used when timerMode === "fixed"
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -67,6 +79,8 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   singleScreenMode:  false,
   songSource:        "group-taste",
   audioMode:         "browser",
+  timerMode:         "song-length",
+  timerSeconds:      120,
 };
 
 export interface TlRoom {

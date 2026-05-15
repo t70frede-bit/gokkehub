@@ -35,6 +35,12 @@ function sanitize(input: unknown): TlRoomSettings {
   if (s.audioMode === "browser" || s.audioMode === "discord-bot") {
     out.audioMode = s.audioMode;
   }
+  if (s.timerMode === "song-length" || s.timerMode === "fixed" || s.timerMode === "none") {
+    out.timerMode = s.timerMode;
+  }
+  if (typeof s.timerSeconds === "number" && s.timerSeconds >= 10 && s.timerSeconds <= 600) {
+    out.timerSeconds = Math.round(s.timerSeconds);
+  }
   return out;
 }
 

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
@@ -261,6 +261,59 @@ export default function LobbyPage() {
                           saveSettings({ voteTimerSeconds: n });
                         }}
                         className="w-20 rounded-lg px-3 py-1.5 text-sm"
+                        style={{
+                          background: "rgba(var(--surface-raised-rgb),0.5)",
+                          border:     "1px solid rgba(255,255,255,0.1)",
+                          color:      "inherit",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      />
+                      <span className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>seconds</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Turn timer */}
+                <div>
+                  <p className="text-sm font-medium mb-2">Turn timer</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { value: "song-length", label: "🎵 Song length",  hint: "Turn ends when the song does" },
+                      { value: "fixed",       label: "⏱ Fixed",         hint: "Set your own seconds" },
+                      { value: "none",        label: "♾ No timer",      hint: "Captain plays at their pace" },
+                    ] as const).map(({ value, label, hint }) => {
+                      const active = (settings.timerMode ?? "song-length") === value;
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => saveSettings({ timerMode: value as TimerMode })}
+                          title={hint}
+                          className="text-left rounded-lg p-3 transition-all border"
+                          style={{
+                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                            background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                          }}
+                        >
+                          <p className="text-sm font-semibold">{label}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(settings.timerMode ?? "song-length") === "fixed" && (
+                    <div className="flex items-center gap-3 mt-3">
+                      <label className="text-sm" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                        Seconds per turn:
+                      </label>
+                      <input
+                        type="number"
+                        min={10} max={600}
+                        value={settings.timerSeconds ?? 120}
+                        onChange={e => {
+                          const n = Math.max(10, Math.min(600, Number(e.target.value) || 120));
+                          saveSettings({ timerSeconds: n });
+                        }}
+                        className="w-24 rounded-lg px-3 py-1.5 text-sm"
                         style={{
                           background: "rgba(var(--surface-raised-rgb),0.5)",
                           border:     "1px solid rgba(255,255,255,0.1)",

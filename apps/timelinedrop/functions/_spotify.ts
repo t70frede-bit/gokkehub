@@ -10,6 +10,7 @@ interface SpotifySearchResponse {
       id:          string;
       uri:         string;
       name:        string;
+      duration_ms: number;
       artists:     Array<{ name: string }>;
       album: {
         name:          string;
@@ -47,6 +48,7 @@ export async function searchTrackUri(
     releaseYear,
     coverUrl:    cover,
     uri:         item.uri,
+    durationMs:  item.duration_ms,
   };
 }
 

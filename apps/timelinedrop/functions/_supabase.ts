@@ -244,6 +244,7 @@ interface SpotifyTrackObject {
   id: string;
   name: string;
   uri: string;
+  duration_ms: number;
   artists: Array<{ name: string }>;
   album: {
     name: string;
@@ -274,6 +275,7 @@ function parseItems(items: SpotifyPlaylistItem[]): SpotifyTrack[] {
       releaseYear,
       coverUrl:    cover,
       uri:         t.uri,
+      durationMs:  t.duration_ms,
     });
   }
   return out;
