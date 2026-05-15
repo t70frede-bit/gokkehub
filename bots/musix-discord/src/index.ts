@@ -291,9 +291,16 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
       selfDeaf:       true,   // bot doesn't need to hear others
       selfMute:       false,
     });
-    await entersState(voice, VoiceConnectionStatus.Ready, 15_000);
+    // Log every state transition so we can see where the handshake stalls
+    // if Ready never fires. Useful for diagnosing UDP-blocked / encryption
+    // / Discord-gateway issues — paste these into the chat if /join fails.
+    voice.on("stateChange", (oldState, newState) => {
+      console.log(`[voice] state: ${oldState.status} → ${newState.status}`);
+    });
+    await entersState(voice, VoiceConnectionStatus.Ready, 20_000);
   } catch (err) {
-    console.error("[musix-bot] voice connection failed:", err);
+    const lastState = voice! ? voice.state.status : "(no connection)";
+    console.error(`[musix-bot] voice connection failed (last state: ${lastState}):`, err);
     try { (voice!).destroy(); } catch { /* may not exist */ }
     await ix.editReply(
       "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
