@@ -42,6 +42,7 @@ import {
 } from "@discordjs/voice";
 import { spawn } from "node:child_process";
 import ffmpegPath from "ffmpeg-static";
+import { resolveTrack, createStreamResource } from "./resolver.js";
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const {
@@ -127,12 +128,12 @@ function playTestTone(player: AudioPlayer, frequencyHz: number, durationSec: num
 // active room per guild (a new /musix join replaces the prior session).
 
 interface Session {
-  roomId:           string;
+  roomId:           string | null;        // null for ad-hoc /musix test sessions
   guildId:          string;
   voiceChannelId:   string;
   invitedByUserId:  string;
   startedAt:        number;
-  realtime:         RealtimeChannel;
+  realtime:         RealtimeChannel | null; // null for ad-hoc /musix test sessions
   voice:            VoiceConnection;
   player:           AudioPlayer;
 }
@@ -140,7 +141,7 @@ interface Session {
 const sessions = new Map<string, Session>(); // key: guildId
 
 function describeSession(s: Session) {
-  return `room=${s.roomId} guild=${s.guildId} channel=${s.voiceChannelId}`;
+  return `room=${s.roomId ?? "(none)"} guild=${s.guildId} channel=${s.voiceChannelId}`;
 }
 
 async function teardownSession(guildId: string): Promise<Session | null> {
@@ -149,10 +150,77 @@ async function teardownSession(guildId: string): Promise<Session | null> {
   sessions.delete(guildId);
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
   try { existing.voice.destroy();   }   catch (err) { console.warn("[voice] connection destroy failed:", err); }
-  await existing.realtime.unsubscribe().catch(err => {
-    console.warn(`[musix-bot] unsubscribe failed for ${describeSession(existing)}:`, err);
-  });
+  if (existing.realtime) {
+    await existing.realtime.unsubscribe().catch(err => {
+      console.warn(`[musix-bot] unsubscribe failed for ${describeSession(existing)}:`, err);
+    });
+  }
   return existing;
+}
+
+// Joins the user's current voice channel and returns a ready-to-use voice
+// connection + audio player. Replies to the interaction with an error (and
+// returns null) if the user isn't in a voice channel or the handshake fails.
+// Used by both /musix join (with realtime subscription added on top) and
+// /musix test (without).
+async function setupVoiceConnection(
+  ix: ChatInputCommandInteraction,
+): Promise<{ voice: VoiceConnection; player: AudioPlayer; voiceChannelId: string } | null> {
+  if (!ix.guildId || !ix.guild) {
+    await ix.editReply("This command only works in a server.");
+    return null;
+  }
+  const member = ix.guild.members.cache.get(ix.user.id)
+    ?? (await ix.guild.members.fetch(ix.user.id).catch(() => null));
+  const voiceChannelId = member?.voice?.channelId ?? null;
+  if (!voiceChannelId) {
+    await ix.editReply("Join a voice channel first, then try again.");
+    return null;
+  }
+
+  let voice: VoiceConnection;
+  try {
+    voice = joinVoiceChannel({
+      channelId:      voiceChannelId,
+      guildId:        ix.guildId,
+      adapterCreator: ix.guild.voiceAdapterCreator,
+      selfDeaf:       true,
+      selfMute:       false,
+    });
+    voice.on("error", (err) => console.warn(`[voice/error]`, err));
+    const hookedNetworkings = new WeakSet<object>();
+    voice.on("stateChange", (oldState, newState) => {
+      console.log(`[voice] state: ${oldState.status} → ${newState.status}`);
+      const net = (newState as { networking?: { on: (e: string, fn: (...args: unknown[]) => void) => void } }).networking;
+      if (net && !hookedNetworkings.has(net)) {
+        hookedNetworkings.add(net);
+        net.on("close", (code) => console.log(`[voice/close] networking closed code=${code}`));
+      }
+    });
+    await entersState(voice, VoiceConnectionStatus.Ready, 20_000);
+  } catch (err) {
+    const lastState = voice! ? voice.state.status : "(no connection)";
+    console.error(`[musix-bot] voice connection failed (last state: ${lastState}):`, err);
+    try { (voice!).destroy(); } catch { /* may not exist */ }
+    await ix.editReply(
+      "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
+      "permissions on that channel, then try again.",
+    );
+    return null;
+  }
+
+  const player = createAudioPlayer();
+  // Catch stream errors (bad codec, network drop, YouTube auth failure)
+  // before they propagate as unhandled 'error' events and crash the process.
+  // We log + continue — the next /test or round will create a fresh resource.
+  player.on("error", (err) => console.warn(`[player/error] ${err.message}`));
+  voice.subscribe(player);
+  voice.on(VoiceConnectionStatus.Disconnected, () =>
+    console.log(`[voice] disconnected from guild ${ix.guildId}`));
+  voice.on(VoiceConnectionStatus.Destroyed, () =>
+    console.log(`[voice] destroyed for guild ${ix.guildId}`));
+
+  return { voice, player, voiceChannelId };
 }
 
 function startRealtimeForRoom(roomId: string, onNewRound: () => void): RealtimeChannel {
@@ -209,6 +277,19 @@ const musixCommand = new SlashCommandBuilder()
       .setName("leave")
       .setDescription("Have the bot leave the voice channel and stop following the room"),
   )
+  .addSubcommand(sub =>
+    sub
+      .setName("test")
+      .setDescription("Resolve a YouTube query and play it in the current voice channel (Phase 4 test)")
+      .addStringOption(opt =>
+        opt
+          .setName("query")
+          .setDescription("Artist + title, e.g. 'Queen Bohemian Rhapsody'")
+          .setRequired(true)
+          .setMinLength(2)
+          .setMaxLength(200),
+      ),
+  )
   .toJSON();
 
 async function registerCommands() {
@@ -237,19 +318,6 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     return;
   }
 
-  // User must be in a voice channel.
-  const member = ix.guild.members.cache.get(ix.user.id)
-    ?? (await ix.guild.members.fetch(ix.user.id).catch(() => null));
-  const voiceChannelId = member?.voice?.channelId ?? null;
-  if (!voiceChannelId) {
-    await ix.reply({
-      content: "Join a voice channel first, then run `/musix join` again.",
-      flags:   MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  // Validate the room code.
   const roomCode = ix.options.getString("room", true).trim().toUpperCase();
   if (roomCode.length !== 6) {
     await ix.reply({ content: "Room code is 6 characters.", flags: MessageFlags.Ephemeral });
@@ -271,88 +339,40 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     return;
   }
 
-  // Tear down any prior session in this guild before starting a new one.
   const prior = await teardownSession(ix.guildId);
-  if (prior) {
-    console.log(`[musix-bot] /join replaced prior session: ${describeSession(prior)}`);
-  }
+  if (prior) console.log(`[musix-bot] /join replaced prior session: ${describeSession(prior)}`);
 
-  // Defer — joining voice can take a few seconds (handshake, opus init, etc.)
-  // and Discord requires a reply within 3s. defer buys us 15 minutes.
+  // Defer — voice handshake can take a few seconds; Discord wants a reply
+  // within 3s. defer buys us 15 minutes.
   await ix.deferReply();
 
-  // Join the voice channel.
-  let voice: VoiceConnection;
-  try {
-    voice = joinVoiceChannel({
-      channelId:      voiceChannelId,
-      guildId:        ix.guildId,
-      adapterCreator: ix.guild.voiceAdapterCreator,
-      selfDeaf:       true,
-      selfMute:       false,
-    });
-    voice.on("error", (err) => console.warn(`[voice/error]`, err));
-    // Lightweight observability: log voice state transitions and any underlying
-    // networking close code. Only fires on transitions, not per-packet — so
-    // production-safe but still useful when the handshake fails. (Failures
-    // surface as "code=4017" etc.; 4014 = bot kicked / channel deleted.)
-    const hookedNetworkings = new WeakSet<object>();
-    voice.on("stateChange", (oldState, newState) => {
-      console.log(`[voice] state: ${oldState.status} → ${newState.status}`);
-      const net = (newState as { networking?: { on: (e: string, fn: (...args: unknown[]) => void) => void } }).networking;
-      if (net && !hookedNetworkings.has(net)) {
-        hookedNetworkings.add(net);
-        net.on("close", (code) => console.log(`[voice/close] networking closed code=${code}`));
-      }
-    });
-    await entersState(voice, VoiceConnectionStatus.Ready, 20_000);
-  } catch (err) {
-    const lastState = voice! ? voice.state.status : "(no connection)";
-    console.error(`[musix-bot] voice connection failed (last state: ${lastState}):`, err);
-    try { (voice!).destroy(); } catch { /* may not exist */ }
-    await ix.editReply(
-      "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
-      "permissions on that channel, then try again.",
-    );
-    return;
-  }
+  const conn = await setupVoiceConnection(ix);
+  if (!conn) return;
 
-  // Audio player — one per session. Subscribing the connection routes
-  // whatever the player plays into the channel.
-  const player = createAudioPlayer();
-  voice.subscribe(player);
-
-  // Log voice lifecycle events. Phase 6 will reconnect on transient
-  // disconnects; for now we just observe.
-  voice.on(VoiceConnectionStatus.Disconnected, () =>
-    console.log(`[voice] disconnected from guild ${ix.guildId}`));
-  voice.on(VoiceConnectionStatus.Destroyed, () =>
-    console.log(`[voice] destroyed for guild ${ix.guildId}`));
-
-  // Subscribe to realtime; round INSERTs trigger a test tone.
+  // Subscribe to realtime; round INSERTs trigger a test tone (Phase 5
+  // replaces this with the real song stream).
   const realtime = startRealtimeForRoom(roomCode, () => {
-    playTestTone(player, 440, 1.2, "round-start tone");
+    playTestTone(conn.player, 440, 1.2, "round-start tone");
   });
 
   const session: Session = {
     roomId:          roomCode,
     guildId:         ix.guildId,
-    voiceChannelId,
+    voiceChannelId:  conn.voiceChannelId,
     invitedByUserId: ix.user.id,
     startedAt:       Date.now(),
     realtime,
-    voice,
-    player,
+    voice:           conn.voice,
+    player:          conn.player,
   };
   sessions.set(ix.guildId, session);
 
-  // Welcome chime — proves the audio pipeline is alive right after /join.
-  playTestTone(player, 660, 0.8, "welcome chime");
+  playTestTone(conn.player, 660, 0.8, "welcome chime");
 
   await ix.editReply(
-    `🎵 Joined <#${voiceChannelId}> and following room **${roomCode}**. ` +
+    `🎵 Joined <#${conn.voiceChannelId}> and following room **${roomCode}**. ` +
     `(Phase 3 — you'll hear a chime now and a tone on each new round. ` +
-    `Real song playback ships in Phase 4.)`,
+    `Real song playback ships in Phase 5.)`,
   );
   console.log(`[musix-bot] /join → ${describeSession(session)} by user ${ix.user.tag}`);
 }
@@ -372,6 +392,68 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
   }
   await ix.reply(`👋 Left room **${cleared.roomId}** and disconnected from the voice channel.`);
   console.log(`[musix-bot] /leave → cleared session: ${describeSession(cleared)}`);
+}
+
+// Phase 4 verification — resolve a free-text query through the YouTube
+// resolver and play it. If there's no existing session, the bot joins the
+// caller's current voice channel as an ad-hoc session (no realtime
+// subscription). Phase 5 will replace this with auto-playback driven by
+// tl_rounds INSERTs.
+async function handleTest(ix: ChatInputCommandInteraction) {
+  if (!ix.guildId) {
+    await ix.reply({ content: "This command only works in a server.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const query = ix.options.getString("query", true).trim();
+  await ix.deferReply();
+
+  let session = sessions.get(ix.guildId);
+  if (!session) {
+    const conn = await setupVoiceConnection(ix);
+    if (!conn) return;
+    session = {
+      roomId:          null,
+      guildId:         ix.guildId,
+      voiceChannelId:  conn.voiceChannelId,
+      invitedByUserId: ix.user.id,
+      startedAt:       Date.now(),
+      realtime:        null,
+      voice:           conn.voice,
+      player:          conn.player,
+    };
+    sessions.set(ix.guildId, session);
+    console.log(`[musix-bot] /test created ad-hoc session: ${describeSession(session)}`);
+  }
+
+  const resolved = await resolveTrack({
+    id:      `test-${Date.now()}`,
+    name:    query,
+    artists: [],
+  });
+  if (!resolved) {
+    await ix.editReply(`Couldn't find a YouTube result for **${query}**.`);
+    return;
+  }
+
+  let resource;
+  try {
+    resource = await createStreamResource(resolved.videoId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[musix-bot] stream failed for ${resolved.videoUrl}:`, err);
+    await ix.editReply(
+      `Resolved **${resolved.videoTitle}** but YouTube refused to stream it ` +
+      `(${msg}). Try a different query.`,
+    );
+    return;
+  }
+
+  session.player.play(resource);
+  await ix.editReply(
+    `▶️ Playing **${resolved.videoTitle}** (${resolved.durationSec}s)\n${resolved.videoUrl}`,
+  );
+  console.log(`[musix-bot] /test → ${resolved.videoTitle} in ${describeSession(session)}`);
 }
 
 // ── Discord client ──────────────────────────────────────────────────────────
@@ -396,8 +478,9 @@ client.on(Events.InteractionCreate, async (ix) => {
   if (ix.commandName !== "musix") return;
   const sub = ix.options.getSubcommand();
   try {
-    if (sub === "join")  await handleJoin(ix);
+    if      (sub === "join")  await handleJoin(ix);
     else if (sub === "leave") await handleLeave(ix);
+    else if (sub === "test")  await handleTest(ix);
     else await ix.reply({ content: `Unknown subcommand: ${sub}`, flags: MessageFlags.Ephemeral });
   } catch (err) {
     console.error(`[musix-bot] /musix ${sub} threw:`, err);
