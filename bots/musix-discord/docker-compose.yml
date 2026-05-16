@@ -7,6 +7,8 @@ services:
     build: .
     container_name: musix-discord
     restart: unless-stopped
+    env_file:
+      - stack.env
     volumes:
       # Persist the auto-downloaded yt-dlp binary so container restarts
       # don't re-fetch the ~30MB binary every time.
