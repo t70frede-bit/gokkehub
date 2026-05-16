@@ -79,6 +79,10 @@ const CLIENT_ID     = requireEnv("DISCORD_CLIENT_ID", DISCORD_CLIENT_ID);
 const SB_URL        = requireEnv("SUPABASE_URL", SUPABASE_URL);
 const SB_SERVICE    = requireEnv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY);
 
+// Welcome video played once when /musix join lands the bot in voice.
+// User-picked clip; change here to swap.
+const BOT_WELCOME_VIDEO_ID = "SuOP90FMEuc";
+
 if (!ffmpegPath) {
   console.warn("[musix-bot] ffmpeg-static didn't resolve a binary path — voice playback won't work.");
 }
@@ -1069,24 +1073,42 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
 
   sessions.set(ix.guildId, session);
 
-  playTestTone(conn.player, 660, 0.8, "welcome chime");
+  // If the game's already in progress when we join, the round-INSERT
+  // realtime event has already fired before we subscribed — schedule the
+  // active round to play directly after the welcome video finishes.
+  // Otherwise the bot would sit silent until the captain advances.
+  const midGameRoundId = (room.status === "playing" && room.current_round_id != null)
+    ? room.current_round_id
+    : null;
+  if (midGameRoundId != null) {
+    conn.player.once(AudioPlayerStatus.Idle, () => {
+      void (async () => {
+        const activeRound = await fetchRoundById(midGameRoundId);
+        if (activeRound && activeRound.outcome === null) {
+          await playRoundTrack(session, activeRound);
+        }
+      })();
+    });
+  }
+
+  // Welcome video — plays once when the bot joins, then yields the player
+  // to the round audio (queued above via the Idle listener). If the
+  // stream fails, fall back to the synth chime so we at least signal
+  // "I'm here" before going silent.
+  try {
+    const welcomeResource = await createStreamResource(BOT_WELCOME_VIDEO_ID);
+    conn.player.play(welcomeResource);
+    console.log(`[musix-bot] playing welcome video ${BOT_WELCOME_VIDEO_ID}`);
+  } catch (err) {
+    console.warn(`[musix-bot] welcome video failed, falling back to chime:`, err);
+    playTestTone(conn.player, 660, 0.8, "welcome chime");
+  }
 
   await ix.editReply(
     `🎵 Joined <#${conn.voiceChannelId}> and following room **${roomCode}**. ` +
     `Each new round will play the song in voice automatically.`,
   );
   console.log(`[musix-bot] /join → ${describeSession(session)} by user ${ix.user.tag}`);
-
-  // If the game's already in progress when we join, the round-INSERT
-  // realtime event already fired before we subscribed — fetch the active
-  // round directly and play it. Otherwise the bot would sit silent until
-  // the next round.
-  if (room.status === "playing" && room.current_round_id != null) {
-    const activeRound = await fetchRoundById(room.current_round_id);
-    if (activeRound && activeRound.outcome === null) {
-      void playRoundTrack(session, activeRound);
-    }
-  }
 }
 
 async function handleLeave(ix: ChatInputCommandInteraction) {
