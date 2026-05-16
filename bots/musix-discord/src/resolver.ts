@@ -10,10 +10,81 @@
 
 import { Innertube } from "youtubei.js";
 import { createAudioResource, StreamType, type AudioResource } from "@discordjs/voice";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+// Dependency-injected so resolver can write/read tl_youtube_reports without
+// dragging in env wiring. index.ts calls setSupabaseClient on boot.
+let supabaseClient: SupabaseClient | null = null;
+export function setSupabaseClient(c: SupabaseClient): void { supabaseClient = c; }
+
+// In-memory cache of video IDs we should skip in YouTube search results.
+// Reports with count >= 2 OR blacklisted=true land here. Refreshed lazily
+// (TTL) and on every reportVideo call.
+const REPORT_SKIP_THRESHOLD = 2;
+const BLACKLIST_THRESHOLD   = 5;
+const REPORT_CACHE_TTL_MS   = 5 * 60 * 1000;
+
+interface ReportedCache { ids: Set<string>; fetchedAt: number }
+let reportedCache: ReportedCache | null = null;
+
+async function getReportedVideoIds(): Promise<Set<string>> {
+  if (reportedCache && Date.now() - reportedCache.fetchedAt < REPORT_CACHE_TTL_MS) {
+    return reportedCache.ids;
+  }
+  if (!supabaseClient) return new Set();
+  const { data, error } = await supabaseClient
+    .from("tl_youtube_reports")
+    .select("video_id")
+    .gte("reports_count", REPORT_SKIP_THRESHOLD);
+  if (error) {
+    console.warn(`[resolver] couldn't fetch reported videos:`, error.message);
+    return reportedCache?.ids ?? new Set();
+  }
+  const ids = new Set((data ?? []).map(r => (r as { video_id: string }).video_id));
+  reportedCache = { ids, fetchedAt: Date.now() };
+  return ids;
+}
+
+// Player clicked the "wrong song / bad version" button. Increment the
+// report count, blacklist if we crossed the threshold, and invalidate
+// both the per-track resolution cache (so the next round re-searches)
+// and the reported-videos cache (so the next resolver call sees this
+// video as skip-worthy).
+export async function reportVideo(videoId: string, trackId?: string): Promise<{ totalReports: number; blacklisted: boolean }> {
+  if (!supabaseClient) return { totalReports: 0, blacklisted: false };
+  // Atomic-ish via two-step: read, then upsert. Race-conditiony with
+  // concurrent reports, but at this scale the worst case is "the count
+  // is off by a few" — not a correctness problem.
+  const { data: existing } = await supabaseClient
+    .from("tl_youtube_reports")
+    .select("reports_count, blacklisted")
+    .eq("video_id", videoId)
+    .maybeSingle();
+  const prior = (existing as { reports_count?: number; blacklisted?: boolean } | null);
+  const newCount = (prior?.reports_count ?? 0) + 1;
+  const blacklisted = (prior?.blacklisted ?? false) || newCount >= BLACKLIST_THRESHOLD;
+  const { error } = await supabaseClient
+    .from("tl_youtube_reports")
+    .upsert({
+      video_id:         videoId,
+      reports_count:    newCount,
+      blacklisted,
+      last_reported_at: new Date().toISOString(),
+    }, { onConflict: "video_id" });
+  if (error) {
+    console.warn(`[resolver] failed to upsert report for ${videoId}:`, error.message);
+    return { totalReports: 0, blacklisted: false };
+  }
+  console.log(`[resolver] reported ${videoId}: count=${newCount} blacklisted=${blacklisted}`);
+  // Invalidate caches so future resolves skip this video.
+  reportedCache = null;
+  if (trackId) cache.delete(trackId);
+  return { totalReports: newCount, blacklisted };
+}
 
 export interface ResolvableTrack {
   id:      string;   // Spotify track id — cache key
@@ -105,7 +176,13 @@ export async function resolveTrack(track: ResolvableTrack): Promise<ResolvedTrac
     return null;
   }
 
-  const top = hits.find((h) => !isLikelyBadMatch(h.title)) ?? hits[0];
+  // Drop hits players have flagged as the wrong version / bad music video.
+  // Done before the bad-match filter so a reported video can't sneak in via
+  // the "everything looks bad" fallback below.
+  const reportedIds = await getReportedVideoIds();
+  const allowed = hits.filter(h => !reportedIds.has(h.id));
+  const pool    = allowed.length > 0 ? allowed : hits; // last-resort: if every hit is reported, take whatever's there
+  const top     = pool.find((h) => !isLikelyBadMatch(h.title)) ?? pool[0];
 
   const resolved: ResolvedTrack = {
     spotifyId:   track.id,

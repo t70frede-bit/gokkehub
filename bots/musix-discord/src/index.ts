@@ -54,6 +54,8 @@ import {
   createStreamResource,
   extractVideoId,
   searchSuggestions,
+  reportVideo,
+  setSupabaseClient,
   type ResolvedTrack,
 } from "./resolver.js";
 
@@ -92,6 +94,9 @@ const supabase: SupabaseClient = createClient(SB_URL, SB_SERVICE, {
   auth:     { persistSession: false, autoRefreshToken: false },
   realtime: { params: { eventsPerSecond: 10 } },
 });
+// Give the resolver access to Supabase so the YouTube-report flow can
+// read/write tl_youtube_reports without env-wiring of its own.
+setSupabaseClient(supabase);
 
 // Shape we read off tl_rooms for validation. Only the fields we use.
 interface TlRoomLite {
@@ -179,6 +184,7 @@ interface Session {
   currentRoundTeamId:       number | null;
   currentRoundDurationSec:  number;
   currentVideoId:           string | null; // for Restart / +30s re-spawn
+  currentTrackId:           string | null; // Spotify id — passed to reportVideo() so we invalidate the right cache entry
   currentSongLimitSeconds:  number | null;
   songLimitTimer:           NodeJS.Timeout | null;
   // Playback timing (game-mode round) — shape matches QueueState so
@@ -675,6 +681,15 @@ function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>
         .setLabel("+30s")
         .setEmoji("⏩")
         .setStyle(ButtonStyle.Secondary),
+      // "Wrong song / bad version" — players flag the bot's YouTube pick
+      // (wrong cover, music video with a long intro, audio quality
+      // issues, etc.). Reports accumulate per video_id; once enough land,
+      // the resolver skips it for future searches across all rooms.
+      new ButtonBuilder()
+        .setCustomId("musix-game-report")
+        .setLabel("Wrong / bad version")
+        .setEmoji("👎")
+        .setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -875,6 +890,7 @@ async function playRoundTrack(session: Session, round: BotRound) {
     session.currentRoundTeamId       = round.team_id ?? null;
     session.currentRoundDurationSec  = resolvedDurationSec;
     session.currentVideoId           = resolved.videoId;
+    session.currentTrackId           = track.id;
     session.currentSongLimitSeconds  = round.song_limit_seconds ?? null;
     session.playStartedAt       = Date.now();
     session.pauseStartedAt      = null;
@@ -1046,6 +1062,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     currentRoundTeamId:      null,
     currentRoundDurationSec: 0,
     currentVideoId:          null,
+    currentTrackId:          null,
     currentSongLimitSeconds: null,
     songLimitTimer:          null,
     playStartedAt:           0,
@@ -1173,6 +1190,7 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentRoundTeamId:      null,
       currentRoundDurationSec: 0,
       currentVideoId:          null,
+      currentTrackId:          null,
       currentSongLimitSeconds: null,
       songLimitTimer:          null,
       playStartedAt:           0,
@@ -1260,6 +1278,23 @@ async function handleButton(ix: ButtonInteraction) {
     }
     if (!session.currentVideoId) {
       await ix.reply({ content: "No round is currently playing.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    // Report needs its own reply (ephemeral confirmation to the clicker),
+    // so don't deferUpdate — handle it before the seek branches.
+    if (ix.customId === "musix-game-report") {
+      const videoId = session.currentVideoId;
+      const trackId = session.currentTrackId ?? undefined;
+      const { totalReports, blacklisted } = await reportVideo(videoId, trackId);
+      const tail = blacklisted
+        ? "This video has been flagged enough that the bot will skip it permanently in future searches."
+        : (totalReports >= 2
+            ? "Got it — the bot will skip this video next time this song comes up."
+            : "Got it — if another player also reports it, we'll skip it next time this song comes up.");
+      await ix.reply({
+        content: `👎 Thanks for flagging the wrong song / bad version. ${tail}`,
+        flags:   MessageFlags.Ephemeral,
+      });
       return;
     }
     await ix.deferUpdate();
