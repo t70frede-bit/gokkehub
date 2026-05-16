@@ -1098,7 +1098,13 @@ function RevealOverlay({
   const finalized      = !hasGuess
     ? true
     : (isVoteMode ? round.judging_finalized : (round.artist_correct !== null || round.songname_correct !== null));
-  const combinedVerdict: boolean | null = round.artist_correct ?? round.songname_correct ?? null;
+  // The server's awardBonusIfEligible requires BOTH fields === true; mirror
+  // that strictly here so the UI doesn't claim "bonus" when only one field
+  // resolved positive (was a subtle ??-short-circuit bug).
+  const combinedVerdict: boolean | null =
+    round.artist_correct === true && round.songname_correct === true ? true
+    : round.artist_correct === false || round.songname_correct === false ? false
+    : null;
   const bonusEligible  = hasGuess && combinedVerdict === true;
   // Show whichever year is currently authoritative
   const displayYear    = round.corrected_year ?? round.track.releaseYear;

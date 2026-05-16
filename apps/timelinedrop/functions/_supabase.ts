@@ -132,25 +132,191 @@ export async function lookupCorrectedYear(env: Env, trackId: string): Promise<nu
 }
 
 /**
- * UPSERT a corrected year. Latest write wins.
+ * UPSERT a corrected year. Latest write wins. Audit fields (sourcePlayerId
+ * / sourcePlayerName) are nullable for backwards-compatibility with the
+ * one host-shortcut callsite that pre-dates migration 017 — they should
+ * be supplied for any new caller.
  */
 export async function upsertSongCorrection(
   env: Env,
   trackId: string,
   correctedYear: number,
   sourceRoom: string,
+  sourcePlayerId?: string,
+  sourcePlayerName?: string,
 ): Promise<void> {
   try {
-    await req(env, "POST", "tl_song_corrections", "on_conflict=track_id", {
+    const body: Record<string, unknown> = {
       track_id:       trackId,
       corrected_year: correctedYear,
       source_room:    sourceRoom,
       corrected_at:   new Date().toISOString(),
-    }, true);
+    };
+    if (sourcePlayerId)   body.source_player_id   = sourcePlayerId;
+    if (sourcePlayerName) body.source_player_name = sourcePlayerName;
+    await req(env, "POST", "tl_song_corrections", "on_conflict=track_id", body, true);
   } catch (e) {
     // Don't block the user's correction on a global-table hiccup.
     console.warn("[musix] upsertSongCorrection failed:", e);
   }
+}
+
+// ── Accepted-answers / auto-judging (migration 016) ─────────────────────────
+
+/**
+ * Normalize a player's guess for comparison. Same function applied on both
+ * sides of any compare — accepts-table writes the result as the
+ * `answer_normalized` PK component, and runtime auto-judge runs the same
+ * pipeline on each incoming guess.
+ *
+ * Decisions:
+ *  - Case + accent + punctuation insensitive (no trick spelling)
+ *  - Whitespace collapsed (trailing spaces, double spaces don't matter)
+ *  - "Crazy in Love (feat. Jay-Z)" → "crazy in love" on the songname side
+ *    (Spotify often puts the feature in the title; players type it either
+ *    way and both should pass). NOT applied to artist — artists matter.
+ */
+export function normalizeAnswer(raw: string, kind: "artist" | "songname"): string {
+  let s = raw.toLowerCase().trim();
+  if (kind === "songname") {
+    s = s.replace(/[\(\[]\s*(feat|ft|featuring|with)\.?\s+[^\)\]]+[\)\]]/gi, "");
+    s = s.replace(/\s+(feat|ft|featuring)\.?\s+.+$/gi, "");
+  }
+  s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");      // strip accents
+  s = s.replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();    // strip punctuation, collapse whitespace
+  return s;
+}
+
+export interface AcceptedAnswerRow {
+  track_id:          string;
+  kind:              "artist" | "songname";
+  answer_normalized: string;
+  answer_original:   string;
+  confirmations:     number;
+}
+
+/**
+ * Fetch all accepted answers for a track (both kinds in one query). Returns
+ * an empty array if the table doesn't exist yet (migration 016 not applied).
+ */
+export async function lookupAcceptedAnswers(env: Env, trackId: string): Promise<AcceptedAnswerRow[]> {
+  try {
+    const url = `${env.SUPABASE_URL}/rest/v1/tl_accepted_answers?track_id=eq.${encodeURIComponent(trackId)}&select=track_id,kind,answer_normalized,answer_original,confirmations`;
+    const res = await fetch(url, {
+      headers: {
+        apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    });
+    if (!res.ok) return [];
+    return (await res.json()) as AcceptedAnswerRow[];
+  } catch {
+    return [];
+  }
+}
+
+const ACCEPTED_SOFT_CAP_PER_KIND = 20;
+
+/**
+ * Record a positively-judged guess so future games auto-judge it. Skips
+ * empty guesses, normalises both sides, and applies a soft per-(track,kind)
+ * cap to keep the table from bloating on rooms with very lenient judges.
+ *
+ * If the row already exists: bump `confirmations` and update
+ * last_confirmed_at + last_confirmed_by_*. If it doesn't exist and we're
+ * under the cap: insert. If we're at the cap and the row doesn't exist:
+ * skip — the cheaper fallback is "do nothing", which still lets canonical
+ * matches keep auto-judging.
+ */
+export async function recordAcceptedAnswer(
+  env: Env,
+  args: {
+    trackId:    string;
+    kind:       "artist" | "songname";
+    rawGuess:   string;
+    playerId:   string;
+    playerName: string;
+    sourceRoom: string;
+  },
+): Promise<void> {
+  const normalized = normalizeAnswer(args.rawGuess, args.kind);
+  if (!normalized) return; // empty after normalization → not a guess
+  const now = new Date().toISOString();
+  try {
+    // Look up existing row to decide upsert vs bump vs skip-on-cap.
+    const existing = await lookupAcceptedAnswers(env, args.trackId);
+    const sameKind = existing.filter(r => r.kind === args.kind);
+    const match = sameKind.find(r => r.answer_normalized === normalized);
+
+    if (match) {
+      // Bump confirmations + last_confirmed_*. PATCH (not upsert) avoids
+      // overwriting source_player_id / first_added_at, which should stick
+      // to the original creator.
+      const patchUrl = `${env.SUPABASE_URL}/rest/v1/tl_accepted_answers?track_id=eq.${encodeURIComponent(args.trackId)}&kind=eq.${args.kind}&answer_normalized=eq.${encodeURIComponent(normalized)}`;
+      await fetch(patchUrl, {
+        method: "PATCH",
+        headers: {
+          "Content-Type":  "application/json",
+          "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          "Prefer":        "return=minimal",
+        },
+        body: JSON.stringify({
+          confirmations:          match.confirmations + 1,
+          last_confirmed_at:      now,
+          last_confirmed_by_id:   args.playerId,
+          last_confirmed_by_name: args.playerName,
+        }),
+      });
+      return;
+    }
+
+    if (sameKind.length >= ACCEPTED_SOFT_CAP_PER_KIND) {
+      console.warn(`[accepted] soft cap reached for ${args.trackId}/${args.kind}; skipping new entry "${args.rawGuess}"`);
+      return;
+    }
+
+    await req(env, "POST", "tl_accepted_answers", "", {
+      track_id:               args.trackId,
+      kind:                   args.kind,
+      answer_normalized:      normalized,
+      answer_original:        args.rawGuess.trim(),
+      confirmations:          1,
+      first_added_at:         now,
+      last_confirmed_at:      now,
+      source_player_id:       args.playerId,
+      source_player_name:     args.playerName,
+      last_confirmed_by_id:   args.playerId,
+      last_confirmed_by_name: args.playerName,
+      source_room:            args.sourceRoom,
+    }, true);
+    console.log(`[accepted] added "${args.rawGuess}" → "${normalized}" (${args.kind}) for ${args.trackId} by ${args.playerName}`);
+  } catch (e) {
+    // Same posture as upsertSongCorrection — don't block the user.
+    console.warn("[accepted] recordAcceptedAnswer failed:", e);
+  }
+}
+
+/**
+ * Check whether a guess is auto-judgeable as correct. Compares the
+ * normalized guess against the canonical track field AND every stored
+ * accepted answer. Returns the match source on hit (so the caller can
+ * log it), or null on miss.
+ */
+export function autoJudgeGuess(
+  rawGuess: string,
+  kind: "artist" | "songname",
+  canonical: string,
+  accepted: AcceptedAnswerRow[],
+): { matched: "canonical" | "stored"; storedConfirmations?: number } | null {
+  const normalized = normalizeAnswer(rawGuess, kind);
+  if (!normalized) return null;
+  if (normalized === normalizeAnswer(canonical, kind)) {
+    return { matched: "canonical" };
+  }
+  const hit = accepted.find(r => r.kind === kind && r.answer_normalized === normalized);
+  if (hit) return { matched: "stored", storedConfirmations: hit.confirmations };
+  return null;
 }
 
 /**

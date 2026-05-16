@@ -5,6 +5,7 @@ import {
   getRoom, updateRoom, getTeams, getPlayers, getRound, updateRound,
   createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
   batchLookupCorrections, lookupCorrectedYear, upsertSongCorrection,
+  lookupAcceptedAnswers, recordAcceptedAnswer, autoJudgeGuess,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -169,6 +170,22 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
     if (a.trim() !== "" || s.trim() !== "") {
       update.judging_started_at = new Date().toISOString();
     }
+
+    // Auto-judge against canonical + stored accepted answers. If both
+    // fields auto-resolve to true, also mark judging_finalized so the
+    // bonus path can fire without a human in the loop.
+    const accepted = await lookupAcceptedAnswers(env, round.track.id);
+    const artistMatch = a.trim() ? autoJudgeGuess(a, "artist",   round.track.artist, accepted) : null;
+    const songMatch   = s.trim() ? autoJudgeGuess(s, "songname", round.track.name,   accepted) : null;
+    if (artistMatch) {
+      update.artist_correct = true;
+      console.log(`[auto-judge] artist "${a}" matched ${artistMatch.matched}${artistMatch.storedConfirmations ? ` (confirmations=${artistMatch.storedConfirmations})` : ""} for ${round.track.id}`);
+    }
+    if (songMatch) {
+      update.songname_correct = true;
+      console.log(`[auto-judge] songname "${s}" matched ${songMatch.matched}${songMatch.storedConfirmations ? ` (confirmations=${songMatch.storedConfirmations})` : ""} for ${round.track.id}`);
+    }
+    if (artistMatch && songMatch) update.judging_finalized = true;
   }
 
   await updateRound(env, round_id, update);
@@ -257,6 +274,33 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
     if (kind === "artist"   || kind === "combined") update.artist_correct   = verdict;
     if (kind === "songname" || kind === "combined") update.songname_correct = verdict;
     await updateRound(env, round_id, update);
+
+    // On a positive verdict, teach the global accepted-answers table the
+    // variant this judge accepted so future games auto-judge it. Audit
+    // fields capture WHO accepted what — easy to spot a lenient host
+    // pattern after the fact.
+    if (verdict === true) {
+      if ((kind === "artist"   || kind === "combined") && round.artist_guess) {
+        await recordAcceptedAnswer(env, {
+          trackId:    round.track.id,
+          kind:       "artist",
+          rawGuess:   round.artist_guess,
+          playerId:   me.id,
+          playerName: me.name,
+          sourceRoom: roomId,
+        });
+      }
+      if ((kind === "songname" || kind === "combined") && round.songname_guess) {
+        await recordAcceptedAnswer(env, {
+          trackId:    round.track.id,
+          kind:       "songname",
+          rawGuess:   round.songname_guess,
+          playerId:   me.id,
+          playerName: me.name,
+          sourceRoom: roomId,
+        });
+      }
+    }
   }
 
   return json({ ok: true }, 200, req);
@@ -285,10 +329,9 @@ async function handleProposeYear(req: Request, roomId: string, env: Env) {
     await applyYearCorrection(env, round, year);
     // Persist globally so the corrected year flows to the timeline when
     // the pending card locks — and so every future room inherits it.
-    // Mirrors handleApproveYear; without this the host shortcut updated
-    // the round but the timeline-lock path still grabbed the original
-    // track.releaseYear from tl_song_corrections (which it wasn't in).
-    await upsertSongCorrection(env, round.track.id, year, roomId);
+    // Audit fields capture who; in this branch it's the host, who just
+    // self-approved by being host. (Audit visible via migration 017.)
+    await upsertSongCorrection(env, round.track.id, year, roomId, me.id, me.name);
     return json({ ok: true, applied: true }, 200, req);
   }
 
@@ -313,7 +356,17 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
     await applyYearCorrection(env, round, round.year_correction_proposed);
     // Persist the correction so every future game inherits it (migration
     // 013). Latest-wins — overwrites any prior correction for this track.
-    await upsertSongCorrection(env, round.track.id, round.year_correction_proposed, roomId);
+    // Audit identifies the original PROPOSER (not the approving host) so
+    // a player who repeatedly proposes nonsense is easy to spot even
+    // after the host approves; the host approval is itself implicit.
+    await upsertSongCorrection(
+      env,
+      round.track.id,
+      round.year_correction_proposed,
+      roomId,
+      round.year_correction_proposed_by ?? undefined,
+      round.year_correction_proposed_name ?? undefined,
+    );
   }
   // Clear the proposal either way
   await updateRound(env, round_id, {
@@ -538,11 +591,41 @@ async function handleFinalize(req: Request, roomId: string, env: Env, _waitUntil
     return json({ error: "Timer has not expired and not all players have voted" }, 400, req);
   }
 
+  const artistFinal   = tally(round.artist_votes);
+  const songnameFinal = tally(round.songname_votes);
   await updateRound(env, round_id, {
-    artist_correct:    tally(round.artist_votes),
-    songname_correct:  tally(round.songname_votes),
+    artist_correct:    artistFinal,
+    songname_correct:  songnameFinal,
     judging_finalized: true,
   });
+
+  // Teach the global accepted-answers table when the vote-all judging
+  // finalizes positive. Source attribution goes to the host since
+  // vote-all is collective — easier to spot a host with permissively-
+  // judged rooms than to track every individual voter's calls.
+  const host = players.find(p => p.id === room.host_id);
+  if (host) {
+    if (artistFinal === true && round.artist_guess) {
+      await recordAcceptedAnswer(env, {
+        trackId:    round.track.id,
+        kind:       "artist",
+        rawGuess:   round.artist_guess,
+        playerId:   host.id,
+        playerName: host.name,
+        sourceRoom: roomId,
+      });
+    }
+    if (songnameFinal === true && round.songname_guess) {
+      await recordAcceptedAnswer(env, {
+        trackId:    round.track.id,
+        kind:       "songname",
+        rawGuess:   round.songname_guess,
+        playerId:   host.id,
+        playerName: host.name,
+        sourceRoom: roomId,
+      });
+    }
+  }
 
   return json({ ok: true }, 200, req);
 }
