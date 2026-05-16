@@ -26,15 +26,38 @@ export async function searchTrackUri(
   artist: string,
   track: string,
 ): Promise<SpotifyTrack | null> {
+  // limit=10 so we can pick the OLDEST version of the song that matches
+  // the artist + title — Spotify's relevance ranking often promotes the
+  // "2018 Remaster" or "Anniversary Edition" above the original release,
+  // which is wrong for a year-placement game. Of the matches that look
+  // like the same song (artist matches, name shares the title prefix),
+  // we take the one with the earliest release_date.
   const q = `track:${encodeURIComponent(track)}+artist:${encodeURIComponent(artist)}`;
-  const url = `https://api.spotify.com/v1/search?q=${q}&type=track&limit=1`;
+  const url = `https://api.spotify.com/v1/search?q=${q}&type=track&limit=10`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) return null;
   let data: SpotifySearchResponse;
   try { data = await res.json(); }
   catch { return null; }
-  const item = data.tracks?.items?.[0];
-  if (!item) return null;
+  const items = data.tracks?.items ?? [];
+  if (items.length === 0) return null;
+
+  const norm = (s: string) => s.toLowerCase().trim();
+  const tName   = norm(track);
+  const tArtist = norm(artist);
+  // Treat an item as "the same song" if any of its artists matches the
+  // target and the name either equals or starts with the target title
+  // (so "Bohemian Rhapsody (2011 Remaster)" still counts).
+  const matches = items.filter(it => {
+    const artistOk = it.artists.some(a => norm(a.name) === tArtist);
+    const n = norm(it.name);
+    const nameOk = n === tName || n.startsWith(tName + " ") || n.startsWith(tName + " (");
+    return artistOk && nameOk;
+  });
+  const pool = matches.length > 0 ? matches : [items[0]];
+  // release_date is "YYYY" or "YYYY-MM-DD"; lexical compare puts older first.
+  pool.sort((a, b) => a.album.release_date.localeCompare(b.album.release_date));
+  const item = pool[0];
 
   const releaseYear = parseInt(item.album.release_date.slice(0, 4), 10);
   if (!Number.isFinite(releaseYear)) return null;
