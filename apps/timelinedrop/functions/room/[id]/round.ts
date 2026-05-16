@@ -280,6 +280,12 @@ async function handleProposeYear(req: Request, roomId: string, env: Env) {
   // Host applies immediately; everyone else proposes for host approval.
   if (me.is_host || room.host_id === player_id) {
     await applyYearCorrection(env, round, year);
+    // Persist globally so the corrected year flows to the timeline when
+    // the pending card locks — and so every future room inherits it.
+    // Mirrors handleApproveYear; without this the host shortcut updated
+    // the round but the timeline-lock path still grabbed the original
+    // track.releaseYear from tl_song_corrections (which it wasn't in).
+    await upsertSongCorrection(env, round.track.id, year, roomId);
     return json({ ok: true, applied: true }, 200, req);
   }
 

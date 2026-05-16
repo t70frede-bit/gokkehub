@@ -112,6 +112,22 @@ async function fetchRoom(roomId: string): Promise<TlRoomLite | null> {
   return data as TlRoomLite;
 }
 
+// Used when the bot joins mid-game: fetches the active round so we can
+// start playing it immediately instead of waiting for the next INSERT
+// (which won't fire until the captain advances).
+async function fetchRoundById(roundId: number): Promise<BotRound | null> {
+  const { data, error } = await supabase
+    .from("tl_rounds")
+    .select("id, team_id, outcome, track, song_limit_seconds")
+    .eq("id", roundId)
+    .single();
+  if (error) {
+    console.warn(`[musix-bot] fetchRoundById(${roundId}) error:`, error.message);
+    return null;
+  }
+  return data as BotRound;
+}
+
 // ── Audio: synthesised test tones ───────────────────────────────────────────
 // Generates a sine-wave PCM stream through ffmpeg, hands it to the audio
 // player as a raw 48 kHz / 16-bit / stereo resource (Discord's native voice
@@ -1060,6 +1076,17 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     `Each new round will play the song in voice automatically.`,
   );
   console.log(`[musix-bot] /join → ${describeSession(session)} by user ${ix.user.tag}`);
+
+  // If the game's already in progress when we join, the round-INSERT
+  // realtime event already fired before we subscribed — fetch the active
+  // round directly and play it. Otherwise the bot would sit silent until
+  // the next round.
+  if (room.status === "playing" && room.current_round_id != null) {
+    const activeRound = await fetchRoundById(room.current_round_id);
+    if (activeRound && activeRound.outcome === null) {
+      void playRoundTrack(session, activeRound);
+    }
+  }
 }
 
 async function handleLeave(ix: ChatInputCommandInteraction) {
