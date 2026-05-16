@@ -3,9 +3,9 @@
 # fill in DISCORD_BOT_TOKEN / DISCORD_CLIENT_ID / SUPABASE_SERVICE_ROLE_KEY).
 
 services:
-  musix-discord-dev:
+  musix-discord:
     build: .
-    container_name: musix-discord-dev
+    container_name: musix-discord
     restart: unless-stopped
     environment:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
