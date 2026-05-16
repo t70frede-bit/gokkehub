@@ -634,9 +634,10 @@ function syncPauseFromRoom(session: Session, room: BotRoom) {
 // and a progress bar that ticks every 10 seconds.
 
 interface GameTeam {
-  id:     number;
-  name:   string;
-  score:  number;
+  id:        number;
+  name:      string;
+  score:     number;   // cards locked into the timeline
+  pending:   number;   // cards earned this turn but not yet locked
 }
 
 interface GameSnapshot {
@@ -647,19 +648,26 @@ interface GameSnapshot {
 
 async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): Promise<GameSnapshot> {
   const [teamsRes, timelineRes] = await Promise.all([
-    supabase.from("tl_teams").select("id, name, sort_order").eq("room_id", roomId).order("sort_order"),
+    supabase.from("tl_teams").select("id, name, sort_order, pending_tracks").eq("room_id", roomId).order("sort_order"),
     supabase.from("tl_timeline").select("team_id").eq("room_id", roomId),
   ]);
-  const teamRows = (teamsRes.data ?? []) as { id: number; name: string; sort_order: number }[];
+  const teamRows = (teamsRes.data ?? []) as {
+    id: number; name: string; sort_order: number; pending_tracks?: unknown[] | null;
+  }[];
   const timelineRows = (timelineRes.data ?? []) as { team_id: number }[];
   const counts = new Map<number, number>();
   for (const row of timelineRows) {
     counts.set(row.team_id, (counts.get(row.team_id) ?? 0) + 1);
   }
+  // pending_tracks is JSONB array on tl_teams — these cards count towards the
+  // running score as the team plays through their streak. Without them the
+  // score appeared frozen during a turn even though the team was clearly
+  // racking up correct guesses.
   const teams: GameTeam[] = teamRows.map(t => ({
-    id:    t.id,
-    name:  t.name,
-    score: counts.get(t.id) ?? 0,
+    id:      t.id,
+    name:    t.name,
+    score:   counts.get(t.id) ?? 0,
+    pending: Array.isArray(t.pending_tracks) ? t.pending_tracks.length : 0,
   }));
   const currentTeamName = currentTeamId != null
     ? (teams.find(t => t.id === currentTeamId)?.name ?? null)
@@ -707,12 +715,21 @@ function buildGameNowPlayingMessage(session: Session, snapshot: GameSnapshot): {
     ? `🎯 **${snapshot.currentTeamName}**'s turn`
     : "🎯 Between rounds";
 
+  // Rank by effective score (locked + pending) so a team mid-streak
+  // climbs the leaderboard in real time.
   const ranked = [...snapshot.teams]
-    .map((t, idx) => ({ ...t, _origIdx: idx }))
-    .sort((a, b) => b.score - a.score || a._origIdx - b._origIdx);
+    .map((t, idx) => ({ ...t, _origIdx: idx, total: t.score + t.pending }))
+    .sort((a, b) => b.total - a.total || a._origIdx - b._origIdx);
   const medals = ["🥇", "🥈", "🥉"];
   const scoreLines = ranked
-    .map((t, i) => `${medals[i] ?? "•"} ${t.name} — **${t.score}**`)
+    .map((t, i) => {
+      const medal  = medals[i] ?? "•";
+      // Show pending as a "+N this turn" delta — that's the part players
+      // are actively earning, and it makes "lost" obvious if a Card
+      // Remover token drops a locked card (total just decreases).
+      const pendingTag = t.pending > 0 ? `  *+${t.pending} this turn*` : "";
+      return `${medal} ${t.name} — **${t.total}**${pendingTag}`;
+    })
     .join("\n");
 
   const lines = [
