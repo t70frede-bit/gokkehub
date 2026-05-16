@@ -85,6 +85,11 @@ const SB_SERVICE    = requireEnv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_R
 // User-picked clip; change here to swap.
 const BOT_WELCOME_VIDEO_ID = "SuOP90FMEuc";
 
+// AFK disconnect threshold — if the audio player sits Idle (no song,
+// not paused) for this long we leave the voice channel. Paused state
+// doesn't count as AFK because someone explicitly pressed pause.
+const AFK_TIMEOUT_MS = 3 * 60 * 1000;
+
 if (!ffmpegPath) {
   console.warn("[musix-bot] ffmpeg-static didn't resolve a binary path — voice playback won't work.");
 }
@@ -209,6 +214,10 @@ interface Session {
   currentTurnTeamId:        number | null;
   currentTurnHistory:       TurnHistoryEntry[];
   scoresAtTurnStart:        Map<number, number>; // teamId → score+pending at turn start
+  // AFK disconnect — armed when the player goes Idle (nothing playing,
+  // not paused), cleared when audio starts again. If it ever fires we
+  // teardown the session and leave the voice channel.
+  afkTimer:                 NodeJS.Timeout | null;
 }
 
 interface TurnHistoryEntry {
@@ -445,6 +454,50 @@ function attachQueueAutoAdvance(session: Session) {
   });
 }
 
+// ── AFK disconnect ─────────────────────────────────────────────────────────
+// If the player sits Idle (not paused, not playing, not buffering) for
+// AFK_TIMEOUT_MS we leave the voice channel. Cleanly handles both modes:
+// music mode (queue ran out + user walked away) and game mode (no rounds
+// being advanced for several minutes).
+function armAfkTimer(session: Session) {
+  clearAfkTimer(session);
+  session.afkTimer = setTimeout(() => {
+    const stillSession = sessions.get(session.guildId);
+    if (!stillSession || stillSession !== session) return;
+    console.log(`[afk] disconnecting idle session: ${describeSession(stillSession)}`);
+    void teardownSession(stillSession.guildId);
+  }, AFK_TIMEOUT_MS);
+  session.afkTimer.unref?.();
+}
+
+function clearAfkTimer(session: Session) {
+  if (session.afkTimer) {
+    clearTimeout(session.afkTimer);
+    session.afkTimer = null;
+  }
+}
+
+function attachAfkDisconnect(session: Session) {
+  // Arm when idle, disarm whenever audio is moving (Playing) or about to
+  // (Buffering). Paused state is deliberately ignored — the user pressed
+  // pause, that's intentional.
+  session.player.on(AudioPlayerStatus.Idle, () => {
+    const stillSession = sessions.get(session.guildId);
+    if (!stillSession || stillSession !== session) return;
+    armAfkTimer(stillSession);
+  });
+  session.player.on(AudioPlayerStatus.Playing, () => {
+    const stillSession = sessions.get(session.guildId);
+    if (!stillSession || stillSession !== session) return;
+    clearAfkTimer(stillSession);
+  });
+  session.player.on(AudioPlayerStatus.Buffering, () => {
+    const stillSession = sessions.get(session.guildId);
+    if (!stillSession || stillSession !== session) return;
+    clearAfkTimer(stillSession);
+  });
+}
+
 function describeSession(s: Session) {
   return `mode=${s.mode} room=${s.roomId ?? "(none)"} guild=${s.guildId} channel=${s.voiceChannelId}`;
 }
@@ -462,6 +515,7 @@ async function teardownSession(guildId: string): Promise<Session | null> {
     clearTimeout(existing.songLimitTimer);
     existing.songLimitTimer = null;
   }
+  clearAfkTimer(existing);
   stopGameProgressTimer(existing);
   await disableOldGameMessage(existing);
   try { existing.player.stop(true); }   catch (err) { console.warn("[voice] player stop failed:", err); }
@@ -1288,6 +1342,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     currentTurnTeamId:       null,
     currentTurnHistory:      [],
     scoresAtTurnStart:       new Map(),
+    afkTimer:                null,
     songLimitTimer:          null,
     playStartedAt:           0,
     pauseStartedAt:          null,
@@ -1339,6 +1394,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   });
 
   sessions.set(ix.guildId, session);
+  attachAfkDisconnect(session);
 
   // If the game's already in progress when we join, the round-INSERT
   // realtime event has already fired before we subscribed — schedule the
@@ -1447,6 +1503,7 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentTurnTeamId:       null,
       currentTurnHistory:      [],
       scoresAtTurnStart:       new Map(),
+      afkTimer:                null,
       songLimitTimer:          null,
       playStartedAt:           0,
       pauseStartedAt:          null,
@@ -1457,6 +1514,7 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
     };
     sessions.set(ix.guildId, fresh);
     attachQueueAutoAdvance(fresh);
+    attachAfkDisconnect(fresh);
     session = fresh;
     console.log(`[musix-bot] /${label} created music session: ${describeSession(session)}`);
   }
