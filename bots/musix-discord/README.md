@@ -1,151 +1,121 @@
 # musix-discord
 
-Discord bot that plays the songs for a musix.gokkehub.com game directly
-into the host's voice channel. Activated per-room via the lobby's "Audio: 🤖
-Discord bot" toggle.
+Discord bot that plays the songs for a [musix.gokkehub.com](https://musix.gokkehub.com) game directly into the host's voice channel. Activated per-room via the lobby's "Audio: 🤖 Discord bot" toggle.
 
-> **Why a separate process?** Cloudflare Pages Functions are request /
-> response — they can't hold a persistent Discord voice connection. The bot
-> runs as a long-lived Node.js process and subscribes to the same Supabase
-> realtime stream the React clients use, so it follows round transitions
-> without needing an extra API surface on our side.
-
-## Audio source
-
-Spotify's terms forbid bots streaming their audio (this is why every popular
-Discord music bot ended up YouTube-backed). So:
-
-- **Metadata** comes from Spotify, as today (track id, artist, title, cover,
-  release year — already curated into `tl_rooms.track_pool`).
-- **Audio** is resolved at play-time: search YouTube for `"{artist} {title}"`,
-  take the top match, stream it via `@discordjs/voice` + `ffmpeg`.
-
-There's a mismatch risk (Spotify shows track A, YouTube plays a cover / live
-version / wrong song) — common to all Discord music bots and usually fine for
-mainstream tracks. The persistent year-corrections system (migration 013)
-helps with the related "remaster year is wrong" problem.
+> **Why a separate process?** Cloudflare Pages Functions are request / response — they can't hold a persistent Discord voice connection. The bot runs as a long-lived Node.js process and subscribes to the same Supabase realtime stream the React clients use, so it follows round transitions without needing an extra API surface.
 
 ## How a game uses it
 
 1. Host enables **Audio: Discord bot** in the lobby.
-2. Host adds the bot to their Discord server (one-time setup).
+2. Host invites the bot to their Discord server (one-time).
 3. Host joins a voice channel, runs `/musix join {ROOM_CODE}`.
-4. Bot looks up the room in Supabase, joins the host's voice channel, and
-   subscribes to that room's realtime channel.
-5. When `tl_rooms.current_round_id` flips to a new round, the bot resolves
-   `tl_rounds.track` to a YouTube stream and plays it.
-6. When `tl_rooms.paused_at_ms` is set, the bot pauses. When
-   `tl_rooms.playing_since` is non-null and `paused_at_ms` is null, the bot
-   plays.
-7. When `tl_rounds.song_limit_seconds` is set (Song Limiter token), the bot
-   auto-stops after that many seconds.
-8. `/musix leave` (or room status → finished) makes the bot disconnect.
+4. Bot looks up the room in Supabase, joins the voice channel, plays a welcome clip.
+5. Each new round → bot resolves `tl_rounds.track` to a YouTube stream and plays it.
+6. Pause/resume + Song Limiter sync from `tl_rooms.playing_since` / `paused_at_ms`.
+7. Players can flag wrong YouTube versions in-game; host approves, then can hit Redo round to get a different YouTube pick.
+8. `/musix leave` makes the bot disconnect.
 
-## Setup (one-time, for the bot operator)
+It also doubles as a regular music bot via `/musix play <query>` (search/URL/video ID), with a queue, autocomplete, pause/skip/stop controls, and a progress bar. The two modes don't fight: starting a musix game preserves the music queue and resumes it after `/musix leave`.
 
-### 1. Discord application
+## Audio source
 
-You can reuse an existing GokkeHub Discord app (the same one that powers
-the OAuth login on account.gokkehub.com is fine — bot and OAuth coexist on
-one application). Or create a fresh one at
-<https://discord.com/developers/applications>.
+Spotify forbids bot streaming of their audio, so we use Spotify for **metadata** (curated into `tl_rooms.track_pool`) and YouTube for **audio**, resolved at play-time. Search runs through `youtubei.js` (Innertube — YouTube's internal mobile/TV API, doesn't break with layout changes). Streaming runs through `yt-dlp` as a subprocess (the only project that keeps up with YouTube's anti-bot dance).
 
-Then on that application:
+## Quick start with Docker (recommended)
 
-1. Sidebar → **Bot**. If the page shows **Add Bot**, click it. Otherwise
-   the bot already exists.
-2. **Reset Token**, copy it — this is `DISCORD_BOT_TOKEN`. It's distinct
-   from the OAuth client secret on the General Information page; don't
-   confuse them.
-3. Turn **Public Bot** OFF if you want to be the only one who can invite
-   the bot.
-4. **Privileged Gateway Intents:** leave them OFF. Slash commands + voice
-   don't need any privileged intent; turning them on would require
-   Discord's gateway review for any future scaling.
-5. Sidebar → **OAuth2** → **URL Generator**. Scopes: `bot`,
-   `applications.commands`. Bot permissions: `Connect`, `Speak`, `Use
-   Voice Activity`. Open the generated URL and add the bot to your
-   Discord server.
+You need:
+- Docker + Docker Compose installed
+- A Discord application + bot token (yours, not someone else's — Discord allows one active connection per token, so each operator needs their own)
+- Supabase credentials (ask the project maintainer for `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`)
 
-**OAuth redirects + secrets:** don't touch them. The bot doesn't use OAuth
-redirect URIs or the OAuth client secret — those continue serving the
-account.gokkehub.com login flow.
+### 1. Create your Discord app
 
-### 2. Set environment variables
+1. Go to <https://discord.com/developers/applications> → **New Application**, name it whatever.
+2. Sidebar → **Bot** → **Reset Token** → copy. That's your `DISCORD_BOT_TOKEN`.
+3. Leave **Privileged Gateway Intents** OFF (the bot doesn't need any).
+4. Sidebar → **General Information** → copy **Application ID**. That's your `DISCORD_CLIENT_ID`.
 
-Copy `.env.example` to `.env` and fill in:
+### 2. Invite the bot to your server
+
+Open this URL in a browser (replace `YOUR_CLIENT_ID`):
 
 ```
-DISCORD_BOT_TOKEN=…
-DISCORD_CLIENT_ID=…       # also from the developer portal, "General Information"
-SUPABASE_URL=https://verbxfbfurachhxztkob.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=…  # same key the Cloudflare Pages Functions use
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=36700160&scope=bot+applications.commands
 ```
 
-### 3. Install + run
+Permission integer `36700160` = Connect + Speak + Use Voice Activity. Add the bot to the server you want to play in.
+
+### 3. Configure + run
+
+```bash
+git clone https://github.com/t70frede-bit/gokkehub.git
+cd gokkehub/bots/musix-discord
+cp .env.example .env
+# Edit .env — fill in DISCORD_BOT_TOKEN, DISCORD_CLIENT_ID,
+# SUPABASE_URL (ask the maintainer), SUPABASE_SERVICE_ROLE_KEY (ditto).
+docker compose up -d
+```
+
+The bot will boot, register the `/musix` slash command globally (takes up to ~1h on first run; instant for subsequent restarts), and idle until someone runs `/musix join` or `/musix play`.
+
+Tail the logs:
+
+```bash
+docker compose logs -f
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+### Updating to latest code
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+The `--build` rebuilds the image with the new source. The auto-downloaded yt-dlp binary persists in the `musix-bin` Docker volume across rebuilds.
+
+## Local dev (without Docker)
 
 ```bash
 cd bots/musix-discord
-pnpm install
-pnpm dev      # local development, hot reload
-pnpm start    # production
+npm install
+cp .env.example .env  # then fill it in
+npm run dev           # tsx watch — hot reload
 ```
 
-`ffmpeg` must be installed on the host machine (or available in the deploy
-image). On Debian/Ubuntu: `apt install ffmpeg`. On macOS: `brew install
-ffmpeg`. On Railway / Fly.io, see deploy notes below.
+System deps for local dev:
+- **Node.js 22 LTS** (not 24+ — voice handshake has issues on newer Node)
+- **ffmpeg** on PATH (Debian/Ubuntu: `apt install ffmpeg`, macOS: `brew install ffmpeg`, Windows: `winget install Gyan.FFmpeg`)
+- `yt-dlp` auto-downloads to `bots/musix-discord/bin/` on first use
 
-## Deployment
+## Environment variables
 
-The bot needs to run 24/7 (or whenever someone might play a game). Options:
-
-| Platform | Cost | Notes |
+| Var | Required | What |
 |---|---|---|
-| **Railway** | Free $5 credit/month; ~$3-5/month after | Easiest. `ffmpeg` available via the Nixpacks builder. |
-| **Fly.io** | Free tier covers small bots | Needs a Dockerfile with `apt install ffmpeg`. |
-| **VPS** (Hetzner, DigitalOcean…) | $4-5/month | Most reliable. Use systemd or pm2 to keep it alive. |
-| **Raspberry Pi / home server** | Hardware cost only | Works if your network's stable. |
+| `DISCORD_BOT_TOKEN` | yes | From Discord developer portal → your app → Bot → Reset Token |
+| `DISCORD_CLIENT_ID` | yes | From Discord developer portal → your app → General Information → Application ID |
+| `SUPABASE_URL` | yes | The musix project's Supabase URL — same one Cloudflare Pages uses |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Service-role key for that Supabase project — needed to bypass RLS when reading tl_rooms / tl_rounds |
+| `DISCORD_DEV_GUILD_ID` | no | Narrow slash-command registration to one guild for instant sync during dev. Omit in prod. |
 
-Pick whichever fits. The bot is small (~150-200 MB resident) and CPU-light
-except when ffmpeg is transcoding.
+## Deployment notes
 
-## Implementation phases
+- The bot only needs outbound network access (Discord gateway WS, Discord voice UDP, Supabase, YouTube). No inbound ports.
+- Memory footprint is small (~150 MB resident) but spikes during ffmpeg transcoding.
+- Bot autodownloads yt-dlp at runtime; in Docker this lands in the `/app/bin` volume.
+- Multiple bot instances must use **different** Discord bot tokens — one token = one active gateway connection.
 
-1. **Phase 1 (current scaffold)** — README + `.env.example` + planning. ✅
-2. **Phase 2 — Hello-world bot.** Connects to Discord, registers
-   `/musix-join` / `/musix-leave` slash commands, replies with stub messages.
-   No voice yet. Confirms the bot setup + token + slash command flow works.
-3. **Phase 3 — Voice connection.** `/musix-join` actually joins the host's
-   voice channel. Plays a static test MP3 to verify @discordjs/voice +
-   ffmpeg are wired correctly. Subscribes to the room's Supabase realtime
-   channel.
-4. **Phase 4 — YouTube resolver.** Given a `SpotifyTrack`, search YouTube
-   and return a streamable URL. Use `play-dl` (handles search + streaming in
-   one library, less brittle than yt-dlp shell-outs).
-5. **Phase 5 — Round playback.** On `tl_rounds.current_round_id` change,
-   resolve the track and stream it. Honour pause/resume from
-   `playing_since` / `paused_at_ms`. Honour `song_limit_seconds`.
-6. **Phase 6 — Persistence + reliability.** Store the room → voice channel
-   mapping in a small `tl_discord_sessions` table so bot restarts pick the
-   game back up. Handle host disconnects, voice-channel changes, etc.
+## Troubleshooting
 
-Each phase is its own commit. Phase 2 next.
-
-## File layout (post-Phase 5)
-
-```
-bots/musix-discord/
-├── README.md
-├── .env.example
-├── package.json
-├── tsconfig.json
-├── src/
-│   ├── index.ts           # entry — boots Discord client + supabase listener
-│   ├── discord.ts         # Discord client setup, slash command registration
-│   ├── commands.ts        # /musix-join, /musix-leave handlers
-│   ├── voice.ts           # voice connection + audio pipeline
-│   ├── resolver.ts        # SpotifyTrack → YouTube stream URL (play-dl)
-│   ├── sessions.ts        # room → voice channel mapping (in-memory + DB)
-│   └── supabase.ts        # realtime subscription helpers
-└── Dockerfile             # for Fly.io / Railway with ffmpeg
-```
+| Symptom | Likely cause |
+|---|---|
+| `voice connection failed (last state: signalling): AbortError` with code `4017` | `@discordjs/voice` is too old / on the wrong gateway version. Pull latest — should be `0.19.x`. |
+| `yt-dlp` failures / 4xx errors | YouTube broke yt-dlp again. `docker compose pull` then rebuild, or in local dev delete `bin/yt-dlp*` to force re-download of the latest release. |
+| Bot joins voice but no audio | Check `ffmpeg` is on PATH inside the container (`docker compose exec musix-discord which ffmpeg` should print a path). |
+| `/musix` doesn't appear in Discord | Slash commands take up to an hour to propagate when registered globally. Set `DISCORD_DEV_GUILD_ID` for instant sync during testing. |
+| Bot in voice channel but message says "no music session active" on button click | The bot's session ended (e.g. you restarted it) but the Discord message still has live buttons. Run `/musix join` (or `/musix play`) again. |
