@@ -1064,6 +1064,7 @@ interface RevealProps {
   isCaptain:            boolean;
   isJudgeEligible:      boolean;
   isHost:               boolean;
+  isDiscordBot:         boolean;
   myPlayerId:           string;
   totalEligibleVoters:  number;
   pendingCount:         number;
@@ -1077,13 +1078,16 @@ interface RevealProps {
   onProposeYear:        (year: number) => Promise<void>;
   onApproveYear:        (approve: boolean) => Promise<void>;
   onRecoveryPick:       (trackId: string) => Promise<void>;
+  onReportVideo:        () => Promise<void>;
+  onApproveVideoReport: (approve: boolean) => Promise<void>;
+  onRedoRound:          () => Promise<void>;
 }
 
 function RevealOverlay({
-  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost,
+  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost, isDiscordBot,
   myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
   onJudge, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
-  onRecoveryPick,
+  onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
@@ -1142,6 +1146,16 @@ function RevealOverlay({
             onApprove={onApproveYear}
           />
 
+          <VideoReportWidget
+            round={round}
+            isHost={isHost}
+            isDiscordBot={isDiscordBot}
+            myPlayerId={myPlayerId}
+            onReport={onReportVideo}
+            onApprove={onApproveVideoReport}
+            onRedo={onRedoRound}
+          />
+
           <div className="rounded-xl p-3"
             style={{ background: "rgba(212,160,74,0.10)", border: "1px solid rgba(212,160,74,0.4)" }}>
             <p className="text-sm font-semibold" style={{ color: "rgb(var(--color-primary-rgb))" }}>
@@ -1179,6 +1193,16 @@ function RevealOverlay({
             myPlayerId={myPlayerId}
             onPropose={onProposeYear}
             onApprove={onApproveYear}
+          />
+
+          <VideoReportWidget
+            round={round}
+            isHost={isHost}
+            isDiscordBot={isDiscordBot}
+            myPlayerId={myPlayerId}
+            onReport={onReportVideo}
+            onApprove={onApproveVideoReport}
+            onRedo={onRedoRound}
           />
 
           <div className="rounded-xl p-3"
@@ -1256,6 +1280,16 @@ function RevealOverlay({
           myPlayerId={myPlayerId}
           onPropose={onProposeYear}
           onApprove={onApproveYear}
+        />
+
+        <VideoReportWidget
+          round={round}
+          isHost={isHost}
+          isDiscordBot={isDiscordBot}
+          myPlayerId={myPlayerId}
+          onReport={onReportVideo}
+          onApprove={onApproveVideoReport}
+          onRedo={onRedoRound}
         />
 
         {hasGuess && (
@@ -1605,6 +1639,110 @@ function YearCorrectionWidget({
   );
 }
 
+// ── Bad-YouTube-version widget ────────────────────────────────────────────────
+// Mirrors YearCorrectionWidget's propose/approve cycle but for the bot's
+// YouTube pick. Visible only when the room is in discord-bot audio mode
+// (the report flow is meaningless in browser mode — the host's Spotify SDK
+// IS the source of truth there).
+function VideoReportWidget({
+  round, isHost, isDiscordBot, myPlayerId,
+  onReport, onApprove, onRedo,
+}: {
+  round:         TlRound;
+  isHost:        boolean;
+  isDiscordBot:  boolean;
+  myPlayerId:    string;
+  onReport:      () => Promise<void>;
+  onApprove:     (approve: boolean) => Promise<void>;
+  onRedo:        () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  if (!isDiscordBot) return null;
+  if (!round.bot_video_id) return null;  // bot hasn't published a video yet (e.g. browser audio mode just switched)
+
+  const proposed   = round.video_report_proposed;
+  const proposedByMe = round.video_report_proposed_by === myPlayerId;
+  const approved   = round.video_report_approved;
+
+  // Host: pending approval banner
+  if (proposed && isHost) {
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-center gap-2 flex-wrap"
+        style={{ background: "rgba(220,160,0,0.12)", border: "1px solid rgba(220,160,0,0.4)" }}>
+        <span style={{ color: "rgb(220,160,0)" }}>
+          👎 <strong>{round.video_report_proposed_name ?? "Someone"}</strong> says this is the wrong YouTube version (wrong song, bad audio, music video with long intro, etc.).
+        </span>
+        <div className="flex gap-2 ml-auto">
+          <button
+            onClick={async () => { setBusy(true); try { await onApprove(true); } finally { setBusy(false); } }}
+            disabled={busy}
+            className="text-xs font-bold px-3 py-1 rounded"
+            style={{ background: "rgba(40,180,60,0.2)", color: "rgb(40,180,60)", border: "1px solid rgba(40,180,60,0.4)" }}
+          >
+            ✓ Approve
+          </button>
+          <button
+            onClick={async () => { setBusy(true); try { await onApprove(false); } finally { setBusy(false); } }}
+            disabled={busy}
+            className="text-xs font-bold px-3 py-1 rounded"
+            style={{ background: "rgba(220,60,60,0.18)", color: "rgb(220,60,60)", border: "1px solid rgba(220,60,60,0.4)" }}
+          >
+            ✗ Reject
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-host pending
+  if (proposed) {
+    return (
+      <p className="text-xs text-center opacity-70" style={{ color: "rgb(220,160,0)" }}>
+        ⏳ {proposedByMe ? "You" : (round.video_report_proposed_name ?? "Someone")} flagged the YouTube version — waiting for host
+      </p>
+    );
+  }
+
+  // Approved: surface the host's Redo button + a status line for everyone else
+  if (approved && isHost) {
+    return (
+      <div className="rounded-lg p-3 text-sm flex items-center gap-2 flex-wrap"
+        style={{ background: "rgba(40,180,60,0.10)", border: "1px solid rgba(40,180,60,0.35)" }}>
+        <span style={{ color: "rgb(40,180,60)" }}>
+          ✓ YouTube version flagged. The bot will try a different one next time this song comes up.
+        </span>
+        <button
+          onClick={async () => { setBusy(true); try { await onRedo(); } finally { setBusy(false); } }}
+          disabled={busy}
+          className="text-xs font-bold px-3 py-1 rounded ml-auto"
+          style={{ background: "rgba(var(--color-primary-rgb),0.18)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.4)" }}
+        >
+          🔁 Redo round
+        </button>
+      </div>
+    );
+  }
+  if (approved) {
+    return (
+      <p className="text-xs text-center opacity-70" style={{ color: "rgb(40,180,60)" }}>
+        ✓ Wrong-video report approved — host can redo this round if they want
+      </p>
+    );
+  }
+
+  // Default: trigger button (any player)
+  return (
+    <button
+      onClick={async () => { setBusy(true); try { await onReport(); } finally { setBusy(false); } }}
+      disabled={busy}
+      className="text-xs opacity-50 hover:opacity-90 underline"
+    >
+      👎 Wrong song or bad YouTube version? Let us know
+    </button>
+  );
+}
+
 // ── Main GamePage ─────────────────────────────────────────────────────────────
 
 export default function GamePage() {
@@ -1936,6 +2074,35 @@ export default function GamePage() {
     await fetch(`/room/${roomId}/round?action=approve-year`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, approve }),
+    });
+  }
+
+  // ── Bad-YouTube-version flow ──────────────────────────────────────────
+  // Any player flags the bot's pick → host approves → host can optionally
+  // click Redo to replay the round with a different YouTube video. The
+  // musix-discord bot watches tl_rounds for video_report_approved +
+  // redo_requested_at and reacts (reportVideo + re-resolve + re-play).
+  async function reportVideo() {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=report-video`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
+    });
+  }
+
+  async function approveVideoReport(approve: boolean) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=approve-video-report`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, approve }),
+    });
+  }
+
+  async function redoRound() {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=redo-round`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
     });
   }
 
@@ -2775,6 +2942,7 @@ export default function GamePage() {
             isCaptain={iAmCaptain && isMyTurn}
             isJudgeEligible={isJudgeEligible}
             isHost={isHost}
+            isDiscordBot={settings.audioMode === "discord-bot"}
             myPlayerId={myPlayerId ?? ""}
             totalEligibleVoters={totalEligibleVoters}
             pendingCount={activeTeam?.pending_tracks?.length ?? 0}
@@ -2786,6 +2954,9 @@ export default function GamePage() {
             onProposeYear={proposeYearCorrection}
             onApproveYear={approveYearCorrection}
             onRecoveryPick={recoveryPick}
+            onReportVideo={reportVideo}
+            onApproveVideoReport={approveVideoReport}
+            onRedoRound={redoRound}
           />
         );
       })()}

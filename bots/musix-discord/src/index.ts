@@ -186,6 +186,11 @@ interface Session {
   currentVideoId:           string | null; // for Restart / +30s re-spawn
   currentTrackId:           string | null; // Spotify id — passed to reportVideo() so we invalidate the right cache entry
   currentSongLimitSeconds:  number | null;
+  // Deduplication for the host-approved video report and the redo-round
+  // signal. tl_rounds UPDATE events repeat for unrelated field changes
+  // (outcome flips, judging, etc.), so we only react once per fresh signal.
+  reportedVideoFor:         string | null; // video_id of the last bot-reported video
+  lastRedoRequestedAt:      string | null;
   songLimitTimer:           NodeJS.Timeout | null;
   // Playback timing (game-mode round) — shape matches QueueState so
   // computeElapsedMs + renderProgressBar can be reused.
@@ -548,11 +553,14 @@ interface BotSpotifyTrack {
 }
 
 interface BotRound {
-  id?:                  number;
-  team_id?:             number;
-  outcome?:             string | null;
-  track?:               BotSpotifyTrack | null;
-  song_limit_seconds?:  number | null;
+  id?:                     number;
+  team_id?:                number;
+  outcome?:                string | null;
+  track?:                  BotSpotifyTrack | null;
+  song_limit_seconds?:     number | null;
+  bot_video_id?:           string | null;
+  video_report_approved?:  boolean;
+  redo_requested_at?:      string | null; // ISO timestamp
 }
 
 interface BotRoom {
@@ -677,6 +685,10 @@ async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): 
 
 function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>[] {
   if (!session.currentVideoId) return [];
+  // "Wrong song / bad version" used to live here as a Discord button, but
+  // moved to the musix in-game UI (mirrors the year-correction propose/
+  // approve/redo flow). Bot now reacts to tl_rounds updates from that
+  // flow — see handleVideoReportApprovedTransition + handleRedoRequestedTransition.
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -688,15 +700,6 @@ function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>
         .setCustomId("musix-game-skip30")
         .setLabel("+30s")
         .setEmoji("⏩")
-        .setStyle(ButtonStyle.Secondary),
-      // "Wrong song / bad version" — players flag the bot's YouTube pick
-      // (wrong cover, music video with a long intro, audio quality
-      // issues, etc.). Reports accumulate per video_id; once enough land,
-      // the resolver skips it for future searches across all rooms.
-      new ButtonBuilder()
-        .setCustomId("musix-game-report")
-        .setLabel("Wrong / bad version")
-        .setEmoji("👎")
         .setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -878,6 +881,35 @@ async function fireSongLimitPause(session: Session, limitSeconds: number) {
   void tickGameNowPlaying(session);
 }
 
+// Host approved a "wrong song / bad video" report → increment the global
+// blacklist counter for the bot's chosen video and invalidate the
+// per-track resolution cache so the next round resolves fresh.
+// Deduped against session.reportedVideoFor so repeated round-UPDATE
+// events for unrelated fields don't double-report.
+async function handleVideoReportApprovedTransition(session: Session, round: BotRound): Promise<void> {
+  if (!round.video_report_approved) return;
+  const videoId = round.bot_video_id ?? session.currentVideoId;
+  if (!videoId) return;
+  if (session.reportedVideoFor === videoId) return;
+  session.reportedVideoFor = videoId;
+  const result = await reportVideo(videoId, session.currentTrackId ?? undefined);
+  console.log(`[round] approved report for ${videoId}: count=${result.totalReports} blacklisted=${result.blacklisted}`);
+}
+
+// Host clicked "Redo round" → server reset round state + stamped
+// redo_requested_at. Re-resolve the track (cache is now invalidated by
+// the report path above) and play the next-best YouTube match. Deduped
+// against session.lastRedoRequestedAt so we re-play exactly once per
+// redo, not on every realtime echo.
+async function handleRedoRequestedTransition(session: Session, round: BotRound): Promise<void> {
+  const stamp = round.redo_requested_at ?? null;
+  if (!stamp) return;
+  if (stamp === session.lastRedoRequestedAt) return;
+  session.lastRedoRequestedAt = stamp;
+  console.log(`[round] redo requested for round ${round.id} at ${stamp}`);
+  await playRoundTrack(session, round);
+}
+
 // Resolves the round's SpotifyTrack to a YouTube video and starts streaming
 // it. Replaces whatever was playing before. Also updates room.playing_since
 // so React clients see the bot started playback, arms the Song Limiter,
@@ -909,6 +941,9 @@ async function playRoundTrack(session: Session, round: BotRound) {
     session.currentVideoId           = resolved.videoId;
     session.currentTrackId           = track.id;
     session.currentSongLimitSeconds  = round.song_limit_seconds ?? null;
+    // Each new round = a fresh dedup window for the report/redo signals.
+    session.reportedVideoFor    = null;
+    session.lastRedoRequestedAt = round.redo_requested_at ?? null;
     session.playStartedAt       = Date.now();
     session.pauseStartedAt      = null;
     session.pausedAccumulatedMs = 0;
@@ -917,7 +952,8 @@ async function playRoundTrack(session: Session, round: BotRound) {
     console.warn(`[round] playback failed for round ${round.id}:`, err);
     return;
   }
-  // Tell React clients we started playback.
+  // Tell React clients we started playback, and stamp the chosen
+  // YouTube video id so the report/redo flow has something to act on.
   if (session.roomId) {
     try {
       await supabase
@@ -926,6 +962,16 @@ async function playRoundTrack(session: Session, round: BotRound) {
         .eq("id", session.roomId);
     } catch (err) {
       console.warn(`[round] couldn't update DB on round-start:`, err);
+    }
+  }
+  if (session.currentRoundId != null && session.currentVideoId) {
+    try {
+      await supabase
+        .from("tl_rounds")
+        .update({ bot_video_id: session.currentVideoId })
+        .eq("id", session.currentRoundId);
+    } catch (err) {
+      console.warn(`[round] couldn't stamp bot_video_id on round ${session.currentRoundId}:`, err);
     }
   }
   maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
@@ -1081,6 +1127,8 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     currentVideoId:          null,
     currentTrackId:          null,
     currentSongLimitSeconds: null,
+    reportedVideoFor:        null,
+    lastRedoRequestedAt:     null,
     songLimitTimer:          null,
     playStartedAt:           0,
     pauseStartedAt:          null,
@@ -1099,6 +1147,8 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
       if (round.id === session.currentRoundId) {
         session.currentSongLimitSeconds = round.song_limit_seconds ?? null;
         maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
+        void handleVideoReportApprovedTransition(session, round);
+        void handleRedoRequestedTransition(session, round);
       }
       void tickGameNowPlaying(session);
     },
@@ -1209,6 +1259,8 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentVideoId:          null,
       currentTrackId:          null,
       currentSongLimitSeconds: null,
+      reportedVideoFor:        null,
+      lastRedoRequestedAt:     null,
       songLimitTimer:          null,
       playStartedAt:           0,
       pauseStartedAt:          null,
@@ -1295,23 +1347,6 @@ async function handleButton(ix: ButtonInteraction) {
     }
     if (!session.currentVideoId) {
       await ix.reply({ content: "No round is currently playing.", flags: MessageFlags.Ephemeral });
-      return;
-    }
-    // Report needs its own reply (ephemeral confirmation to the clicker),
-    // so don't deferUpdate — handle it before the seek branches.
-    if (ix.customId === "musix-game-report") {
-      const videoId = session.currentVideoId;
-      const trackId = session.currentTrackId ?? undefined;
-      const { totalReports, blacklisted } = await reportVideo(videoId, trackId);
-      const tail = blacklisted
-        ? "This video has been flagged enough that the bot will skip it permanently in future searches."
-        : (totalReports >= 2
-            ? "Got it — the bot will skip this video next time this song comes up."
-            : "Got it — if another player also reports it, we'll skip it next time this song comes up.");
-      await ix.reply({
-        content: `👎 Thanks for flagging the wrong song / bad version. ${tail}`,
-        flags:   MessageFlags.Ephemeral,
-      });
       return;
     }
     await ix.deferUpdate();

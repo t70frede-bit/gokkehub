@@ -186,6 +186,19 @@ export interface TlRound {
   year_correction_proposed:       number | null;
   year_correction_proposed_by:    string | null;
   year_correction_proposed_name:  string | null;
+  // YouTube-version-bad flow (migration 015). The bot writes bot_video_id
+  // when it starts streaming the round. Anyone can flag the video as
+  // wrong/bad — proposed_* fields capture who. Host approves → approved
+  // flips, the bot calls reportVideo() against the global blacklist
+  // table, and Redo button appears. Host clicks Redo → redo_requested_at
+  // stamps, server resets round state, bot re-resolves with the bad
+  // video now blacklisted and plays the next-best match.
+  bot_video_id:                   string | null;
+  video_report_proposed:          boolean;
+  video_report_proposed_by:       string | null;
+  video_report_proposed_name:     string | null;
+  video_report_approved:          boolean;
+  redo_requested_at:              string | null; // ISO timestamp
 }
 
 export interface StageRequest {

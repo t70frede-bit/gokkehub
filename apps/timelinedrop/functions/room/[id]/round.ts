@@ -50,6 +50,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env, wait
   if (action === "propose-year") return handleProposeYear(req, roomId, env);
   if (action === "approve-year") return handleApproveYear(req, roomId, env);
   if (action === "recovery-pick") return handleRecoveryPick(req, roomId, env);
+  if (action === "report-video") return handleReportVideo(req, roomId, env);
+  if (action === "approve-video-report") return handleApproveVideoReport(req, roomId, env);
+  if (action === "redo-round")   return handleRedoRound(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
 
@@ -372,6 +375,95 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
       }
     }
   }
+}
+
+// ── Bad-YouTube-version flow (player proposes; host approves; redo) ─────────
+
+async function handleReportVideo(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as { round_id: number; player_id: string };
+  const { round_id, player_id } = body;
+
+  const [room, round, players] = await Promise.all([
+    getRoom(env, roomId), getRound(env, round_id), getPlayers(env, roomId),
+  ]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  const me = players.find(p => p.id === player_id);
+  if (!me) return json({ error: "Not in room" }, 403, req);
+
+  await updateRound(env, round_id, {
+    video_report_proposed:      true,
+    video_report_proposed_by:   player_id,
+    video_report_proposed_name: me.name,
+  } as Partial<TlRound>);
+  return json({ ok: true, proposed: true }, 200, req);
+}
+
+async function handleApproveVideoReport(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as { round_id: number; player_id: string; approve: boolean };
+  const { round_id, player_id, approve } = body;
+
+  const [room, round] = await Promise.all([getRoom(env, roomId), getRound(env, round_id)]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  if (room.host_id !== player_id) return json({ error: "Only the host can approve" }, 403, req);
+  if (!round.video_report_proposed) return json({ error: "No pending report" }, 400, req);
+
+  const update: Partial<TlRound> = {
+    video_report_proposed:      false,
+    video_report_proposed_by:   null,
+    video_report_proposed_name: null,
+  };
+  if (approve) update.video_report_approved = true;
+  await updateRound(env, round_id, update as never);
+  return json({ ok: true, approved: approve }, 200, req);
+}
+
+async function handleRedoRound(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as { round_id: number; player_id: string };
+  const { round_id, player_id } = body;
+
+  const [room, round, teams] = await Promise.all([
+    getRoom(env, roomId), getRound(env, round_id), getTeams(env, roomId),
+  ]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  if (room.host_id !== player_id) return json({ error: "Only the host can redo" }, 403, req);
+  if (!round.video_report_approved) return json({ error: "Report must be approved first" }, 400, req);
+
+  // If the captain had answered correctly, the track was added to pending.
+  // We're undoing the placement attempt so the track should leave pending —
+  // it can be re-earned (or lost) once the redo plays out.
+  if (round.outcome === "correct") {
+    const activeTeam = teams.find(t => t.id === round.team_id);
+    if (activeTeam) {
+      const pending = (activeTeam.pending_tracks ?? []) as Array<{ id: string }>;
+      const filtered = pending.filter(t => t.id !== round.track.id);
+      if (filtered.length !== pending.length) {
+        await updateTeam(env, activeTeam.id, { pending_tracks: filtered as never });
+      }
+    }
+  }
+
+  // Reset round state so the captain starts fresh.
+  await updateRound(env, round_id, {
+    outcome:               null,
+    left_year:             null,
+    right_year:            null,
+    staged_left_year:      null,
+    staged_right_year:     null,
+    revealed_at:           null,
+    artist_guess:          null,
+    songname_guess:        null,
+    artist_correct:        null,
+    songname_correct:      null,
+    judging_started_at:    null,
+    judging_finalized:     false,
+    bonus_awarded:         false,
+    video_report_approved: false,
+    redo_requested_at:     new Date().toISOString(),
+  } as Partial<TlRound>);
+
+  // Reset audio state — bot will re-resolve and set playing_since fresh.
+  await updateRoom(env, roomId, { playing_since: null, paused_at_ms: null });
+  return json({ ok: true, redo: true }, 200, req);
 }
 
 // ── Recovery pick (save one pending card after wrong placement) ─────────────
