@@ -14,7 +14,7 @@ FROM node:22-alpine
 # ffmpeg for @discordjs/voice transcoding pipeline.
 # python3 + py3-pip would let yt-dlp use its python fallback if needed,
 # but the static yt-dlp binary doesn't need them — skip to keep image lean.
-RUN apk add --no-cache ffmpeg ca-certificates
+RUN apk add --no-cache ffmpeg ca-certificates python3
 
 WORKDIR /app
 
