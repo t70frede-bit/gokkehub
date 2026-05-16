@@ -127,7 +127,7 @@ async function fetchRoom(roomId: string): Promise<TlRoomLite | null> {
 async function fetchRoundById(roundId: number): Promise<BotRound | null> {
   const { data, error } = await supabase
     .from("tl_rounds")
-    .select("id, team_id, outcome, track, song_limit_seconds")
+    .select("id, team_id, outcome, track, song_limit_seconds, force_locked, bot_video_id, video_report_approved, redo_requested_at")
     .eq("id", roundId)
     .single();
   if (error) {
@@ -197,11 +197,26 @@ interface Session {
   playStartedAt:       number;
   pauseStartedAt:      number | null;
   pausedAccumulatedMs: number;
-  // Game-mode Now-Playing message — posted on round INSERT, refreshed on
-  // round/room updates and on a 10-second progress-bar tick.
+  // Game-mode message — one per TURN. Posted on the turn's first round
+  // INSERT, edited in place as more rounds happen, finalized into a
+  // summary when the turn passes (active_team_id flips).
   notificationChannelId: string | null;
   currentMessage:        { channelId: string; messageId: string } | null;
   progressTimer:         NodeJS.Timeout | null;
+  // Per-turn tracking — drives the public per-turn message that
+  // accumulates as the active team plays through their streak and
+  // gets finalized when the turn passes.
+  currentTurnTeamId:        number | null;
+  currentTurnHistory:       TurnHistoryEntry[];
+  scoresAtTurnStart:        Map<number, number>; // teamId → score+pending at turn start
+}
+
+interface TurnHistoryEntry {
+  roundId:     number;
+  trackName:   string;
+  trackArtist: string;
+  outcome:     "correct" | "incorrect" | null;
+  forceLocked: boolean;
 }
 
 const sessions = new Map<string, Session>(); // key: guildId
@@ -558,6 +573,7 @@ interface BotRound {
   outcome?:                string | null;
   track?:                  BotSpotifyTrack | null;
   song_limit_seconds?:     number | null;
+  force_locked?:           boolean;
   bot_video_id?:           string | null;
   video_report_approved?:  boolean;
   redo_requested_at?:      string | null; // ISO timestamp
@@ -644,6 +660,7 @@ function syncPauseFromRoom(session: Session, room: BotRoom) {
 interface GameTeam {
   id:        number;
   name:      string;
+  sortOrder: number;   // 0-indexed; drives team color
   score:     number;   // cards locked into the timeline
   pending:   number;   // cards earned this turn but not yet locked
 }
@@ -652,6 +669,14 @@ interface GameSnapshot {
   teams:           GameTeam[];
   currentTeamId:   number | null;
   currentTeamName: string | null;
+  currentTeam:     GameTeam | null;
+}
+
+// User-defined color palette indexed by sort_order. "team 1 = red, team 2
+// = blue" is the user's convention; the rest are sensible defaults.
+const TEAM_COLOR_EMOJI = ["🔴", "🔵", "🟢", "🟡", "🟣", "🟠", "⚪", "⚫"];
+function teamColor(sortOrder: number): string {
+  return TEAM_COLOR_EMOJI[sortOrder] ?? "⭐";
 }
 
 async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): Promise<GameSnapshot> {
@@ -667,20 +692,17 @@ async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): 
   for (const row of timelineRows) {
     counts.set(row.team_id, (counts.get(row.team_id) ?? 0) + 1);
   }
-  // pending_tracks is JSONB array on tl_teams — these cards count towards the
-  // running score as the team plays through their streak. Without them the
-  // score appeared frozen during a turn even though the team was clearly
-  // racking up correct guesses.
   const teams: GameTeam[] = teamRows.map(t => ({
-    id:      t.id,
-    name:    t.name,
-    score:   counts.get(t.id) ?? 0,
-    pending: Array.isArray(t.pending_tracks) ? t.pending_tracks.length : 0,
+    id:        t.id,
+    name:      t.name,
+    sortOrder: t.sort_order,
+    score:     counts.get(t.id) ?? 0,
+    pending:   Array.isArray(t.pending_tracks) ? t.pending_tracks.length : 0,
   }));
-  const currentTeamName = currentTeamId != null
-    ? (teams.find(t => t.id === currentTeamId)?.name ?? null)
+  const currentTeam = currentTeamId != null
+    ? (teams.find(t => t.id === currentTeamId) ?? null)
     : null;
-  return { teams, currentTeamId, currentTeamName };
+  return { teams, currentTeamId, currentTeamName: currentTeam?.name ?? null, currentTeam };
 }
 
 function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>[] {
@@ -705,48 +727,110 @@ function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>
   ];
 }
 
-function buildGameNowPlayingMessage(session: Session, snapshot: GameSnapshot): {
+function renderScoreboard(session: Session, snapshot: GameSnapshot, opts: { showDelta: boolean }): string {
+  const ranked = [...snapshot.teams]
+    .map((t, idx) => ({ ...t, _origIdx: idx, total: t.score + t.pending }))
+    .sort((a, b) => b.total - a.total || a._origIdx - b._origIdx);
+  return ranked
+    .map(t => {
+      const c = teamColor(t.sortOrder);
+      // Delta against the score we snapshot at this turn's start. Shows
+      // both gains (correct guesses) and losses (Card Remover etc.).
+      const baseline = session.scoresAtTurnStart.get(t.id) ?? t.total;
+      const delta    = t.total - baseline;
+      const deltaTag = opts.showDelta && delta !== 0
+        ? `  *(${delta > 0 ? "+" : ""}${delta})*`
+        : "";
+      return `${c} ${t.name} — **${t.total}**${deltaTag}`;
+    })
+    .join("\n");
+}
+
+function renderSongsThisTurn(history: TurnHistoryEntry[]): string {
+  if (history.length === 0) return "";
+  return history.map((h, i) => {
+    let mark = "▶";
+    if (h.outcome === "correct")   mark = "✓";
+    else if (h.outcome === "incorrect") mark = "✗";
+    else if (h.forceLocked)         mark = "🔒";
+    return `${i + 1}. ${h.trackName} — ${h.trackArtist} ${mark}`;
+  }).join("\n");
+}
+
+// "Active" message — shown while the team is mid-turn. Lists previously
+// finished songs in this turn (with reveal), the current playback
+// progress bar, and the scoreboard with deltas.
+function buildActiveTurnMessage(session: Session, snapshot: GameSnapshot): {
   content:    string;
   components: ActionRowBuilder<ButtonBuilder>[];
 } {
+  const current = snapshot.currentTeam;
+  const color   = current ? teamColor(current.sortOrder) : "🎯";
+  const teamName = current?.name ?? "Unknown team";
   const paused     = session.pauseStartedAt !== null;
   const elapsedSec = Math.floor(computeElapsedMs(session) / 1000);
   const totalSec   = session.currentRoundDurationSec;
   const indicator  = paused ? "⏸" : "🎵";
   const bar        = renderProgressBar(elapsedSec, totalSec);
-  const turn       = snapshot.currentTeamName
-    ? `🎯 **${snapshot.currentTeamName}**'s turn`
-    : "🎯 Between rounds";
 
-  // Rank by effective score (locked + pending) so a team mid-streak
-  // climbs the leaderboard in real time.
-  const ranked = [...snapshot.teams]
-    .map((t, idx) => ({ ...t, _origIdx: idx, total: t.score + t.pending }))
-    .sort((a, b) => b.total - a.total || a._origIdx - b._origIdx);
-  const medals = ["🥇", "🥈", "🥉"];
-  const scoreLines = ranked
-    .map((t, i) => {
-      const medal  = medals[i] ?? "•";
-      // Show pending as a "+N this turn" delta — that's the part players
-      // are actively earning, and it makes "lost" obvious if a Card
-      // Remover token drops a locked card (total just decreases).
-      const pendingTag = t.pending > 0 ? `  *+${t.pending} this turn*` : "";
-      return `${medal} ${t.name} — **${t.total}**${pendingTag}`;
-    })
-    .join("\n");
-
-  const lines = [
-    `${indicator} **Now playing** · ${fmtSec(totalSec)}`,
-    turn,
-    "",
-    bar,
-  ];
-  if (scoreLines) {
+  const lines: string[] = [`${color} **${teamName}'s turn**`];
+  // Only show finished songs — i.e. ones that already have an outcome.
+  // The currently-playing song stays hidden (musix is a guess game).
+  const finishedSongs = session.currentTurnHistory.filter(h => h.outcome !== null);
+  if (finishedSongs.length > 0) {
     lines.push("");
-    lines.push("🏆 **Scores**");
-    lines.push(scoreLines);
+    lines.push("🎶 **Songs this turn:**");
+    lines.push(renderSongsThisTurn(finishedSongs));
   }
+  lines.push("");
+  lines.push(`${indicator} **Now playing** · ${fmtSec(totalSec)}`);
+  lines.push(bar);
+  lines.push("");
+  lines.push("🏆 **Scoreboard:**");
+  lines.push(renderScoreboard(session, snapshot, { showDelta: true }));
+
   return { content: lines.join("\n"), components: buildGameModeButtons(session) };
+}
+
+// "Finalized" message — replaces the active message when the turn ends
+// (active_team_id flips, or game finishes). All songs revealed; controls
+// stripped; end-reason called out.
+function buildFinalizedTurnMessage(
+  session: Session,
+  snapshot: GameSnapshot,
+  team:    GameTeam | null,
+  endReason: "wrong" | "force-lock" | "voluntary" | "game-over",
+): { content: string; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const color = team ? teamColor(team.sortOrder) : "⭐";
+  const teamName = team?.name ?? "Team";
+  const history = session.currentTurnHistory;
+  const correct = history.filter(h => h.outcome === "correct").length;
+  const baseline = team ? (session.scoresAtTurnStart.get(team.id) ?? team.score + team.pending) : 0;
+  const finalScore = team ? team.score + team.pending : 0;
+  const earned = finalScore - baseline;
+
+  const endLabel = endReason === "wrong"      ? `✗ Ended on a wrong answer`
+                 : endReason === "force-lock" ? `🔒 Ended by Force Lock token`
+                 : endReason === "game-over"  ? `🏁 Game over`
+                 :                              `🛑 Turn ended voluntarily`;
+
+  const lines: string[] = [
+    `${color} **${teamName}'s turn — finished**`,
+    "",
+    `🎯 **+${earned >= 0 ? earned : 0} card${earned === 1 ? "" : "s"}** earned this turn (${correct}/${history.length} correct)`,
+    endLabel,
+  ];
+  if (history.length > 0) {
+    lines.push("");
+    lines.push("🎶 **Songs played:**");
+    lines.push(renderSongsThisTurn(history));
+  }
+  lines.push("");
+  lines.push("🏆 **Scoreboard:**");
+  lines.push(renderScoreboard(session, snapshot, { showDelta: false }));
+
+  // Controls stripped on finalize — old message becomes archival.
+  return { content: lines.join("\n"), components: [] };
 }
 
 // Re-streams the current round's song from a given offset. Used by the
@@ -797,7 +881,7 @@ async function tickGameNowPlaying(session: Session): Promise<void> {
     const channel  = await client.channels.fetch(session.currentMessage.channelId);
     if (!channel || !channel.isSendable() || !("messages" in channel)) return;
     const msg = await channel.messages.fetch(session.currentMessage.messageId);
-    await msg.edit(buildGameNowPlayingMessage(session, snapshot));
+    await msg.edit(buildActiveTurnMessage(session, snapshot));
   } catch (err) {
     console.warn(`[round] game now-playing edit failed:`, err);
     stopGameProgressTimer(session);
@@ -975,23 +1059,95 @@ async function playRoundTrack(session: Session, round: BotRound) {
     }
   }
   maybeScheduleSongLimit(session, round.song_limit_seconds ?? null);
-  await postGameNowPlayingMessage(session);
+
+  // ── Per-turn message orchestration ───────────────────────────────
+  // The team_id on this round drives whether we extend the current
+  // turn message or finalize it and start a new one.
+  const roundTeamId = round.team_id ?? null;
+  const isNewTurn   = session.currentTurnTeamId !== roundTeamId;
+  const newEntry: TurnHistoryEntry = {
+    roundId:     round.id ?? -1,
+    trackName:   track.name,
+    trackArtist: track.artist,
+    outcome:     (round.outcome === "correct" || round.outcome === "incorrect") ? round.outcome : null,
+    forceLocked: !!round.force_locked,
+  };
+
+  if (isNewTurn) {
+    // Finalize the previous turn (if there was one). The end reason is
+    // best-effort inferred from the LAST round of the previous turn's
+    // history: an incorrect outcome ends a turn; force_locked means
+    // the opponent forced the stop; otherwise it was voluntary.
+    if (session.currentTurnTeamId !== null && session.currentMessage) {
+      const last = session.currentTurnHistory[session.currentTurnHistory.length - 1];
+      const endReason: "wrong" | "force-lock" | "voluntary" =
+        last?.outcome === "incorrect" ? "wrong"
+        : last?.forceLocked           ? "force-lock"
+        :                                "voluntary";
+      await finalizePreviousTurnMessage(session, session.currentTurnTeamId, endReason);
+    }
+    // Reset turn state to this new team's turn.
+    session.currentTurnTeamId   = roundTeamId;
+    session.currentTurnHistory  = [newEntry];
+    session.currentMessage      = null;
+    // Snapshot starting scores so the per-turn delta is accurate.
+    if (session.roomId) {
+      try {
+        const snap = await fetchGameSnapshot(session.roomId, roundTeamId);
+        session.scoresAtTurnStart = new Map(snap.teams.map(t => [t.id, t.score + t.pending]));
+      } catch (err) {
+        console.warn(`[round] couldn't snapshot scores at turn start:`, err);
+      }
+    }
+    await postNewTurnMessage(session);
+  } else {
+    // Same turn — just append the new song and update the existing
+    // message in place. The previously-playing song's history entry
+    // already exists (outcome will be filled in by onRoundUpdate).
+    session.currentTurnHistory.push(newEntry);
+    void tickGameNowPlaying(session);
+  }
+
   startGameProgressTimer(session);
 }
 
 // Strip buttons from the previous round's Now-Playing message (if any),
 // fetch a fresh game snapshot, and post the new Now-Playing message.
-async function postGameNowPlayingMessage(session: Session) {
+// Post a fresh per-turn message. Called on turn changes (first round of
+// a new team) — NOT on every round insert. Continuing rounds within the
+// same turn just edit the existing message via tickGameNowPlaying.
+async function postNewTurnMessage(session: Session) {
   if (!session.roomId || !session.notificationChannelId) return;
-  await disableOldGameMessage(session);
   try {
     const channel = await client.channels.fetch(session.notificationChannelId);
     if (!channel || !channel.isSendable()) return;
     const snapshot = await fetchGameSnapshot(session.roomId, session.currentRoundTeamId);
-    const sent     = await channel.send(buildGameNowPlayingMessage(session, snapshot));
+    const sent     = await channel.send(buildActiveTurnMessage(session, snapshot));
     session.currentMessage = { channelId: sent.channelId, messageId: sent.id };
   } catch (err) {
-    console.warn(`[round] couldn't post game now-playing message:`, err);
+    console.warn(`[round] couldn't post new-turn message:`, err);
+  }
+}
+
+// Edit the previous turn's message into a summary state (strips buttons,
+// shows song list with reveals, end-reason). Called when the turn passes
+// or the game finishes.
+async function finalizePreviousTurnMessage(
+  session: Session,
+  prevTeamId: number,
+  endReason: "wrong" | "force-lock" | "voluntary" | "game-over",
+) {
+  const ref = session.currentMessage;
+  if (!ref || !session.roomId) return;
+  try {
+    const channel = await client.channels.fetch(ref.channelId);
+    if (!channel || !channel.isSendable() || !("messages" in channel)) return;
+    const snapshot = await fetchGameSnapshot(session.roomId, prevTeamId);
+    const team = snapshot.teams.find(t => t.id === prevTeamId) ?? null;
+    const msg = await channel.messages.fetch(ref.messageId);
+    await msg.edit(buildFinalizedTurnMessage(session, snapshot, team, endReason));
+  } catch (err) {
+    console.warn(`[round] couldn't finalize previous-turn message:`, err);
   }
 }
 
@@ -1129,6 +1285,9 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     currentSongLimitSeconds: null,
     reportedVideoFor:        null,
     lastRedoRequestedAt:     null,
+    currentTurnTeamId:       null,
+    currentTurnHistory:      [],
+    scoresAtTurnStart:       new Map(),
     songLimitTimer:          null,
     playStartedAt:           0,
     pauseStartedAt:          null,
@@ -1150,9 +1309,33 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
         void handleVideoReportApprovedTransition(session, round);
         void handleRedoRequestedTransition(session, round);
       }
+      // Mirror outcome/force_locked changes into the turn history so the
+      // active turn message and (later) the finalized summary list the
+      // right ✓/✗/🔒 marks beside each song.
+      if (round.id != null) {
+        const entry = session.currentTurnHistory.find(h => h.roundId === round.id);
+        if (entry) {
+          if (round.outcome === "correct" || round.outcome === "incorrect") {
+            entry.outcome = round.outcome;
+          }
+          if (round.force_locked != null) {
+            entry.forceLocked = !!round.force_locked;
+          }
+        }
+      }
       void tickGameNowPlaying(session);
     },
-    onRoomUpdate: (room) => { syncPauseFromRoom(session, room); },
+    onRoomUpdate: (room) => {
+      syncPauseFromRoom(session, room);
+      // Game finished — finalize the current turn message with a game-over
+      // summary so the channel doesn't leave an open scoreboard hanging.
+      if (room.status === "finished" && session.currentTurnTeamId !== null && session.currentMessage) {
+        const prevTeamId = session.currentTurnTeamId;
+        // Mark consumed so we only fire once per status transition.
+        session.currentTurnTeamId = null;
+        void finalizePreviousTurnMessage(session, prevTeamId, "game-over");
+      }
+    },
   });
 
   sessions.set(ix.guildId, session);
@@ -1261,6 +1444,9 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentSongLimitSeconds: null,
       reportedVideoFor:        null,
       lastRedoRequestedAt:     null,
+      currentTurnTeamId:       null,
+      currentTurnHistory:      [],
+      scoresAtTurnStart:       new Map(),
       songLimitTimer:          null,
       playStartedAt:           0,
       pauseStartedAt:          null,
