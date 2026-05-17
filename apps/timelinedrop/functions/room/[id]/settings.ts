@@ -41,6 +41,9 @@ function sanitize(input: unknown): TlRoomSettings {
   if (typeof s.timerSeconds === "number" && s.timerSeconds >= 10 && s.timerSeconds <= 600) {
     out.timerSeconds = Math.round(s.timerSeconds);
   }
+  if (s.tokenEconomy === "standard" || s.tokenEconomy === "bonus" || s.tokenEconomy === "shop") {
+    out.tokenEconomy = s.tokenEconomy;
+  }
   return out;
 }
 

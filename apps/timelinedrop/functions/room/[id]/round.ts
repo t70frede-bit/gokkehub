@@ -54,6 +54,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env, wait
   if (action === "report-video") return handleReportVideo(req, roomId, env);
   if (action === "approve-video-report") return handleApproveVideoReport(req, roomId, env);
   if (action === "redo-round")   return handleRedoRound(req, roomId, env);
+  if (action === "buy-token")    return handleBuyToken(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
 
@@ -197,6 +198,14 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
       await updateTeam(env, activeTeam.id, {
         pending_tracks: [...(activeTeam.pending_tracks ?? []), round.track],
       });
+      // Shop-mode: credit points immediately for any fields the auto-judge
+      // just flipped to true. Read the round back to pick up the
+      // auto-judge updates we wrote a few lines above.
+      const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+      if (tokenEconomy === "shop") {
+        const refreshedRound = await getRound(env, round_id);
+        await maybeAwardShopPoints(env, refreshedRound, activeTeam, tokenEconomy);
+      }
     }
   } else {
     // Wrong: clear pending; captain advances turn explicitly via ?action=turn
@@ -274,6 +283,15 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
     if (kind === "artist"   || kind === "combined") update.artist_correct   = verdict;
     if (kind === "songname" || kind === "combined") update.songname_correct = verdict;
     await updateRound(env, round_id, update);
+
+    // Shop-mode: credit points for any positive verdict that wasn't
+    // already counted. Idempotent via shop_*_pointed flags.
+    const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+    if (tokenEconomy === "shop" && verdict === true) {
+      const team = teams.find(t => t.id === round.team_id);
+      const refreshedRound = await getRound(env, round_id);
+      if (team) await maybeAwardShopPoints(env, refreshedRound, team, tokenEconomy);
+    }
 
     // On a positive verdict, teach the global accepted-answers table the
     // variant this judge accepted so future games auto-judge it. Audit
@@ -519,6 +537,60 @@ async function handleRedoRound(req: Request, roomId: string, env: Env) {
   return json({ ok: true, redo: true }, 200, req);
 }
 
+// ── Shop: buy a token with points (shop tokenEconomy only) ──────────────────
+
+async function handleBuyToken(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as { player_id: string; token_type: string };
+  const { player_id, token_type } = body;
+
+  const [room, players, teams] = await Promise.all([
+    getRoom(env, roomId), getPlayers(env, roomId), getTeams(env, roomId),
+  ]);
+  if (!room) return json({ error: "Room not found" }, 404, req);
+
+  const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+  if (tokenEconomy !== "shop") {
+    return json({ error: "Token shop is only available in shop mode" }, 400, req);
+  }
+  // SHOP_TOKEN_COSTS lives in src/lib/types.ts so the lobby + game UI
+  // and this endpoint stay in lock-step. Server inlines the same table
+  // here to avoid a cross-import from server functions into client lib.
+  const SHOP_COSTS: Record<string, number> = {
+    song_skipper: 2, cover_reveal: 2,
+    five_years: 3, more_or_less: 3, reference_point: 3,
+    recovery: 4, card_remover: 4,
+    force_lock: 6, song_limiter: 6,
+  };
+  const cost = SHOP_COSTS[token_type];
+  if (!cost) return json({ error: `Token ${token_type} can't be purchased` }, 400, req);
+
+  const team = teams.find(t => t.id === room.active_team_id);
+  if (!team) return json({ error: "No active team" }, 400, req);
+
+  const captain = players.find(p => p.team_id === team.id && p.is_captain);
+  if (!actsAsCaptain(room, captain, player_id)) {
+    return json({ error: "Only the team captain can buy tokens" }, 403, req);
+  }
+  if ((team.points ?? 0) < cost) {
+    return json({ error: `Not enough points (need ${cost}, have ${team.points ?? 0})` }, 400, req);
+  }
+
+  // Deduct + grant. The bought token is immediately ready (pending=false)
+  // — buyer paid points, they shouldn't have to wait until next turn to
+  // use it. That's different from bonus-mode tokens which are pending.
+  const remaining = (team.points ?? 0) - cost;
+  await updateTeam(env, team.id, { points: remaining });
+  await insertTeamToken(env, {
+    room_id: roomId,
+    team_id: team.id,
+    type:    token_type,
+    granted_round: room.current_round_id ?? undefined,
+    pending: false,
+  });
+  console.log(`[shop] team ${team.id} bought ${token_type} for ${cost} (remaining ${remaining})`);
+  return json({ ok: true, remaining }, 200, req);
+}
+
 // ── Recovery pick (save one pending card after wrong placement) ─────────────
 
 interface RecoveryPickRequest {
@@ -598,6 +670,15 @@ async function handleFinalize(req: Request, roomId: string, env: Env, _waitUntil
     songname_correct:  songnameFinal,
     judging_finalized: true,
   });
+
+  // Shop-mode: credit points for whatever the vote tally just confirmed.
+  const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+  if (tokenEconomy === "shop" && (artistFinal === true || songnameFinal === true)) {
+    const teams = await getTeams(env, roomId);
+    const team = teams.find(t => t.id === round.team_id);
+    const refreshedRound = await getRound(env, round_id);
+    if (team) await maybeAwardShopPoints(env, refreshedRound, team, tokenEconomy);
+  }
 
   // Teach the global accepted-answers table when the vote-all judging
   // finalizes positive. Source attribution goes to the host since
@@ -751,9 +832,14 @@ async function handleTurnAction(req: Request, roomId: string, env: Env, waitUnti
     return json({ error: "Only the team captain can act" }, 403, req);
   }
 
-  // Award token bonus on the round being closed if eligible (idempotent).
+  // Award token bonus / shop points on the round being closed if
+  // eligible. Both calls are idempotent and mode-gated — in shop mode
+  // awardBonusIfEligible no-ops and maybeAwardShopPoints credits per-
+  // field; in standard/bonus modes the reverse.
   const currentRound = room.current_round_id ? await getRound(env, room.current_round_id) : null;
-  activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam, roomId) ?? activeTeam;
+  const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+  activeTeam = await maybeAwardShopPoints(env, currentRound, activeTeam, tokenEconomy) ?? activeTeam;
+  activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam, roomId, tokenEconomy) ?? activeTeam;
 
   if (action === "next") {
     // Force Lock — opponent played the token, active team can't continue.
@@ -863,16 +949,27 @@ async function awardBonusIfEligible(
   round: TlRound | null,
   team: TlTeam,
   roomId: string,
+  tokenEconomy: "standard" | "bonus" | "shop",
 ): Promise<TlTeam | null> {
   if (!round || round.bonus_awarded) return null;
   if (round.outcome !== "correct") return null;
   if (round.artist_correct !== true || round.songname_correct !== true) return null;
+  // Shop mode handles rewards per-correct-field via maybeAwardShopPoints;
+  // there's no "both correct" token bonus on top of that.
+  if (tokenEconomy === "shop") return null;
 
-  // Pick a random implemented token type and grant it as a pending row.
-  // Pending tokens become ready when the team's next turn starts.
-  // Keep this in sync with TOKEN_CATALOG.implemented in src/lib/tokens.ts.
-  const earnable = ["song_skipper", "cover_reveal", "more_or_less"];
-  const type = earnable[Math.floor(Math.random() * earnable.length)];
+  // Token type depends on the mode:
+  //  - standard: always Song Skipper (the original Hitster behaviour)
+  //  - bonus:    random from the implemented set
+  // Keep the bonus list in sync with TOKEN_CATALOG.implemented in
+  // src/lib/tokens.ts.
+  let type: string;
+  if (tokenEconomy === "standard") {
+    type = "song_skipper";
+  } else {
+    const earnable = ["song_skipper", "cover_reveal", "more_or_less"];
+    type = earnable[Math.floor(Math.random() * earnable.length)];
+  }
   await insertTeamToken(env, {
     room_id: roomId,
     team_id: team.id,
@@ -886,6 +983,35 @@ async function awardBonusIfEligible(
   const nextPending = (team.tokens_pending ?? 0) + 1;
   await updateTeam(env, team.id, { tokens_pending: nextPending });
   return { ...team, tokens_pending: nextPending };
+}
+
+// Shop-mode reward: credits +1 to team.points for each correct-and-not-
+// yet-pointed field on this round. Idempotent against repeated calls
+// thanks to the shop_*_pointed guards. No-op in non-shop modes.
+async function maybeAwardShopPoints(
+  env: Env,
+  round: TlRound | null,
+  team: TlTeam,
+  tokenEconomy: "standard" | "bonus" | "shop",
+): Promise<TlTeam | null> {
+  if (tokenEconomy !== "shop") return null;
+  if (!round || round.outcome !== "correct") return null;
+  let pointsToAdd = 0;
+  const roundUpdate: Partial<TlRound> = {};
+  if (round.artist_correct === true && !round.shop_artist_pointed) {
+    pointsToAdd += 1;
+    roundUpdate.shop_artist_pointed = true;
+  }
+  if (round.songname_correct === true && !round.shop_song_pointed) {
+    pointsToAdd += 1;
+    roundUpdate.shop_song_pointed = true;
+  }
+  if (pointsToAdd === 0) return null;
+  await updateRound(env, round.id, roundUpdate);
+  const newPoints = (team.points ?? 0) + pointsToAdd;
+  await updateTeam(env, team.id, { points: newPoints });
+  console.log(`[shop] +${pointsToAdd} point(s) to team ${team.id} (now ${newPoints}) for round ${round.id}`);
+  return { ...team, points: newPoints };
 }
 
 async function insertTeamToken(env: Env, row: {

@@ -48,6 +48,30 @@ export type AudioMode = "browser" | "discord-bot";
 export type TimerMode = "song-length" | "fixed" | "none";
 export const TIMER_DEFAULT_FALLBACK_SECONDS = 90;
 
+// How teams acquire tokens.
+//  - "standard" — placement + both guesses correct → grant ONE Song
+//    Skipper token. Simple, classic, no randomness.
+//  - "bonus" (default — current behaviour) — placement + both guesses
+//    correct → grant ONE random token from the implemented set.
+//  - "shop" — each correct guess (artist OR songname) credits +1 point
+//    to the team. Captain spends points via /round?action=buy-token
+//    to acquire specific tokens at posted costs.
+export type TokenEconomy = "standard" | "bonus" | "shop";
+
+// Per-token-type cost in shop mode. Tunable; tiers below roughly map
+// to the Tier 1/2/3 grouping in tokens.ts.
+export const SHOP_TOKEN_COSTS: Record<string, number> = {
+  song_skipper:    2,
+  cover_reveal:    2,
+  five_years:      3,
+  more_or_less:    3,
+  reference_point: 3,
+  recovery:        4,
+  card_remover:    4,
+  force_lock:      6,
+  song_limiter:    6,
+};
+
 export interface TlRoomSettings {
   lateJoinMode?:       LateJoinMode;
   streamerMode?:       boolean;
@@ -64,6 +88,7 @@ export interface TlRoomSettings {
   audioMode?:          AudioMode;     // browser (default) | discord-bot
   timerMode?:          TimerMode;     // song-length (default) | fixed | none
   timerSeconds?:       number;        // used when timerMode === "fixed"
+  tokenEconomy?:       TokenEconomy;  // bonus (default) | standard | shop
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -81,6 +106,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   audioMode:         "browser",
   timerMode:         "song-length",
   timerSeconds:      120,
+  tokenEconomy:      "bonus",
 };
 
 export interface TlRoom {
@@ -110,6 +136,7 @@ export interface TlTeam {
   tokens_pending: number;            // earned this turn; promote to tokens when team's next turn begins
   pending_tracks: SpotifyTrack[];    // cards earned this turn, not yet locked
   sort_order:     number;
+  points:         number;            // shop currency; ignored in "standard" / "bonus" modes
 }
 
 export interface TlPlayer {
@@ -199,6 +226,12 @@ export interface TlRound {
   video_report_proposed_name:     string | null;
   video_report_approved:          boolean;
   redo_requested_at:              string | null; // ISO timestamp
+  // Shop-mode idempotency guards (migration 018). When tokenEconomy ===
+  // "shop", flipping artist_correct/songname_correct to true credits +1
+  // point to the team; the flag below stops re-credits if the field
+  // gets re-judged or the realtime echo replays.
+  shop_artist_pointed:            boolean;
+  shop_song_pointed:              boolean;
 }
 
 export interface StageRequest {

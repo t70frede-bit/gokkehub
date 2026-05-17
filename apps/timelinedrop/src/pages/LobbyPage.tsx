@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
@@ -324,6 +324,35 @@ export default function LobbyPage() {
                       <span className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>seconds</span>
                     </div>
                   )}
+                </div>
+
+                {/* Token economy — three modes (see TlRoomSettings) */}
+                <div>
+                  <p className="text-sm font-medium mb-2">How do teams get tokens?</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { value: "standard", label: "📜 Standard",   hint: "Both guesses correct → 1 Skip token" },
+                      { value: "bonus",    label: "🎁 Bonus",      hint: "Both correct → 1 random token" },
+                      { value: "shop",     label: "🏪 Shop",       hint: "Each correct = +1 point, buy tokens" },
+                    ] as const).map(({ value, label, hint }) => {
+                      const active = (settings.tokenEconomy ?? "bonus") === value;
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => saveSettings({ tokenEconomy: value as TokenEconomy })}
+                          title={hint}
+                          className="text-left rounded-lg p-3 transition-all border"
+                          style={{
+                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                            background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                          }}
+                        >
+                          <p className="text-sm font-semibold">{label}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Advanced settings — collapsed by default. Most rooms never
