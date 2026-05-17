@@ -18,6 +18,10 @@ services:
       # don't re-fetch the ~30MB binary every time.
       - musix-bin:/app/bin
     # No exposed ports — the bot only talks outbound to Discord + Supabase.
+networks:
+  default:
+    external: true
+    name: nginxpm
 
 volumes:
   musix-bin:
