@@ -41,6 +41,10 @@ export default function LobbyPage() {
   const [copied,         setCopied]         = useState(false);
   // "Advanced settings" collapse on the host's settings panel
   const [advancedOpen,   setAdvancedOpen]   = useState(false);
+  // Lobby tabs — host-only toggle between team formation and full
+  // settings panel. Default is "teams" so the lobby opens on the
+  // join-your-team view; settings live one click away.
+  const [lobbyView,      setLobbyView]      = useState<"teams" | "settings">("teams");
   // Action sheet state — tap a player tile to open
   const [selectedPlayer, setSelectedPlayer] = useState<TlPlayer | null>(null);
   // Manual-artists editor state
@@ -169,10 +173,35 @@ export default function LobbyPage() {
           </h1>
           {isHost && <Badge variant="host">HOST</Badge>}
           <p className="ml-1" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
-            {isHost ? "Configure settings and start when ready" : "Waiting for host to start…"}
+            {isHost
+              ? (lobbyView === "teams" ? "Form teams, then open Settings to configure the game" : "Configure settings, then go back to Teams to start")
+              : "Waiting for host to start…"}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Host-only tab toggle — splits the lobby into "team formation"
+              and "game settings" so the first view stays focused on
+              joining a team without burying it under config noise. */}
+          {isHost && (
+            <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
+              {(["teams", "settings"] as const).map(v => {
+                const active = lobbyView === v;
+                return (
+                  <button
+                    key={v}
+                    onClick={() => setLobbyView(v)}
+                    className="px-3 py-1.5 text-sm font-semibold transition-colors"
+                    style={{
+                      background: active ? "rgba(var(--color-primary-rgb),0.18)" : "transparent",
+                      color:      active ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
+                    }}
+                  >
+                    {v === "teams" ? "👥 Teams" : "⚙ Settings"}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <Button variant="ghost" size="sm" onClick={copyInviteLink}>
             {copied ? "✓ Copied" : "📋 Copy link"}
           </Button>
@@ -180,10 +209,18 @@ export default function LobbyPage() {
         </div>
       </div>
 
-      {/* ── Main 2-column grid ───────────────────────────────────────────── */}
-      <div className="grid md:grid-cols-[1fr_340px] gap-4">
+      {/* ── Main grid — layout flips based on host's tab:
+              • Teams view (default): single column, players panel full-width.
+              • Settings view (host-only): settings panel full-width.
+              • Non-host: original 2-column layout (info on left, players right). */}
+      <div className={
+        !isHost                  ? "grid md:grid-cols-[1fr_340px] gap-4"
+        : lobbyView === "teams"  ? "max-w-2xl mx-auto w-full"
+        :                          "w-full"
+      }>
 
-        {/* Left: Settings + Playlists */}
+        {/* Left column — settings (host on settings tab) OR info (non-host) */}
+        {(isHost ? lobbyView === "settings" : true) && (
         <div className="flex flex-col gap-4">
 
           {/* Settings panel */}
@@ -603,8 +640,10 @@ export default function LobbyPage() {
             </Panel>
           )}
         </div>
+        )}
 
-        {/* Right: Players + Start */}
+        {/* Right: Players + Start — hidden when host is on the Settings tab */}
+        {(isHost ? lobbyView === "teams" : true) && (
         <div className="flex flex-col gap-4">
           {/* Music coverage status */}
           {(() => {
@@ -689,6 +728,7 @@ export default function LobbyPage() {
             );
           })()}
         </div>
+        )}
       </div>
 
       {/* Player action sheet — opened by tapping any tile */}
