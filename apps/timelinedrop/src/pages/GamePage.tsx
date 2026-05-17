@@ -919,6 +919,10 @@ function AllClientsAudio({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastTrackRef = useRef<string | null>(null);
+  // Surface the most common failure mode (bot 401 from leftover
+  // STREAM_TOKEN) so the host can see what to fix instead of "nothing
+  // is happening." Cleared when a new track starts loading.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // (Re)load audio when the track changes. Initial seek lets a late
   // joiner pick up mid-song. Only depends on track.id so transient
@@ -937,11 +941,31 @@ function AllClientsAudio({
       const elapsedSec = Math.floor((Date.now() - playingSince) / 1000);
       if (elapsedSec > 1) params.set("seek", String(elapsedSec));
     }
-    el.src = `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;
+    const src = `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;
+    el.src = src;
     el.load();
+    setLoadError(null);
     if (syncMode === "synchronized" && playingSince !== null) {
       el.play().catch(() => { /* autoplay denied — user clicks the play control */ });
     }
+    // Probe the URL with a HEAD request so we can show a specific
+    // message on 401/404 instead of waiting for the <audio> error event
+    // (which doesn't tell you why). Best-effort — network errors fall
+    // back to a generic message.
+    void fetch(src, { method: "HEAD" })
+      .then(r => {
+        if (r.ok) return;
+        if (r.status === 401) {
+          setLoadError("Audio proxy rejected the request (401). The bot's STREAM_TOKEN env is still set — operator needs to unset it and redeploy.");
+        } else if (r.status === 404) {
+          setLoadError("Audio proxy couldn't resolve this track on YouTube.");
+        } else {
+          setLoadError(`Audio proxy returned HTTP ${r.status}.`);
+        }
+      })
+      .catch(() => {
+        setLoadError(`Couldn't reach the audio proxy at ${STREAM_PROXY_URL}. Check it's online.`);
+      });
   }, [track.id, track.name, track.artist, syncMode, playingSince]);
 
   // Sync mode: react to host's play/pause via playing_since transitions.
@@ -956,7 +980,18 @@ function AllClientsAudio({
   }, [playingSince, syncMode]);
 
   return (
-    <div className="flex-shrink-0 rounded-md p-2 flex items-center gap-2"
+    <div className="flex-shrink-0 flex flex-col gap-1.5">
+    {loadError && (
+      <div className="rounded-md p-2 text-xs"
+        style={{
+          background: "rgba(220,60,60,0.10)",
+          border:     "1px solid rgba(220,60,60,0.40)",
+          color:      "rgb(220,140,140)",
+        }}>
+        ⚠ {loadError}
+      </div>
+    )}
+    <div className="rounded-md p-2 flex items-center gap-2"
       style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
       {/* Host gets a play/pause toggle that writes to room.playing_since;
           in synced mode that's how every other player's audio gets
@@ -994,6 +1029,7 @@ function AllClientsAudio({
         // audio actually plays; first click on the page (anywhere) unlocks it.
         style={{ flex: 1, height: 36, minWidth: 0 }}
       />
+    </div>
     </div>
   );
 }
