@@ -38,6 +38,6 @@ ENV NODE_ENV=production
 
 # HTTP audio proxy — see src/http-stream-server.ts. Reverse-proxy this
 # port behind your own HTTPS domain in production.
-EXPOSE 8080
+EXPOSE 8081
 
 CMD ["npx", "tsx", "src/index.ts"]

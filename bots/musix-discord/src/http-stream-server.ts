@@ -19,7 +19,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawnYtDlpAudioStream } from "./resolver.js";
 
-const HTTP_PORT     = parseInt(process.env.PORT ?? "8080", 10);
+const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
 const ALLOWED_ORIGINS = (process.env.STREAM_CORS ?? "https://musix.gokkehub.com,http://localhost:5173,http://localhost:3000").split(",").map(s => s.trim());
 
