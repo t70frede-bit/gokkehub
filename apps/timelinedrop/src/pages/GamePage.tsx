@@ -1909,6 +1909,36 @@ export default function GamePage() {
 
   // Player-leave notifications (transient).
   const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
+  // Action-failure toasts — any /room/:id/round POST that comes back !ok
+  // shows up here so the user actually SEES why nothing happened (the
+  // entire game was silently swallowing 4xx/5xx responses before).
+  const [actionErrors, setActionErrors] = useState<{ id: string; message: string }[]>([]);
+  function showActionError(message: string) {
+    const id = `err-${Date.now()}-${Math.random()}`;
+    setActionErrors(t => [...t, { id, message }]);
+    setTimeout(() => setActionErrors(t => t.filter(x => x.id !== id)), 6000);
+  }
+  // Wrap fetch with status + JSON-error surfacing. Returns true on 2xx,
+  // false otherwise (caller can branch off that if they need to).
+  async function runAction(label: string, p: Promise<Response>): Promise<boolean> {
+    try {
+      const res = await p;
+      if (res.ok) return true;
+      let detail = "";
+      try {
+        const body = await res.json() as { error?: string };
+        if (body?.error) detail = `: ${body.error}`;
+      } catch { /* not JSON */ }
+      showActionError(`${label} failed (${res.status})${detail}`);
+      console.warn(`[action] ${label} → HTTP ${res.status}${detail}`);
+      return false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showActionError(`${label}: ${msg}`);
+      console.warn(`[action] ${label} threw:`, err);
+      return false;
+    }
+  }
 
   // Token tray: open the menu of the captain's available tokens.
   const [tokenTrayOpen, setTokenTrayOpen] = useState(false);
@@ -2294,10 +2324,13 @@ export default function GamePage() {
   }
 
   async function doTurnAction(action: "stop" | "next") {
-    await fetch(`/room/${roomId}/round?action=turn`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ action, player_id: myPlayerId }),
-    });
+    await runAction(
+      action === "stop" ? "End turn" : "Next song",
+      fetch(`/room/${roomId}/round?action=turn`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ action, player_id: myPlayerId }),
+      }),
+    );
   }
 
   async function useSongSkipperToken() {
@@ -2565,8 +2598,8 @@ export default function GamePage() {
       </div>
 
       {/* ── Player-leave toasts (top-right, fade out) ─────────────────────── */}
-      {leaveToasts.length > 0 && (
-        <div className="fixed top-3 right-3 z-50 flex flex-col gap-1 pointer-events-none">
+      {(leaveToasts.length > 0 || actionErrors.length > 0) && (
+        <div className="fixed top-3 right-3 z-50 flex flex-col gap-1 pointer-events-none max-w-sm">
           {leaveToasts.map(t => (
             <div key={t.id} className="text-sm px-3 py-1.5 rounded-lg shadow-lg animate-slide-in"
               style={{
@@ -2576,6 +2609,17 @@ export default function GamePage() {
                 backdropFilter: "blur(8px)",
               }}>
               👋 <strong>{t.name}</strong> left the game
+            </div>
+          ))}
+          {actionErrors.map(t => (
+            <div key={t.id} className="text-sm px-3 py-2 rounded-lg shadow-lg animate-slide-in"
+              style={{
+                background: "rgba(220,80,40,0.22)",
+                border:     "1px solid rgba(220,80,40,0.55)",
+                color:      "rgb(255,210,180)",
+                backdropFilter: "blur(8px)",
+              }}>
+              ⚠ {t.message}
             </div>
           ))}
         </div>
