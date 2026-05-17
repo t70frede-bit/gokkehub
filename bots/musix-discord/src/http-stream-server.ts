@@ -21,16 +21,37 @@ import { spawnYtDlpAudioStream, resolveTrack } from "./resolver.js";
 
 const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
-const ALLOWED_ORIGINS = (process.env.STREAM_CORS ?? "https://musix.gokkehub.com,http://localhost:5173,http://localhost:3000").split(",").map(s => s.trim());
+
+// Normalize origins so trailing slashes / case don't cause spurious
+// CORS mismatches. Browsers send "https://musix.gokkehub.com"
+// without a trailing slash; operators sometimes paste their env with
+// "https://musix.gokkehub.com/" — strict compare would 403 forever.
+function normalizeOrigin(o: string): string {
+  return o.trim().replace(/\/+$/, "").toLowerCase();
+}
+const ALLOWED_ORIGINS = (process.env.STREAM_CORS ?? "https://musix.gokkehub.com,http://localhost:5173,http://localhost:3000")
+  .split(",")
+  .map(normalizeOrigin)
+  .filter(Boolean);
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 
 function corsHeaders(originHeader: string | undefined): Record<string, string> {
-  const origin = originHeader ?? "";
-  const allow =
-    ALLOWED_ORIGINS.includes("*") ? "*" :
-    ALLOWED_ORIGINS.includes(origin) ? origin :
-    ALLOWED_ORIGINS[0] ?? "";
+  const requested = normalizeOrigin(originHeader ?? "");
+  let allow: string;
+  if (ALLOWED_ORIGINS.includes("*")) {
+    allow = "*";
+  } else if (requested && ALLOWED_ORIGINS.includes(requested)) {
+    // Echo the *requested* origin exactly (no trailing slash) so the
+    // browser sees a literal match. Spec requires byte-equal compare.
+    allow = requested;
+  } else {
+    // Fall back to the first allowed origin — typically the prod
+    // domain. Helps when the request didn't include an Origin header
+    // (Safari, server-side fetches) but still serves the right host
+    // for browser flows.
+    allow = ALLOWED_ORIGINS[0] ?? "";
+  }
   return {
     "Access-Control-Allow-Origin":  allow,
     "Access-Control-Allow-Methods": "GET, OPTIONS",
