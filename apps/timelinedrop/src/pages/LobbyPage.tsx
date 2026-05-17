@@ -523,6 +523,30 @@ export default function LobbyPage() {
               {/* Group taste branch */}
               {settings.songSource === "group-taste" && (
                 <div className="mt-4 flex flex-col gap-4">
+                  {/* Music-coverage indicator — only relevant for group-taste
+                      since playlist mode doesn't read from per-player music
+                      libraries. Tells the host how many lobby members have
+                      Last.fm or manual artists set so they know how rich
+                      the curation pool will be. */}
+                  {(() => {
+                    const activePlayers = visiblePlayers.filter(p => !p.is_spectator);
+                    if (activePlayers.length === 0) return null;
+                    const linked = activePlayers.filter(p => !!p.lastfm_username || (p.manual_artists?.length ?? 0) > 0);
+                    const allLinked = linked.length === activePlayers.length;
+                    return (
+                      <div className="px-3 py-2 rounded-md flex items-center gap-2"
+                        style={{
+                          background: allLinked ? "rgba(34,197,94,0.10)" : "rgba(255,255,255,0.04)",
+                          border:     `1px solid ${allLinked ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.08)"}`,
+                        }}>
+                        <span className="text-base">🎵</span>
+                        <p className="text-xs flex-1" style={{ color: allLinked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
+                          <strong>{linked.length} of {activePlayers.length}</strong> players have music linked
+                          {!allLinked && <span> · songs come from those who have</span>}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm font-medium mb-2">Difficulty</p>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -717,22 +741,9 @@ export default function LobbyPage() {
         {/* Right: Players + Start — hidden when host is on the Settings tab */}
         {(isHost ? lobbyView === "teams" : true) && (
         <div className="flex flex-col gap-4">
-          {/* Music coverage status */}
-          {(() => {
-            const activePlayers = visiblePlayers.filter(p => !p.is_spectator);
-            const linked = activePlayers.filter(p => !!p.lastfm_username || (p.manual_artists?.length ?? 0) > 0);
-            if (activePlayers.length === 0) return null;
-            const allLinked = linked.length === activePlayers.length;
-            return (
-              <Panel className="p-3 flex items-center gap-2">
-                <span className="text-base">🎵</span>
-                <p className="text-xs flex-1" style={{ color: allLinked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
-                  <strong>{linked.length} of {activePlayers.length}</strong> players have music linked
-                  {!allLinked && <span> · songs are picked from those who have</span>}
-                </p>
-              </Panel>
-            );
-          })()}
+          {/* Music-coverage status moved into Settings → Songs → Group taste,
+              where it's actually actionable (no point telling players how
+              many are linked when the songs are coming from a playlist). */}
 
           {/* Team panels — one per team */}
           <div className="flex flex-col gap-3">
