@@ -52,12 +52,11 @@ export type AudioMode = "browser" | "discord-bot" | "all-clients-stream";
 // player control their own (independent)?
 export type StreamSyncMode = "synchronized" | "independent";
 
-// Default proxy URL — points at the friend-hosted musix-discord
-// instance. The matching STREAM_TOKEN is configured operator-side on
-// the bot and entered per-room in lobby settings (not committed to git
-// since tokens rotate independently of the URL).
-export const DEFAULT_STREAM_PROXY_URL   = "https://musix-bot.hotbear.org";
-export const DEFAULT_STREAM_PROXY_TOKEN = "";
+// Hardcoded proxy URL — every all-clients-stream room hits the same
+// public bot. No per-room override; if you fork and self-host the bot
+// you'll edit this constant + redeploy. Bot must be configured WITHOUT
+// STREAM_TOKEN since the client doesn't send one.
+export const STREAM_PROXY_URL = "https://musix-bot.hotbear.org";
 
 // How the turn timer behaves.
 //  - "song-length" (default) — turn lasts until the song ends. Uses
@@ -111,11 +110,8 @@ export interface TlRoomSettings {
   timerMode?:          TimerMode;     // song-length (default) | fixed | none
   timerSeconds?:       number;        // used when timerMode === "fixed"
   tokenEconomy?:       TokenEconomy;  // bonus (default) | standard | shop
-  // All-clients-stream audio mode config. Url + token target the bot's
-  // /stream/:videoId endpoint; defaults point at the public friend-hosted
-  // instance, can be overridden per room if you fork.
-  streamProxyUrl?:     string;
-  streamProxyToken?:   string;
+  // All-clients-stream sync sub-mode. URL + token are hardcoded
+  // (STREAM_PROXY_URL above) since there's one public bot deployment.
   streamSyncMode?:     StreamSyncMode; // synchronized (default) | independent
 }
 
@@ -135,8 +131,6 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerMode:         "song-length",
   timerSeconds:      120,
   tokenEconomy:      "bonus",
-  streamProxyUrl:    DEFAULT_STREAM_PROXY_URL,
-  streamProxyToken:  DEFAULT_STREAM_PROXY_TOKEN,
   streamSyncMode:    "synchronized",
 };
 

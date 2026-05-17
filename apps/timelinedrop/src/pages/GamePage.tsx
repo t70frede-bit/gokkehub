@@ -6,7 +6,7 @@ import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
-import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, DEFAULT_STREAM_PROXY_URL } from "../lib/types";
+import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
 function tokenSpec(type: string): TokenSpec {
@@ -899,34 +899,33 @@ interface AudioPlayerProps {
 
 // ── All-clients-stream audio (each browser plays its own <audio>) ─────────
 // Used when settings.audioMode === "all-clients-stream". Pulls audio from
-// the musix-bot's /stream-track HTTP endpoint, which resolves the Spotify
-// track to a YouTube video and serves yt-dlp bytes.
+// the shared musix-bot HTTP proxy (STREAM_PROXY_URL constant). The bot
+// resolves the Spotify track to a YouTube video and serves yt-dlp bytes.
 //
-// Sync mode: host's play/pause flows through room.playing_since; clients
-// hard-pause/play their <audio> in response. Initial seek catches late
-// joiners up to current position.
+// Sync mode (default): host's play/pause writes room.playing_since;
+// clients hard-pause/play their <audio> in response. Initial seek
+// catches late joiners up to current position.
 //
-// Independent mode: just renders <audio controls> and lets each player
-// scrub on their own. Useful for "listening party" feel.
+// Independent mode: each player gets full controls and scrubs on their
+// own; room.playing_since is ignored.
 function AllClientsAudio({
-  track, playingSince, syncMode, proxyUrl, proxyToken,
+  track, playingSince, syncMode, isHost, onHostTogglePlayback,
 }: {
-  track:        SpotifyTrack;
-  playingSince: number | null;
-  syncMode:     "synchronized" | "independent";
-  proxyUrl:     string;
-  proxyToken:   string;
+  track:                SpotifyTrack;
+  playingSince:         number | null;
+  syncMode:             "synchronized" | "independent";
+  isHost:               boolean;
+  onHostTogglePlayback: () => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastTrackRef = useRef<string | null>(null);
 
-  // Reload audio when the track changes. Includes initial seek so a
-  // late joiner picks up mid-song. Recomputing only on track id, NOT
-  // on playing_since, so transient pause/resume doesn't trigger a
-  // full re-fetch (the second useEffect handles those via play/pause).
+  // (Re)load audio when the track changes. Initial seek lets a late
+  // joiner pick up mid-song. Only depends on track.id so transient
+  // pause/resume doesn't re-fetch the whole stream.
   useEffect(() => {
     const el = audioRef.current;
-    if (!el || !proxyUrl) return;
+    if (!el) return;
     if (lastTrackRef.current === track.id) return;
     lastTrackRef.current = track.id;
     const params = new URLSearchParams({
@@ -934,17 +933,16 @@ function AllClientsAudio({
       name:       track.name,
       artist:     track.artist,
     });
-    if (proxyToken) params.set("token", proxyToken);
     if (syncMode === "synchronized" && playingSince) {
       const elapsedSec = Math.floor((Date.now() - playingSince) / 1000);
       if (elapsedSec > 1) params.set("seek", String(elapsedSec));
     }
-    el.src = `${proxyUrl.replace(/\/$/, "")}/stream-track?${params}`;
+    el.src = `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;
     el.load();
     if (syncMode === "synchronized" && playingSince !== null) {
       el.play().catch(() => { /* autoplay denied — user clicks the play control */ });
     }
-  }, [track.id, track.name, track.artist, proxyUrl, proxyToken, syncMode, playingSince]);
+  }, [track.id, track.name, track.artist, syncMode, playingSince]);
 
   // Sync mode: react to host's play/pause via playing_since transitions.
   useEffect(() => {
@@ -957,24 +955,36 @@ function AllClientsAudio({
     }
   }, [playingSince, syncMode]);
 
-  if (!proxyUrl) {
-    return (
-      <div className="flex-shrink-0 rounded-md p-3 text-sm"
-        style={{
-          background: "rgba(220,60,60,0.10)",
-          border:     "1px solid rgba(220,60,60,0.35)",
-          color:      "rgb(var(--text-secondary-rgb))",
-        }}>
-        ⚠ All-clients-stream mode needs a Proxy URL. Open lobby Settings → Audio to configure.
-      </div>
-    );
-  }
-
   return (
-    <div className="flex-shrink-0 rounded-md p-2 flex items-center gap-3"
+    <div className="flex-shrink-0 rounded-md p-2 flex items-center gap-2"
       style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-      <span style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))" }}>
-        {syncMode === "synchronized" ? "🔗 Synced playback" : "🎚️ Independent playback"}
+      {/* Host gets a play/pause toggle that writes to room.playing_since;
+          in synced mode that's how every other player's audio gets
+          controlled. Hidden in independent mode (each player runs their own). */}
+      {isHost && syncMode === "synchronized" && (
+        <button
+          onClick={onHostTogglePlayback}
+          className="px-2.5 py-1 rounded text-sm font-semibold transition-colors"
+          style={{
+            background: playingSince !== null
+              ? "rgba(var(--color-primary-rgb),0.2)"
+              : "rgba(40,180,60,0.18)",
+            border: `1px solid ${playingSince !== null
+              ? "rgba(var(--color-primary-rgb),0.5)"
+              : "rgba(40,180,60,0.5)"}`,
+            color: playingSince !== null
+              ? "rgb(var(--color-primary-rgb))"
+              : "rgb(40,180,60)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {playingSince !== null ? "⏸ Pause for all" : "▶ Play for all"}
+        </button>
+      )}
+      <span style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))", whiteSpace: "nowrap" }}>
+        {syncMode === "synchronized"
+          ? (isHost ? "🔗 Synced — you control" : "🔗 Synced playback")
+          : "🎚️ Independent"}
       </span>
       <audio
         ref={audioRef}
@@ -982,7 +992,7 @@ function AllClientsAudio({
         preload="auto"
         // Browser autoplay policies require some user gesture before the
         // audio actually plays; first click on the page (anywhere) unlocks it.
-        style={{ flex: 1, height: 36 }}
+        style={{ flex: 1, height: 36, minWidth: 0 }}
       />
     </div>
   );
@@ -1962,6 +1972,26 @@ export default function GamePage() {
   // Default is browser to preserve the original behaviour.
   const audioMode  = state?.room.settings?.audioMode ?? "browser";
   const browserAudio = audioMode === "browser";
+
+  // In all-clients-stream mode, no Spotify SDK and no Discord bot write
+  // playing_since for us — the host's client has to. Auto-start playback
+  // when a new round inserts so every client's <audio> starts playing
+  // without manual host intervention. Skips if already playing
+  // (idempotent) and only fires on round-id transitions, not on every
+  // realtime echo.
+  const lastAutoStartedRoundIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isHost || audioMode !== "all-clients-stream") return;
+    const roundId = state?.round?.id ?? null;
+    if (roundId === null) return;
+    if (lastAutoStartedRoundIdRef.current === roundId) return;
+    lastAutoStartedRoundIdRef.current = roundId;
+    if (!roomId) return;
+    void supabase
+      .from("tl_rooms")
+      .update({ playing_since: Date.now(), paused_at_ms: null })
+      .eq("id", roomId);
+  }, [isHost, audioMode, state?.round?.id, roomId]);
   // In single-screen mode the host stands in for whoever's playing. They get
   // captain powers on whatever team is currently active.
   const isMyTurn   = !!(state?.room.active_team_id && (
@@ -3003,8 +3033,27 @@ export default function GamePage() {
           track={round.track}
           playingSince={room.playing_since}
           syncMode={(state?.room.settings?.streamSyncMode ?? "synchronized") as "synchronized" | "independent"}
-          proxyUrl={state?.room.settings?.streamProxyUrl ?? DEFAULT_STREAM_PROXY_URL}
-          proxyToken={state?.room.settings?.streamProxyToken ?? ""}
+          isHost={isHost}
+          onHostTogglePlayback={async () => {
+            if (!roomId) return;
+            const now = Date.now();
+            // Toggle: if currently playing, pause (playing_since=null,
+            // paused_at_ms=elapsed). If paused, resume (playing_since=
+            // now-paused_at_ms so client elapsed stays consistent).
+            if (room.playing_since !== null) {
+              const positionMs = now - room.playing_since;
+              await supabase
+                .from("tl_rooms")
+                .update({ playing_since: null, paused_at_ms: positionMs })
+                .eq("id", roomId);
+            } else {
+              const resumeFrom = room.paused_at_ms ?? 0;
+              await supabase
+                .from("tl_rooms")
+                .update({ playing_since: now - resumeFrom, paused_at_ms: null })
+                .eq("id", roomId);
+            }
+          }}
         />
       )}
 
