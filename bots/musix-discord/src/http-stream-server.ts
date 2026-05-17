@@ -17,7 +17,7 @@
 // Override via STREAM_CORS env (comma-separated list, or "*" for any).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawnYtDlpAudioStream } from "./resolver.js";
+import { spawnYtDlpAudioStream, resolveTrack } from "./resolver.js";
 
 const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
@@ -132,6 +132,46 @@ export function startHttpStreamServer(): void {
         return;
       }
       await handleStream(req, res, videoId, seekSec);
+      return;
+    }
+
+    // /stream-track — resolve by Spotify track info, then stream. Used by
+    // the all-clients-stream audio mode: no Discord bot is in voice, so
+    // nothing has stamped a videoId on the round yet. Clients pass the
+    // Spotify track they already have via realtime, the bot resolves
+    // (cache-hit on repeats), then streams the same yt-dlp output.
+    if (url.pathname === "/stream-track") {
+      if (!checkToken(req, url)) {
+        res.writeHead(401, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end("Unauthorized");
+        return;
+      }
+      const spotifyId = url.searchParams.get("spotify_id") ?? "";
+      const name      = url.searchParams.get("name")       ?? "";
+      const artist    = url.searchParams.get("artist")     ?? "";
+      const seekSec   = Math.max(0, parseInt(url.searchParams.get("seek") ?? "0", 10) || 0);
+      if (!spotifyId || !name) {
+        res.writeHead(400, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end("spotify_id and name required");
+        return;
+      }
+      const resolved = await resolveTrack({ id: spotifyId, name, artists: artist ? [artist] : [] });
+      if (!resolved) {
+        res.writeHead(404, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end("Couldn't resolve track to a YouTube video");
+        return;
+      }
+      console.log(`[http] /stream-track ${spotifyId} → ${resolved.videoId} seek=${seekSec}`);
+      if (req.method === "HEAD") {
+        res.writeHead(200, {
+          "Content-Type":  "application/octet-stream",
+          "Cache-Control": "no-store",
+          ...corsHeaders(req.headers.origin),
+        });
+        res.end();
+        return;
+      }
+      await handleStream(req, res, resolved.videoId, seekSec);
       return;
     }
 

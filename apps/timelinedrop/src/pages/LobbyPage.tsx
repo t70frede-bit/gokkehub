@@ -578,8 +578,9 @@ export default function LobbyPage() {
               <h2 className="font-bold text-lg mb-3">Audio</h2>
               <Toggle
                 options={[
-                  { value: "browser",     label: "🌐 Browser" },
-                  { value: "discord-bot", label: "🤖 Discord bot" },
+                  { value: "browser",            label: "🌐 Browser" },
+                  { value: "discord-bot",        label: "🤖 Discord bot" },
+                  { value: "all-clients-stream", label: "🎧 All clients" },
                 ]}
                 value={settings.audioMode}
                 onChange={v => saveSettings({ audioMode: v as AudioMode })}
@@ -594,6 +595,56 @@ export default function LobbyPage() {
                   🌐 The host's browser plays each song. Share your tab audio in Discord (or be
                   in person) so everyone hears the same thing.
                 </p>
+              )}
+              {settings.audioMode === "all-clients-stream" && (
+                <div className="mt-3 flex flex-col gap-3">
+                  <p className="text-xs px-3 py-2 rounded-md"
+                    style={{
+                      background: "rgba(var(--color-primary-rgb),0.08)",
+                      border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
+                      color:      "rgb(var(--text-secondary-rgb))",
+                    }}>
+                    🎧 Every player's browser plays the song directly via the musix-bot HTTP
+                    proxy. No Discord, no host sharing audio — each player just needs to be on
+                    this page. Volume is per-player.
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs uppercase tracking-wider"
+                      style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
+                      Proxy URL
+                    </label>
+                    <Input
+                      value={settings.streamProxyUrl ?? ""}
+                      onChange={e => saveSettings({ streamProxyUrl: e.target.value })}
+                      placeholder="https://musix-bot.example.com"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs uppercase tracking-wider"
+                      style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
+                      Proxy token (shared secret from the bot's STREAM_TOKEN env)
+                    </label>
+                    <Input
+                      value={settings.streamProxyToken ?? ""}
+                      onChange={e => saveSettings({ streamProxyToken: e.target.value })}
+                      placeholder="(leave blank if bot has no STREAM_TOKEN)"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs mb-1.5 uppercase tracking-wider"
+                      style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
+                      Sync mode
+                    </p>
+                    <Toggle
+                      options={[
+                        { value: "synchronized", label: "🔗 Synced — host controls" },
+                        { value: "independent",  label: "🎚️ Independent playback" },
+                      ]}
+                      value={settings.streamSyncMode ?? "synchronized"}
+                      onChange={v => saveSettings({ streamSyncMode: v as "synchronized" | "independent" })}
+                    />
+                  </div>
+                </div>
               )}
               {settings.audioMode === "discord-bot" && (
                 <div className="mt-3 flex flex-col gap-3">

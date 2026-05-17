@@ -32,8 +32,18 @@ function sanitize(input: unknown): TlRoomSettings {
   if (s.songSource === "group-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }
-  if (s.audioMode === "browser" || s.audioMode === "discord-bot") {
+  if (s.audioMode === "browser" || s.audioMode === "discord-bot" || s.audioMode === "all-clients-stream") {
     out.audioMode = s.audioMode;
+  }
+  if (typeof s.streamProxyUrl === "string" && /^https?:\/\//.test(s.streamProxyUrl)) {
+    // Cap to a reasonable URL length to keep settings JSON manageable.
+    out.streamProxyUrl = s.streamProxyUrl.slice(0, 256);
+  }
+  if (typeof s.streamProxyToken === "string") {
+    out.streamProxyToken = s.streamProxyToken.slice(0, 128);
+  }
+  if (s.streamSyncMode === "synchronized" || s.streamSyncMode === "independent") {
+    out.streamSyncMode = s.streamSyncMode;
   }
   if (s.timerMode === "song-length" || s.timerMode === "fixed" || s.timerMode === "none") {
     out.timerMode = s.timerMode;

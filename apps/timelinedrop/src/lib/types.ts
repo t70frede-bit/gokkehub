@@ -37,7 +37,27 @@ export type SongSource = "group-taste" | "playlist";
 //                 Audio comes from YouTube (Spotify ToS forbids server-side
 //                 streaming). Bot runs as a separate Node.js process — see
 //                 bots/musix-discord/README.md.
-export type AudioMode = "browser" | "discord-bot";
+// How a round's audio reaches the players.
+//   browser           — host's browser runs the Spotify Web Playback SDK.
+//                       Standard setup; players hear it via whatever shared
+//                       audio the host has (Discord screen-share, in-person…).
+//   discord-bot       — musix-discord bot in the host's voice channel.
+//   all-clients-stream — every browser plays an <audio> tag pointed at the
+//                       bot's HTTP audio proxy. Each player hears the song
+//                       in their own browser; no Discord required.
+export type AudioMode = "browser" | "discord-bot" | "all-clients-stream";
+
+// Within all-clients-stream mode: does the host control playback for
+// everyone (synchronized — clients seek to playing_since) or does each
+// player control their own (independent)?
+export type StreamSyncMode = "synchronized" | "independent";
+
+// Default proxy URL — points at the friend-hosted musix-discord
+// instance. The matching STREAM_TOKEN is configured operator-side on
+// the bot and entered per-room in lobby settings (not committed to git
+// since tokens rotate independently of the URL).
+export const DEFAULT_STREAM_PROXY_URL   = "https://musix-bot.hotbear.org";
+export const DEFAULT_STREAM_PROXY_TOKEN = "";
 
 // How the turn timer behaves.
 //  - "song-length" (default) — turn lasts until the song ends. Uses
@@ -91,6 +111,12 @@ export interface TlRoomSettings {
   timerMode?:          TimerMode;     // song-length (default) | fixed | none
   timerSeconds?:       number;        // used when timerMode === "fixed"
   tokenEconomy?:       TokenEconomy;  // bonus (default) | standard | shop
+  // All-clients-stream audio mode config. Url + token target the bot's
+  // /stream/:videoId endpoint; defaults point at the public friend-hosted
+  // instance, can be overridden per room if you fork.
+  streamProxyUrl?:     string;
+  streamProxyToken?:   string;
+  streamSyncMode?:     StreamSyncMode; // synchronized (default) | independent
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -109,6 +135,9 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerMode:         "song-length",
   timerSeconds:      120,
   tokenEconomy:      "bonus",
+  streamProxyUrl:    DEFAULT_STREAM_PROXY_URL,
+  streamProxyToken:  DEFAULT_STREAM_PROXY_TOKEN,
+  streamSyncMode:    "synchronized",
 };
 
 export interface TlRoom {
