@@ -58,18 +58,20 @@ export const TIMER_DEFAULT_FALLBACK_SECONDS = 90;
 //    to acquire specific tokens at posted costs.
 export type TokenEconomy = "standard" | "bonus" | "shop";
 
-// Per-token-type cost in shop mode. Tunable; tiers below roughly map
-// to the Tier 1/2/3 grouping in tokens.ts.
+// Per-token-type cost in shop mode. Keys MUST match TOKEN_CATALOG types
+// in tokens.ts. Tunable; tiers roughly map to the Tier 1/2/3 grouping.
+// Only includes tokens currently flagged implemented:true.
 export const SHOP_TOKEN_COSTS: Record<string, number> = {
-  song_skipper:    2,
-  cover_reveal:    2,
-  five_years:      3,
-  more_or_less:    3,
-  reference_point: 3,
-  recovery:        4,
-  card_remover:    4,
-  force_lock:      6,
-  song_limiter:    6,
+  cover_reveal_before: 2,
+  cover_reveal:        2,
+  song_skipper:        2,
+  year_span_5:         3,
+  more_or_less:        3,
+  reference_point:     3,
+  recovery:            4,
+  card_remover:        4,
+  force_lock:          6,
+  song_limiter:        6,
 };
 
 export interface TlRoomSettings {

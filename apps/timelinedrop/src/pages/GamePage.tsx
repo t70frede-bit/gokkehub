@@ -6,7 +6,7 @@ import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
-import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS } from "../lib/types";
+import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
 function tokenSpec(type: string): TokenSpec {
@@ -2112,6 +2112,14 @@ export default function GamePage() {
     });
   }
 
+  async function buyToken(tokenType: string) {
+    await fetch(`/room/${roomId}/round?action=buy-token`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ player_id: myPlayerId, token_type: tokenType }),
+    });
+    // realtime tl_team_tokens INSERT + tl_teams UPDATE handle the UI refresh
+  }
+
   async function dismissPing(pingId: number) {
     if (!myPlayerId) return;
     try {
@@ -2975,12 +2983,17 @@ export default function GamePage() {
         const trayTeamId = tokenTrayTeamId;
         const phase: "active" | "opponent" =
           trayTeamId === room.active_team_id ? "active" : "opponent";
+        const settings = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
+        const trayTeam = teams.find(t => t.id === trayTeamId);
         return (
           <TokenTray
             tokens={(state.tokens?.[trayTeamId] ?? []).filter(t => !t.pending)}
             phase={phase}
             forceLocked={!!round?.force_locked}
             songNotStarted={room.playing_since === null}
+            shopEnabled={settings.tokenEconomy === "shop"}
+            points={trayTeam?.points ?? 0}
+            onBuy={buyToken}
             onClose={() => setTokenTrayOpen(false)}
             onUse={(t) => useTypedToken(t.type as TokenType)}
           />
@@ -3236,6 +3249,7 @@ export default function GamePage() {
 // Force Lock attempts (only opponent_turn token in Tier 1).
 function TokenTray({
   tokens, onClose, onUse, phase, forceLocked, songNotStarted,
+  shopEnabled, points, onBuy,
 }: {
   tokens:         TlTeamToken[];
   onClose:        () => void;
@@ -3243,7 +3257,11 @@ function TokenTray({
   phase:          "active" | "opponent";
   forceLocked:    boolean;
   songNotStarted: boolean;  // gates before_song tokens — once audio rolls they're locked out
+  shopEnabled:    boolean;  // tokenEconomy === "shop"
+  points:         number;
+  onBuy:          (tokenType: string) => Promise<void>;
 }) {
+  const [buying, setBuying] = useState<string | null>(null);
   // Group by category for a clearer layout.
   const groups: Record<string, TlTeamToken[]> = {};
   for (const t of tokens) {
@@ -3346,6 +3364,69 @@ function TokenTray({
               </div>
             )];
           })}
+        </div>
+      )}
+      {/* ── Shop (visible in shop tokenEconomy) ─────────────────────
+          Captain spends points to buy specific tokens. Only the active
+          captain in shop mode can buy; opponent-phase or non-active
+          shows a disabled view so others can preview what's available. */}
+      {shopEnabled && (
+        <div className="mt-5 pt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div className="flex items-baseline justify-between mb-2">
+            <h3 className="font-bold" style={{ fontSize: "var(--text-base)" }}>🏪 Shop</h3>
+            <span style={{
+              fontSize:   "var(--text-sm)",
+              fontFamily: "var(--font-mono)",
+              color:      "rgb(var(--color-primary-rgb))",
+            }}>
+              {points} {points === 1 ? "point" : "points"}
+            </span>
+          </div>
+          <p className="mb-3" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
+            Earn +1 point per correct artist or song name. Spend them here.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            {Object.entries(SHOP_TOKEN_COSTS)
+              .sort((a, b) => a[1] - b[1])
+              .map(([type, cost]) => {
+                const spec = TOKEN_CATALOG[type as TokenType];
+                if (!spec) return null;
+                const affordable = points >= cost;
+                const canBuy     = phase === "active" && affordable && !buying;
+                return (
+                  <button
+                    key={type}
+                    onClick={async () => {
+                      if (!canBuy) return;
+                      setBuying(type);
+                      try { await onBuy(type); } finally { setBuying(null); }
+                    }}
+                    disabled={!canBuy}
+                    className="text-left rounded-md p-2 transition-all disabled:cursor-not-allowed flex items-center gap-2"
+                    style={{
+                      background: canBuy ? "rgba(var(--color-primary-rgb),0.10)" : "transparent",
+                      border:     `1px solid rgba(var(--color-primary-rgb), ${canBuy ? 0.35 : 0.12})`,
+                      opacity:    canBuy ? 1 : 0.55,
+                    }}
+                    title={
+                      phase !== "active" ? "Only the active team's captain can buy"
+                      : !affordable      ? `Need ${cost - points} more point${(cost - points) === 1 ? "" : "s"}`
+                      : undefined
+                    }
+                  >
+                    <span style={{ fontSize: "var(--text-base)" }}>{spec.icon}</span>
+                    <span className="flex-1 truncate" style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>{spec.name}</span>
+                    <span style={{
+                      fontSize:   "var(--text-xs)",
+                      fontFamily: "var(--font-mono)",
+                      color:      affordable ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))",
+                    }}>
+                      {cost} pt{cost === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
         </div>
       )}
       <button

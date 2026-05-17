@@ -555,9 +555,11 @@ async function handleBuyToken(req: Request, roomId: string, env: Env) {
   // SHOP_TOKEN_COSTS lives in src/lib/types.ts so the lobby + game UI
   // and this endpoint stay in lock-step. Server inlines the same table
   // here to avoid a cross-import from server functions into client lib.
+  // Mirror of SHOP_TOKEN_COSTS in src/lib/types.ts — keep in sync. Token
+  // names match TOKEN_CATALOG types in src/lib/tokens.ts.
   const SHOP_COSTS: Record<string, number> = {
-    song_skipper: 2, cover_reveal: 2,
-    five_years: 3, more_or_less: 3, reference_point: 3,
+    cover_reveal_before: 2, cover_reveal: 2, song_skipper: 2,
+    year_span_5: 3, more_or_less: 3, reference_point: 3,
     recovery: 4, card_remover: 4,
     force_lock: 6, song_limiter: 6,
   };
