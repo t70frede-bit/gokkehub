@@ -211,35 +211,42 @@ export default function LobbyPage() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* Host-only tab toggle — splits the lobby into "team formation"
-              and "game settings" so the first view stays focused on
-              joining a team without burying it under config noise. */}
-          {isHost && (
-            <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
-              {(["teams", "settings"] as const).map(v => {
-                const active = lobbyView === v;
-                return (
-                  <button
-                    key={v}
-                    onClick={() => setLobbyView(v)}
-                    className="px-3 py-1.5 text-sm font-semibold transition-colors"
-                    style={{
-                      background: active ? "rgba(var(--color-primary-rgb),0.18)" : "transparent",
-                      color:      active ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
-                    }}
-                  >
-                    {v === "teams" ? "👥 Teams" : "⚙ Settings"}
-                  </button>
-                );
-              })}
-            </div>
-          )}
           <Button variant="ghost" size="sm" onClick={copyInviteLink}>
             {copied ? "✓ Copied" : "📋 Copy link"}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => navigate("/")}>Leave</Button>
         </div>
       </div>
+
+      {/* Host-only Teams/Settings tab bar — own row, full-width on mobile
+          + tab-style styling so it reads as a primary navigation control
+          and not an afterthought next to the Leave button. Players miss
+          the previous tiny inline version. */}
+      {isHost && (
+        <div className="flex w-full rounded-lg p-1"
+          style={{
+            background: "rgba(var(--surface-raised-rgb),0.5)",
+            border:     "1px solid rgba(255,255,255,0.08)",
+          }}>
+          {(["teams", "settings"] as const).map(v => {
+            const active = lobbyView === v;
+            return (
+              <button
+                key={v}
+                onClick={() => setLobbyView(v)}
+                className="flex-1 px-5 py-2.5 rounded-md text-sm font-bold transition-all"
+                style={{
+                  background: active ? "rgba(var(--color-primary-rgb),0.22)" : "transparent",
+                  color:      active ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
+                  boxShadow:  active ? "0 1px 3px rgba(0,0,0,0.3)" : "none",
+                }}
+              >
+                {v === "teams" ? "👥 Teams" : "⚙ Game Settings"}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Main grid — layout flips based on host's tab:
               • Teams view (default): single column, players panel full-width.
