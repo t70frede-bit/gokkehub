@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import path from "node:path";
 
 // Dependency-injected so resolver can write/read tl_youtube_reports without
@@ -282,10 +283,15 @@ function ensureYtDlp(): Promise<string> {
   return ytDlpReadyPromise;
 }
 
-export async function createStreamResource(
+// Lower-level helper: spawn yt-dlp and return its stdout stream + a kill
+// handle. Used both by createStreamResource (Discord voice) and by the
+// HTTP audio proxy (clients fetching audio for the all-clients-stream
+// mode). Caller is responsible for piping stdout and calling kill() on
+// disconnect.
+export async function spawnYtDlpAudioStream(
   videoId: string,
   opts: { seekSec?: number } = {},
-): Promise<AudioResource> {
+): Promise<{ stdout: Readable; kill: () => void }> {
   const binPath  = await ensureYtDlp();
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const args = [
@@ -296,7 +302,9 @@ export async function createStreamResource(
     "--output", "-",
   ];
   // yt-dlp's --download-sections "*N-" remuxes the audio starting at N
-  // seconds. Used for the in-game Restart (seek=0 → omit) and +30s buttons.
+  // seconds. Used for the in-game Restart (seek=0 → omit) and +30s
+  // buttons, and for browser clients catching up to playing_since in
+  // synchronized stream mode.
   if (opts.seekSec && opts.seekSec > 0) {
     args.push("--download-sections", `*${opts.seekSec}-`);
   }
@@ -316,7 +324,18 @@ export async function createStreamResource(
     }
   });
 
-  return createAudioResource(proc.stdout, { inputType: StreamType.Arbitrary });
+  return {
+    stdout: proc.stdout!,
+    kill:   () => { try { proc.kill("SIGTERM"); } catch { /* already dead */ } },
+  };
+}
+
+export async function createStreamResource(
+  videoId: string,
+  opts: { seekSec?: number } = {},
+): Promise<AudioResource> {
+  const { stdout } = await spawnYtDlpAudioStream(videoId, opts);
+  return createAudioResource(stdout, { inputType: StreamType.Arbitrary });
 }
 
 export function cacheStats() {

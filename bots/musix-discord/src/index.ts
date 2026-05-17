@@ -58,6 +58,7 @@ import {
   setSupabaseClient,
   type ResolvedTrack,
 } from "./resolver.js";
+import { startHttpStreamServer } from "./http-stream-server.js";
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const {
@@ -1755,6 +1756,11 @@ async function shutdown(signal: string) {
 }
 process.on("SIGINT",  () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
+// Start the HTTP audio proxy first — it has no dependency on Discord
+// being up. Browser clients in "all-clients-stream" audio mode will
+// fetch from this server in parallel with the Discord voice path.
+startHttpStreamServer();
 
 client.login(BOT_TOKEN).catch(err => {
   console.error("[musix-bot] Login failed — check DISCORD_BOT_TOKEN:", err);

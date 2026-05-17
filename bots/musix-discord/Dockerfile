@@ -35,4 +35,9 @@ RUN mkdir -p /app/bin
 RUN npm install -D tsx@^4.19.0
 
 ENV NODE_ENV=production
+
+# HTTP audio proxy — see src/http-stream-server.ts. Reverse-proxy this
+# port behind your own HTTPS domain in production.
+EXPOSE 8080
+
 CMD ["npx", "tsx", "src/index.ts"]
