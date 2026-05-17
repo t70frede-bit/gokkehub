@@ -162,6 +162,38 @@ export default function LobbyPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  // Start-Game panel — extracted so it can be rendered in BOTH the Teams
+  // tab (where it's always been) and the Settings tab (so the host
+  // doesn't have to switch tabs just to start the game).
+  const startPanel = isHost ? (() => {
+    const minTracks = Math.max(5, teams.length + 1);
+    const isPlaylistMode = settings.songSource === "playlist";
+    const tracksTooFew   = isPlaylistMode && trackCount < minTracks;
+    return (
+      <Panel className="p-4">
+        {startError && <p className="text-sm text-red-400 mb-3">⚠️ {startError}</p>}
+        <Button
+          onClick={startGame}
+          loading={starting}
+          disabled={tracksTooFew}
+          className="w-full"
+          size="lg"
+        >
+          {starting && !isPlaylistMode
+            ? "🎵 Generating songs… this can take a few seconds"
+            : tracksTooFew
+              ? `Add a playlist first (${trackCount}/${minTracks})`
+              : "🎮 Start Game"}
+        </Button>
+        <p className="text-xs mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          {isPlaylistMode
+            ? `Each team starts with one card; minimum is ${minTracks} tracks`
+            : "Songs auto-generate from group taste when you press Start"}
+        </p>
+      </Panel>
+    );
+  })() : null;
+
   return (
     <div className="p-4 max-w-5xl mx-auto w-full flex flex-col gap-4">
 
@@ -668,6 +700,10 @@ export default function LobbyPage() {
               )}
             </Panel>
           )}
+          {/* Start panel mirrored from the Teams tab so the host can launch
+              the game without flipping tabs. startPanel is null for
+              non-hosts (no-op render). */}
+          {startPanel}
         </div>
         )}
 
@@ -723,39 +759,8 @@ export default function LobbyPage() {
             );
           })()}
 
-          {/* Start */}
-          {isHost && (() => {
-            const minTracks = Math.max(5, teams.length + 1);
-            // Group-taste rooms auto-generate on Start, so we never gate the
-            // button on track count for that source. Playlist rooms still
-            // need the host to actually add a URL first.
-            const isPlaylistMode = settings.songSource === "playlist";
-            const tracksTooFew   = isPlaylistMode && trackCount < minTracks;
-
-            return (
-              <Panel className="p-4">
-                {startError && <p className="text-sm text-red-400 mb-3">⚠️ {startError}</p>}
-                <Button
-                  onClick={startGame}
-                  loading={starting}
-                  disabled={tracksTooFew}
-                  className="w-full"
-                  size="lg"
-                >
-                  {starting && !isPlaylistMode
-                    ? "🎵 Generating songs… this can take a few seconds"
-                    : tracksTooFew
-                      ? `Add a playlist first (${trackCount}/${minTracks})`
-                      : "🎮 Start Game"}
-                </Button>
-                <p className="text-xs mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                  {isPlaylistMode
-                    ? `Each team starts with one card; minimum is ${minTracks} tracks`
-                    : "Songs auto-generate from group taste when you press Start"}
-                </p>
-              </Panel>
-            );
-          })()}
+          {/* Start panel — also rendered in the Settings tab via startPanel const */}
+          {startPanel}
         </div>
         )}
       </div>
