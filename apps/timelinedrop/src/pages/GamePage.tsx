@@ -934,6 +934,23 @@ function AllClientsAudio({
   // unlocks all future autoplays for this <audio>.
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const prevVolumeRef = useRef(0.85);
+  // Hover-delay timers for the volume popover. The popover floats above
+  // the icon with a small gap; without these, moving the mouse from icon
+  // → popover crosses the gap (outside the parent's bounding box) and
+  // fires mouseleave before the mouse reaches the slider. The close-
+  // delay + rehover-cancels-close pattern is shared with AudioPlayerUI.
+  const popoverEnterTimer = useRef<number | null>(null);
+  const popoverLeaveTimer = useRef<number | null>(null);
+  function openVolPopover() {
+    if (popoverLeaveTimer.current) window.clearTimeout(popoverLeaveTimer.current);
+    if (popoverEnterTimer.current) window.clearTimeout(popoverEnterTimer.current);
+    popoverEnterTimer.current = window.setTimeout(() => setVolOpen(true), 120);
+  }
+  function scheduleVolClose() {
+    if (popoverEnterTimer.current) window.clearTimeout(popoverEnterTimer.current);
+    if (popoverLeaveTimer.current) window.clearTimeout(popoverLeaveTimer.current);
+    popoverLeaveTimer.current = window.setTimeout(() => setVolOpen(false), 200);
+  }
 
   // Spotify gives us the authoritative duration (captured at curation
   // time). The stream's el.duration is unreliable: webm headers may
@@ -1159,25 +1176,33 @@ function AllClientsAudio({
         </span>
 
         {/* Volume — click icon mutes, hover opens slider. Volume is local-only
-            (each client controls their own listening level). */}
+            (each client controls their own listening level). The popover
+            floats above the icon with an mb-2 gap; that gap sits outside
+            the parent's bounding box, so the mouse fires mouseleave when
+            travelling icon → popover. The timer-delayed close + popover
+            mouseenter cancelling the close keeps it open. */}
         <div className="relative flex-shrink-0"
-          onMouseEnter={() => setVolOpen(true)}
-          onMouseLeave={() => setVolOpen(false)}>
+          onMouseEnter={openVolPopover}
+          onMouseLeave={scheduleVolClose}>
           <button onClick={toggleMute}
             className="w-7 h-7 flex items-center justify-center rounded opacity-60 hover:opacity-100"
             title={volume === 0 ? "Unmute" : "Mute"}>
             {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
           </button>
           {volOpen && (
-            <div className="absolute right-0 bottom-full mb-2 z-10 px-3 py-2 rounded-md flex items-center gap-2"
-              style={{
-                background: "rgb(var(--surface-overlay-rgb))",
-                border:     "1px solid rgb(var(--border-rgb))",
-                boxShadow:  "var(--shadow-card)",
-              }}>
-              <input type="range" min="0" max="1" step="0.05" value={volume}
-                onChange={e => setVolume(Number(e.target.value))}
-                className="orange-range w-32" />
+            <div className="absolute right-0 bottom-full pt-2 z-10"
+              onMouseEnter={openVolPopover}
+              onMouseLeave={scheduleVolClose}>
+              <div className="px-3 py-2 rounded-md flex items-center gap-2"
+                style={{
+                  background: "rgb(var(--surface-overlay-rgb))",
+                  border:     "1px solid rgb(var(--border-rgb))",
+                  boxShadow:  "var(--shadow-card)",
+                }}>
+                <input type="range" min="0" max="1" step="0.05" value={volume}
+                  onChange={e => setVolume(Number(e.target.value))}
+                  className="orange-range w-32" />
+              </div>
             </div>
           )}
         </div>
@@ -3242,8 +3267,10 @@ export default function GamePage() {
       {/* ── Discord-bot mode banner ────────────────────────────────────────
           When the host has chosen discord-bot audio mode, surface a small
           status chip in the same place the audio bar would normally live
-          so it's clear playback is happening elsewhere. */}
-      {isHost && !browserAudio && (
+          so it's clear playback is happening elsewhere. Scoped strictly
+          to discord-bot so it doesn't appear alongside the all-clients
+          YouTube player (which has its own controls). */}
+      {isHost && audioMode === "discord-bot" && (
         <div
           className="flex-shrink-0 px-3 py-2 flex items-center justify-center gap-2 text-sm"
           style={{
