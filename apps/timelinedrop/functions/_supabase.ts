@@ -163,6 +163,55 @@ export async function upsertSongCorrection(
 
 // ── Accepted-answers / auto-judging (migration 016) ─────────────────────────
 
+// Suffix markers that, when present in a "Song - <qualifier>" tail or a
+// trailing "(qualifier)" / "[qualifier]" block, indicate the qualifier is a
+// Spotify-catalogue label for a version/edit/feature of the same song
+// rather than part of the title itself. List based on patterns scanned in
+// the live Spotify catalogue.
+const SONG_SUFFIX_MARKERS = /\b(remaster(ed)?|remix(es|ed)?|edit|version|mono|stereo|acoustic|demo|live|bonus|deluxe|anniversary|extended|single|album|radio|mix|recorded|re-recorded|inspired|theme|soundtrack|motion picture|movie|film|ost|expanded|explicit|clean|edition|instrumental|karaoke|reprise|interlude|outro|intro|from|with|feat|featuring|ft)\b/i;
+
+// More conservative whitelist for the no-dash variant ("Imagine
+// remastered 2010", "Hotel California Live"). Excludes risk words like
+// "from"/"with"/"edition" that legitimately end real song titles.
+const TRAILING_SUFFIX_NODASH = /\s+(remaster(ed)?|remix(es|ed)?|live|acoustic|demo|bonus|instrumental|karaoke|reprise|mono|stereo|mix|edit|feat|featuring|ft)\b.*$/i;
+
+// Strip Spotify-style suffixes off a song title:
+//   "Bohemian Rhapsody - Remastered 2011"        → "Bohemian Rhapsody"
+//   "Don't Stop Me Now (Remastered 2011)"         → "Don't Stop Me Now"
+//   "Hey Jude - From the Movie 'Yellow Submarine'"→ "Hey Jude"
+//   "Stayin' Alive [Single Version]"              → "Stayin' Alive"
+//   "Imagine remastered 2010"                     → "imagine"
+//   "Crazy in Love (feat. Jay-Z)"                 → "crazy in love"
+//   "Crazy in Love feat. Jay-Z"                   → "crazy in love"
+//
+// Conservative wrt real titles — the no-dash pass uses a smaller whitelist
+// so "Live and Let Die" / "From This Moment On" / "Take Me With You" stay
+// intact (their marker word is at the start, not the end).
+function stripSongSuffix(s: string): string {
+  // 1. Dash-style: strip the LAST " - <qualifier>" chunk repeatedly while
+  //    the qualifier contains a known marker. Spotify's default format.
+  for (let i = 0; i < 5; i++) {
+    const parts = s.split(/\s+[-–—]\s+/);
+    if (parts.length < 2) break;
+    const last = parts[parts.length - 1];
+    if (!SONG_SUFFIX_MARKERS.test(last)) break;
+    s = parts.slice(0, -1).join(" - ").trim();
+  }
+  // 2. Paren / bracket suffixes: "(Remastered)", "[Live at Wembley]",
+  //    iterated so stacked parens like "Song (Remastered) (Live)" both go.
+  for (let i = 0; i < 5; i++) {
+    const m = s.match(/^(.*?)\s*[([]([^()[\]]+)[)\]]\s*$/);
+    if (!m) break;
+    if (!SONG_SUFFIX_MARKERS.test(m[2])) break;
+    s = m[1].trim();
+  }
+  // 3. No-dash trailing markers (user typed "imagine remastered 2010").
+  //    Restricted whitelist to avoid false positives on real titles ending
+  //    in "from" / "with" / "edition" / etc.
+  s = s.replace(TRAILING_SUFFIX_NODASH, "").trim();
+  return s;
+}
+
 /**
  * Normalize a player's guess for comparison. Same function applied on both
  * sides of any compare — accepts-table writes the result as the
@@ -172,15 +221,16 @@ export async function upsertSongCorrection(
  * Decisions:
  *  - Case + accent + punctuation insensitive (no trick spelling)
  *  - Whitespace collapsed (trailing spaces, double spaces don't matter)
- *  - "Crazy in Love (feat. Jay-Z)" → "crazy in love" on the songname side
- *    (Spotify often puts the feature in the title; players type it either
- *    way and both should pass). NOT applied to artist — artists matter.
+ *  - stripSongSuffix() drops Spotify-style version labels (Remastered,
+ *    Live, Acoustic, From the Movie, etc.) so a player typing the bare
+ *    title matches the catalogue name, AND a catalogue title that already
+ *    drops the suffix matches a player who types the long form. NOT
+ *    applied to artist — artists matter.
  */
 export function normalizeAnswer(raw: string, kind: "artist" | "songname"): string {
   let s = raw.toLowerCase().trim();
   if (kind === "songname") {
-    s = s.replace(/[\(\[]\s*(feat|ft|featuring|with)\.?\s+[^\)\]]+[\)\]]/gi, "");
-    s = s.replace(/\s+(feat|ft|featuring)\.?\s+.+$/gi, "");
+    s = stripSongSuffix(s);
   }
   s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");      // strip accents
   s = s.replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();    // strip punctuation, collapse whitespace

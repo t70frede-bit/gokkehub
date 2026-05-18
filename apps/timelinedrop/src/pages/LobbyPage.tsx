@@ -144,6 +144,26 @@ export default function LobbyPage() {
     });
   }
 
+  async function renameTeam(teamId: number, name: string) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/rename-team`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, team_id: teamId, name }),
+    });
+  }
+
+  async function addPlaceholderMember(teamId: number, name: string) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/add-member`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, team_id: teamId, name }),
+    });
+  }
+
   async function saveSettings(patch: TlRoomSettings) {
     if (!myPlayerId) return;
     await fetch(`/room/${roomId}/settings`, {
@@ -792,7 +812,9 @@ export default function LobbyPage() {
               where it's actually actionable (no point telling players how
               many are linked when the songs are coming from a playlist). */}
 
-          {/* Team panels — one per team */}
+          {/* Team panels — one per team. Host can click-to-rename in any
+              mode; "+ Add member" appears only in gamemaster mode where
+              the placeholder players are purely for visual reference. */}
           <div className="flex flex-col gap-3">
             {teams.map(team => {
               const teamPlayers = visiblePlayers.filter(p => p.team_id === team.id && !p.is_spectator);
@@ -805,6 +827,8 @@ export default function LobbyPage() {
                   myPlayerId={myPlayerId}
                   isHost={isHost}
                   onTileClick={(p) => setSelectedPlayer(p)}
+                  onRename={isHost ? (name) => renameTeam(team.id, name) : undefined}
+                  onAddMember={isHost && gamemastering ? (name) => addPlaceholderMember(team.id, name) : undefined}
                 />
               );
             })}
@@ -891,11 +915,54 @@ interface TeamPanelProps {
   myPlayerId:  string | undefined;
   isHost:      boolean;
   onTileClick: (p: TlPlayer) => void;
+  /** Host-only inline rename. Receives the new (trimmed) name. */
+  onRename?:    (name: string) => Promise<void>;
+  /** When provided, the host can add a placeholder player to this team
+   *  from the panel (used in gamemaster mode so the lobby shows the
+   *  actual teammates' names even though only the gamemaster's device
+   *  is connected). */
+  onAddMember?: (name: string) => Promise<void>;
 }
 
-function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: TeamPanelProps) {
+function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick, onRename, onAddMember }: TeamPanelProps) {
   const isEmpty = players.length === 0;
   const captain = players.find(p => p.is_captain);
+
+  // Inline rename state — host clicks the heading to enter edit mode;
+  // Enter or blur commits, Escape cancels. Kept entirely local so the
+  // input is uncontrolled in terms of the team prop until the server
+  // round-trip completes.
+  const [editingName, setEditingName] = useState(false);
+  const [draftName,   setDraftName]   = useState(team.name);
+  const [savingName,  setSavingName]  = useState(false);
+  async function commitRename() {
+    const next = draftName.trim().slice(0, 30);
+    if (!next || next === team.name) { setEditingName(false); setDraftName(team.name); return; }
+    setSavingName(true);
+    try { await onRename?.(next); } finally { setSavingName(false); setEditingName(false); }
+  }
+
+  // Add-member state — small input row appended after the player tile
+  // grid when onAddMember is wired in. Empty submission no-ops.
+  const [adding,      setAdding]      = useState(false);
+  const [memberName,  setMemberName]  = useState("");
+  const [addingMember, setAddingMember] = useState(false);
+  async function commitAdd() {
+    const trimmed = memberName.trim().slice(0, 30);
+    if (!trimmed) { setAdding(false); setMemberName(""); return; }
+    setAddingMember(true);
+    try { await onAddMember?.(trimmed); } finally {
+      setAddingMember(false);
+      setMemberName("");
+      setAdding(false);
+    }
+  }
+
+  // Reset local draft if the team is renamed externally (realtime echo).
+  useEffect(() => {
+    if (!editingName) setDraftName(team.name);
+  }, [team.name, editingName]);
+
   return (
     <Panel
       className="p-4"
@@ -909,7 +976,34 @@ function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: Te
           className="w-2.5 h-2.5 rounded-full flex-shrink-0"
           style={{ background: `rgb(var(--team-${color}-rgb))` }}
         />
-        <h3 className="font-bold text-sm flex-1 truncate">{team.name}</h3>
+        {editingName && onRename ? (
+          <input
+            autoFocus
+            value={draftName}
+            disabled={savingName}
+            onChange={e => setDraftName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={e => {
+              if (e.key === "Enter") { void commitRename(); }
+              else if (e.key === "Escape") { setEditingName(false); setDraftName(team.name); }
+            }}
+            maxLength={30}
+            className="font-bold text-sm flex-1 min-w-0 px-2 py-0.5 rounded outline-none"
+            style={{
+              background: "rgba(var(--surface-input-rgb), 0.7)",
+              border:     `1px solid rgba(var(--team-${color}-rgb), 0.5)`,
+              color:      "inherit",
+            }}
+          />
+        ) : (
+          <h3
+            className={"font-bold text-sm flex-1 truncate" + (onRename && isHost ? " cursor-text hover:opacity-80" : "")}
+            onClick={() => { if (onRename && isHost) setEditingName(true); }}
+            title={onRename && isHost ? "Click to rename" : undefined}
+          >
+            {team.name}
+          </h3>
+        )}
         <span className="text-xs font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>
           {players.length}
         </span>
@@ -927,7 +1021,7 @@ function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: Te
         )}
       </div>
 
-      {isEmpty ? (
+      {isEmpty && !onAddMember ? (
         <div
           className="rounded-lg flex items-center justify-center py-5 text-xs"
           style={{
@@ -949,6 +1043,41 @@ function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick }: Te
               onClick={() => onTileClick(p)}
             />
           ))}
+          {onAddMember && (
+            adding ? (
+              <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg col-span-2 sm:col-span-1"
+                style={{ border: `1px dashed rgba(var(--team-${color}-rgb), 0.5)` }}>
+                <input
+                  autoFocus
+                  value={memberName}
+                  disabled={addingMember}
+                  onChange={e => setMemberName(e.target.value)}
+                  onBlur={() => { if (!memberName.trim()) setAdding(false); else void commitAdd(); }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") { void commitAdd(); }
+                    else if (e.key === "Escape") { setAdding(false); setMemberName(""); }
+                  }}
+                  placeholder="Name"
+                  maxLength={30}
+                  className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded outline-none bg-transparent"
+                  style={{ color: "inherit" }}
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setAdding(true)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-colors col-span-2 sm:col-span-1"
+                style={{
+                  border:     `1px dashed rgba(var(--team-${color}-rgb), 0.4)`,
+                  color:      `rgba(var(--team-${color}-rgb), 0.85)`,
+                  background: "transparent",
+                }}
+                title="Add a teammate's name for visual reference"
+              >
+                + Add member
+              </button>
+            )
+          )}
         </div>
       )}
     </Panel>
