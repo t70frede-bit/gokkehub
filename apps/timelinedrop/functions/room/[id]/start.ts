@@ -122,11 +122,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     firstTrack.id,
   );
 
+  // all-clients-stream mode: auto-stamp playing_since so the first track
+  // tries to play immediately on each client. Other audio modes leave it
+  // null and let the bot / DJ start playback.
+  const autoStart = (room.settings?.audioMode ?? "discord-bot") === "all-clients-stream";
   await updateRoom(env, roomId, {
     status:           "playing",
     active_team_id:   teams[0].id,
     track_cursor:     teams.length + 1,
     current_round_id: round.id,
+    ...(autoStart ? { playing_since: Date.now(), paused_at_ms: null } : {}),
   });
 
   return json({ ok: true, round_id: round.id }, 200, req);

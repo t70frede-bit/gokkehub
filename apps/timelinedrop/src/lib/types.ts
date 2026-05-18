@@ -47,16 +47,28 @@ export type SongSource = "group-taste" | "playlist";
 //                       in their own browser; no Discord required.
 export type AudioMode = "browser" | "discord-bot" | "all-clients-stream";
 
-// Within all-clients-stream mode: does the host control playback for
-// everyone (synchronized — clients seek to playing_since) or does each
-// player control their own (independent)?
+/** @deprecated retained for back-compat only — the synchronized mode was
+ *  dropped because browser autoplay restrictions broke host-driven sync
+ *  too often. All-clients-stream is now always independent per-player. */
 export type StreamSyncMode = "synchronized" | "independent";
 
 // Hardcoded proxy URL — every all-clients-stream room hits the same
-// public bot. No per-room override; if you fork and self-host the bot
-// you'll edit this constant + redeploy. Bot must be configured WITHOUT
-// STREAM_TOKEN since the client doesn't send one.
+// public bot. If you fork and self-host the bot you'll edit this
+// constant + redeploy.
 export const STREAM_PROXY_URL = "https://musix-bot.hotbear.org";
+
+// Pre-shared client token that's appended to every audio request as
+// ?token=…. Matches whatever the bot operator has set as STREAM_TOKEN
+// in their env (or empty if they've disabled token auth). The bot
+// accepts the request only when these match.
+//
+// SECURITY NOTE: this lives in the public client bundle, so anyone who
+// inspects the page can read it and burn the operator's bandwidth.
+// That's acceptable for a friends-only deployment; rotate (regenerate
+// + redeploy bot + bump this constant + redeploy site) if abused.
+// For stronger auth, route through a server-side proxy that signs
+// requests — see the audio-proxy section of the README for the plan.
+export const STREAM_PROXY_TOKEN = "R7I4v_bGI1NH359tHg11UgPIv-nv1Jb2evfe7-S6Z_c";
 
 // How the turn timer behaves.
 //  - "song-length" (default) — turn lasts until the song ends. Uses
@@ -110,9 +122,8 @@ export interface TlRoomSettings {
   timerMode?:          TimerMode;     // song-length (default) | fixed | none
   timerSeconds?:       number;        // used when timerMode === "fixed"
   tokenEconomy?:       TokenEconomy;  // bonus (default) | standard | shop
-  // All-clients-stream sync sub-mode. URL + token are hardcoded
-  // (STREAM_PROXY_URL above) since there's one public bot deployment.
-  streamSyncMode?:     StreamSyncMode; // synchronized (default) | independent
+  /** @deprecated — sync mode dropped, all-clients-stream is always independent. */
+  streamSyncMode?:     StreamSyncMode;
 }
 
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
@@ -131,7 +142,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerMode:         "song-length",
   timerSeconds:      120,
   tokenEconomy:      "bonus",
-  streamSyncMode:    "synchronized",
+  streamSyncMode:    "independent",
 };
 
 export interface TlRoom {

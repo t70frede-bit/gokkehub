@@ -818,11 +818,37 @@ export { findAndUseToken };
 // ── Turn action (stop | next) ────────────────────────────────────────────────
 
 async function handleTurnAction(req: Request, roomId: string, env: Env, waitUntil?: WaitUntil) {
+  try {
+    return await handleTurnActionInner(req, roomId, env, waitUntil);
+  } catch (err) {
+    const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+    console.error(`[turn] 500 in handleTurnAction for room ${roomId}:`, msg);
+    return json({ error: `turn action threw: ${err instanceof Error ? err.message : String(err)}` }, 500, req);
+  }
+}
+
+// Run an awaited step and rethrow with the step label prepended, so the
+// caller's catch knows exactly which call site threw. Cheap diagnostics
+// for paths that touch ~10 sequential DB calls.
+async function step<T>(label: string, p: Promise<T>): Promise<T> {
+  try {
+    return await p;
+  } catch (e) {
+    const inner = e instanceof Error ? e.message : String(e);
+    const wrapped = new Error(`step "${label}" failed: ${inner}`);
+    if (e instanceof Error && e.stack) wrapped.stack = e.stack;
+    throw wrapped;
+  }
+}
+
+async function handleTurnActionInner(req: Request, roomId: string, env: Env, waitUntil?: WaitUntil) {
   const body = await req.json() as TurnActionRequest & { player_id: string };
   const { action, player_id } = body;
 
   const [room, teams, players] = await Promise.all([
-    getRoom(env, roomId), getTeams(env, roomId), getPlayers(env, roomId),
+    step("getRoom",    getRoom(env, roomId)),
+    step("getTeams",   getTeams(env, roomId)),
+    step("getPlayers", getPlayers(env, roomId)),
   ]);
   if (!room) return json({ error: "Room not found" }, 404, req);
 
@@ -838,10 +864,14 @@ async function handleTurnAction(req: Request, roomId: string, env: Env, waitUnti
   // eligible. Both calls are idempotent and mode-gated — in shop mode
   // awardBonusIfEligible no-ops and maybeAwardShopPoints credits per-
   // field; in standard/bonus modes the reverse.
-  const currentRound = room.current_round_id ? await getRound(env, room.current_round_id) : null;
+  const currentRound = room.current_round_id
+    ? await step("getRound", getRound(env, room.current_round_id))
+    : null;
   const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
-  activeTeam = await maybeAwardShopPoints(env, currentRound, activeTeam, tokenEconomy) ?? activeTeam;
-  activeTeam = await awardBonusIfEligible(env, currentRound, activeTeam, roomId, tokenEconomy) ?? activeTeam;
+  activeTeam = await step("maybeAwardShopPoints",
+    maybeAwardShopPoints(env, currentRound, activeTeam, tokenEconomy)) ?? activeTeam;
+  activeTeam = await step("awardBonusIfEligible",
+    awardBonusIfEligible(env, currentRound, activeTeam, roomId, tokenEconomy)) ?? activeTeam;
 
   if (action === "next") {
     // Force Lock — opponent played the token, active team can't continue.
@@ -868,10 +898,14 @@ async function handleTurnAction(req: Request, roomId: string, env: Env, waitUnti
       nextTrack.id,
     );
     const newCursor = room.track_cursor + 1;
+    // In all-clients-stream mode there's no bot or Spotify player to stamp
+    // playing_since — auto-stamp here so each client's <audio> sees the
+    // non-null value and tries to autoplay the new track.
+    const autoStart = (room.settings?.audioMode ?? "discord-bot") === "all-clients-stream";
     await updateRoom(env, roomId, {
       track_cursor:     newCursor,
       current_round_id: round.id,
-      playing_since:    null,
+      playing_since:    autoStart ? Date.now() : null,
       paused_at_ms:     null,
     });
     maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, waitUntil);
@@ -1127,11 +1161,14 @@ async function advanceTurn(
   );
 
   const newCursor = room.track_cursor + 1;
+  // See the matching comment in handleTurnAction — all-clients-stream
+  // mode auto-starts so the host doesn't have to click play every round.
+  const autoStart = (room.settings?.audioMode ?? "discord-bot") === "all-clients-stream";
   await updateRoom(env, roomId, {
     active_team_id:   nextTeam.id,
     track_cursor:     newCursor,
     current_round_id: round.id,
-    playing_since:    null,
+    playing_since:    autoStart ? Date.now() : null,
     paused_at_ms:     null,
   });
 

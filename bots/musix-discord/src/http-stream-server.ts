@@ -22,6 +22,14 @@ import { spawnYtDlpAudioStream, resolveTrack } from "./resolver.js";
 const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
 
+// Pre-shared token baked into the timelinedrop client. Always accepted
+// regardless of what STREAM_TOKEN is set to (or whether it's set at
+// all). Lets the official deployment work without operators having to
+// keep their env in sync with the site. Rotate by changing this value
+// here AND in apps/timelinedrop/src/lib/types.ts → STREAM_PROXY_TOKEN,
+// then redeploying both.
+const HARDCODED_CLIENT_TOKEN = "R7I4v_bGI1NH359tHg11UgPIv-nv1Jb2evfe7-S6Z_c";
+
 // Normalize origins so trailing slashes / case don't cause spurious
 // CORS mismatches. Browsers send "https://musix.gokkehub.com"
 // without a trailing slash; operators sometimes paste their env with
@@ -61,9 +69,13 @@ function corsHeaders(originHeader: string | undefined): Record<string, string> {
 }
 
 function checkToken(req: IncomingMessage, url: URL): boolean {
-  if (!STREAM_TOKEN) return true;
   const fromQuery  = url.searchParams.get("token");
   const fromHeader = req.headers["x-stream-token"];
+  // Hardcoded client token always passes — the official site sends it
+  // so audio works regardless of operator env.
+  if (fromQuery === HARDCODED_CLIENT_TOKEN || fromHeader === HARDCODED_CLIENT_TOKEN) return true;
+  // If operator hasn't set STREAM_TOKEN, no further check needed.
+  if (!STREAM_TOKEN) return true;
   return fromQuery === STREAM_TOKEN || fromHeader === STREAM_TOKEN;
 }
 
@@ -201,7 +213,7 @@ export function startHttpStreamServer(): void {
   });
 
   server.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.log(`[http] audio proxy listening on :${HTTP_PORT}${STREAM_TOKEN ? " (token required)" : " (no token)"}`);
+    console.log(`[http] audio proxy listening on :${HTTP_PORT}${STREAM_TOKEN ? " (operator token + hardcoded client token)" : " (hardcoded client token only)"}`);
     console.log(`[http] CORS allow: ${ALLOWED_ORIGINS.join(", ")}`);
   });
 }

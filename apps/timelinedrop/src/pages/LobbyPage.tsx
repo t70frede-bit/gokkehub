@@ -667,24 +667,10 @@ export default function LobbyPage() {
                       border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
                       color:      "rgb(var(--text-secondary-rgb))",
                     }}>
-                    🎧 Every player's browser plays the song directly via the shared musix-bot
-                    HTTP proxy. No Discord, no host sharing audio — each player just needs to be
-                    on this page. Volume is per-player.
+                    🎧 Every player's browser streams the song directly from YouTube via the
+                    shared musix-bot proxy. Each player controls their own volume and can pause
+                    locally — no host coordination needed.
                   </p>
-                  <div>
-                    <p className="text-xs mb-1.5 uppercase tracking-wider"
-                      style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.12em" }}>
-                      Sync mode
-                    </p>
-                    <Toggle
-                      options={[
-                        { value: "synchronized", label: "🔗 Synced — host controls" },
-                        { value: "independent",  label: "🎚️ Independent playback" },
-                      ]}
-                      value={settings.streamSyncMode ?? "synchronized"}
-                      onChange={v => saveSettings({ streamSyncMode: v as "synchronized" | "independent" })}
-                    />
-                  </div>
                 </div>
               )}
               {settings.audioMode === "discord-bot" && (

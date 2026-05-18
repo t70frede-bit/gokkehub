@@ -6,7 +6,7 @@ import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
-import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL } from "../lib/types";
+import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
 function tokenSpec(type: string): TokenSpec {
@@ -902,57 +902,116 @@ interface AudioPlayerProps {
 // the shared musix-bot HTTP proxy (STREAM_PROXY_URL constant). The bot
 // resolves the Spotify track to a YouTube video and serves yt-dlp bytes.
 //
-// Sync mode (default): host's play/pause writes room.playing_since;
-// clients hard-pause/play their <audio> in response. Initial seek
-// catches late joiners up to current position.
-//
-// Independent mode: each player gets full controls and scrubs on their
-// own; room.playing_since is ignored.
+// Each player gets independent playback — their own play/pause/volume.
+// Sync mode was removed: browser autoplay restrictions made host-driven
+// sync flaky (clients without prior page interaction silently dropped
+// play() calls), and locally the experience is fine since everyone's
+// looking at the same shared timeline UI either way.
 function AllClientsAudio({
-  track, playingSince, syncMode, isHost, onHostTogglePlayback,
+  track, coverRevealed,
 }: {
   track:                SpotifyTrack;
-  playingSince:         number | null;
-  syncMode:             "synchronized" | "independent";
-  isHost:               boolean;
-  onHostTogglePlayback: () => void;
+  coverRevealed:        boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastTrackRef = useRef<string | null>(null);
+  // The stream is an unrange-able yt-dlp pipe — seeking with el.currentTime
+  // doesn't work past whatever's already buffered. Instead we re-request
+  // the stream with ?seek=N. seekOffsetSec tracks how far in the new
+  // stream is, so positionMs = (seekOffsetSec * 1000) + (el.currentTime * 1000).
+  const seekOffsetRef = useRef(0);
   // Surface the most common failure mode (bot 401 from leftover
   // STREAM_TOKEN) so the host can see what to fix instead of "nothing
   // is happening." Cleared when a new track starts loading.
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Local UI state read off the <audio> element via timeupdate / etc.
+  const [streamPositionMs, setStreamPositionMs] = useState(0);
+  const [volume, setVolume] = useState(0.85);
+  const [volOpen, setVolOpen] = useState(false);
+  const [localPlaying, setLocalPlaying] = useState(false);
+  // True if the most recent el.play() promise rejected (autoplay policy).
+  // The play button overlay then prompts the user to click — first click
+  // unlocks all future autoplays for this <audio>.
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const prevVolumeRef = useRef(0.85);
 
-  // (Re)load audio when the track changes. Initial seek lets a late
-  // joiner pick up mid-song. Only depends on track.id so transient
-  // pause/resume doesn't re-fetch the whole stream.
+  // Spotify gives us the authoritative duration (captured at curation
+  // time). The stream's el.duration is unreliable: webm headers may
+  // report wrong values, and after a ?seek= reload it represents the
+  // remaining stream, not the full track. Fall back to el.duration only
+  // when Spotify didn't provide one.
+  const totalDurationMs = track.durationMs ?? 0;
+  const positionMs = seekOffsetRef.current * 1000 + streamPositionMs;
+
+  // Mirror audio element events into React state so the custom UI
+  // (progress bar, time display, play button icon) stays in sync.
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    if (lastTrackRef.current === track.id) return;
-    lastTrackRef.current = track.id;
+    const onTime  = () => setStreamPositionMs(el.currentTime * 1000);
+    const onPlay  = () => { setLocalPlaying(true); setAutoplayBlocked(false); };
+    const onPause = () => setLocalPlaying(false);
+    el.addEventListener("timeupdate",     onTime);
+    el.addEventListener("play",           onPlay);
+    el.addEventListener("pause",          onPause);
+    el.volume = volume;
+    return () => {
+      el.removeEventListener("timeupdate",     onTime);
+      el.removeEventListener("play",           onPlay);
+      el.removeEventListener("pause",          onPause);
+    };
+  // volume intentionally NOT in deps — its useEffect below applies changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Apply volume changes to the element.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
+  // Build the stream URL for a given seek offset. Used by both the
+  // initial load and the seek-by-reload path.
+  function streamUrl(seekSec: number): string {
     const params = new URLSearchParams({
       spotify_id: track.id,
       name:       track.name,
       artist:     track.artist,
     });
-    if (syncMode === "synchronized" && playingSince) {
-      const elapsedSec = Math.floor((Date.now() - playingSince) / 1000);
-      if (elapsedSec > 1) params.set("seek", String(elapsedSec));
-    }
-    const src = `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;
+    if (seekSec > 0) params.set("seek", String(seekSec));
+    if (STREAM_PROXY_TOKEN) params.set("token", STREAM_PROXY_TOKEN);
+    return `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;
+  }
+
+  // Load the stream at seekSec. Used by track change, seek bar clicks,
+  // and the restart button. The bot spawns a fresh yt-dlp with
+  // --download-sections "*N-" so byte N becomes byte 0 of the response.
+  function loadAt(seekSec: number, opts: { autoplay: boolean }) {
+    const el = audioRef.current;
+    if (!el) return;
+    seekOffsetRef.current = seekSec;
+    setStreamPositionMs(0);
+    const src = streamUrl(seekSec);
     el.src = src;
     el.load();
-    setLoadError(null);
-    if (syncMode === "synchronized" && playingSince !== null) {
-      el.play().catch(() => { /* autoplay denied — user clicks the play control */ });
+    if (opts.autoplay) {
+      el.play()
+        .then(() => setAutoplayBlocked(false))
+        .catch(() => setAutoplayBlocked(true));
     }
+  }
+
+  // (Re)load audio when the track changes. Reset seek to 0 and probe
+  // the proxy so we can surface specific failure modes (401 / 404).
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (lastTrackRef.current === track.id) return;
+    lastTrackRef.current = track.id;
+    setLoadError(null);
+    loadAt(0, { autoplay: true });
     // Probe the URL with a HEAD request so we can show a specific
-    // message on 401/404 instead of waiting for the <audio> error event
-    // (which doesn't tell you why). Best-effort — network errors fall
-    // back to a generic message.
-    void fetch(src, { method: "HEAD" })
+    // message on 401/404 instead of waiting for the <audio> error event.
+    void fetch(streamUrl(0), { method: "HEAD" })
       .then(r => {
         if (r.ok) return;
         if (r.status === 401) {
@@ -966,70 +1025,172 @@ function AllClientsAudio({
       .catch(() => {
         setLoadError(`Couldn't reach the audio proxy at ${STREAM_PROXY_URL}. Check it's online.`);
       });
-  }, [track.id, track.name, track.artist, syncMode, playingSince]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track.id, track.name, track.artist]);
 
-  // Sync mode: react to host's play/pause via playing_since transitions.
-  useEffect(() => {
+  function fmt(ms: number) {
+    const s = Math.floor(ms / 1000);
+    if (!isFinite(s) || s < 0) return "0:00";
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  function toggleMute() {
+    if (volume > 0) { prevVolumeRef.current = volume; setVolume(0); }
+    else { setVolume(prevVolumeRef.current || 0.7); }
+  }
+  const playing = localPlaying;
+  const pct     = totalDurationMs > 0 ? Math.min(100, (positionMs / totalDurationMs) * 100) : 0;
+
+  async function handleMainClick() {
     const el = audioRef.current;
-    if (!el || syncMode !== "synchronized") return;
-    if (playingSince !== null) {
-      el.play().catch(() => { /* autoplay denied or already playing */ });
+    if (!el) return;
+    if (el.paused) {
+      try {
+        await el.play();
+        setAutoplayBlocked(false);
+      } catch {
+        setAutoplayBlocked(true);
+      }
     } else {
       el.pause();
     }
-  }, [playingSince, syncMode]);
+  }
+
+  function handleRestart() {
+    loadAt(0, { autoplay: true });
+  }
+
+  function handleSeekClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (totalDurationMs === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fraction  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetSec = Math.floor(fraction * (totalDurationMs / 1000));
+    loadAt(targetSec, { autoplay: true });
+  }
 
   return (
-    <div className="flex-shrink-0 flex flex-col gap-1.5">
-    {loadError && (
-      <div className="rounded-md p-2 text-xs"
-        style={{
-          background: "rgba(220,60,60,0.10)",
-          border:     "1px solid rgba(220,60,60,0.40)",
-          color:      "rgb(220,140,140)",
-        }}>
-        ⚠ {loadError}
-      </div>
-    )}
-    <div className="rounded-md p-2 flex items-center gap-2"
-      style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-      {/* Host gets a play/pause toggle that writes to room.playing_since;
-          in synced mode that's how every other player's audio gets
-          controlled. Hidden in independent mode (each player runs their own). */}
-      {isHost && syncMode === "synchronized" && (
-        <button
-          onClick={onHostTogglePlayback}
-          className="px-2.5 py-1 rounded text-sm font-semibold transition-colors"
+    <div className="flex-shrink-0 flex flex-col gap-1.5 w-full">
+      {loadError && (
+        <div className="rounded-md p-2 text-xs"
           style={{
-            background: playingSince !== null
-              ? "rgba(var(--color-primary-rgb),0.2)"
-              : "rgba(40,180,60,0.18)",
-            border: `1px solid ${playingSince !== null
-              ? "rgba(var(--color-primary-rgb),0.5)"
-              : "rgba(40,180,60,0.5)"}`,
-            color: playingSince !== null
-              ? "rgb(var(--color-primary-rgb))"
-              : "rgb(40,180,60)",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {playingSince !== null ? "⏸ Pause for all" : "▶ Play for all"}
-        </button>
+            background: "rgba(220,60,60,0.10)",
+            border:     "1px solid rgba(220,60,60,0.40)",
+            color:      "rgb(220,140,140)",
+          }}>
+          ⚠ {loadError}
+        </div>
       )}
-      <span style={{ fontSize: "var(--text-xs)", color: "rgb(var(--text-muted-rgb))", whiteSpace: "nowrap" }}>
-        {syncMode === "synchronized"
-          ? (isHost ? "🔗 Synced — you control" : "🔗 Synced playback")
-          : "🎚️ Independent"}
-      </span>
-      <audio
-        ref={audioRef}
-        controls
-        preload="auto"
-        // Browser autoplay policies require some user gesture before the
-        // audio actually plays; first click on the page (anywhere) unlocks it.
-        style={{ flex: 1, height: 36, minWidth: 0 }}
-      />
-    </div>
+      {autoplayBlocked && !playing && !loadError && (
+        <div className="rounded-md p-2 text-xs flex items-center gap-2"
+          style={{
+            background: "rgba(var(--color-primary-rgb), 0.10)",
+            border:     "1px solid rgba(var(--color-primary-rgb), 0.40)",
+            color:      "rgb(var(--color-primary-rgb))",
+          }}>
+          🔇 Your browser blocked autoplay — click ▶ to start playback.
+        </div>
+      )}
+      <div className="flex items-center gap-3 px-3 py-2 rounded-md w-full"
+        style={{
+          background: "rgb(var(--surface-raised-rgb))",
+          border:     "1px solid rgb(var(--border-rgb))",
+        }}>
+
+        {/* Now-playing label (cover hidden until reveal, like the DJ bar) */}
+        <div className="flex items-center gap-2 flex-shrink-0 min-w-[120px]">
+          {coverRevealed && track.coverUrl ? (
+            <img
+              src={track.coverUrl}
+              alt="Album cover"
+              draggable={false}
+              className="w-9 h-9 rounded-md object-cover flex-shrink-0"
+              style={{ border: "1px solid rgba(var(--color-primary-rgb), 0.5)" }}
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0"
+              style={{ background: "rgba(var(--color-primary-rgb), 0.15)", border: "1px solid rgba(var(--color-primary-rgb), 0.35)" }}>
+              <span className="text-base">🎵</span>
+            </div>
+          )}
+          <div className="hidden sm:block min-w-0">
+            <p className="text-xs font-semibold opacity-80 truncate">
+              {coverRevealed ? track.name : "Mystery track"}
+            </p>
+            <p className="text-[10px] opacity-50 truncate">
+              YouTube · per-player
+            </p>
+          </div>
+        </div>
+
+        {/* Restart — re-requests the stream from byte 0. */}
+        <button onClick={handleRestart}
+          className="w-7 h-7 rounded flex items-center justify-center text-xs flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+          title="Restart from beginning"
+          style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+          ⏮
+        </button>
+
+        {/* Local play/pause — each client controls their own audio. */}
+        <button onClick={handleMainClick}
+          className="w-9 h-9 rounded-full flex items-center justify-center text-base flex-shrink-0 transition-transform active:scale-95"
+          style={{
+            background: "rgb(var(--color-primary-rgb))",
+            color:      "#000",
+            boxShadow:  playing ? "0 0 0 2px rgba(var(--color-primary-rgb),0.25)" : undefined,
+          }}
+          title={playing ? "Pause" : "Play"}>
+          {playing ? "⏸" : "▶"}
+        </button>
+
+        {/* Progress bar — click anywhere to seek. Seeking re-requests the
+            stream with ?seek=N because yt-dlp pipes don't support
+            HTTP Range — el.currentTime alone would silently no-op past
+            the already-buffered window. */}
+        <div className="flex-1 min-w-0 relative h-1.5 rounded-full overflow-hidden cursor-pointer"
+          style={{ background: "rgba(255,255,255,0.08)" }}
+          onClick={handleSeekClick}>
+          <div className="absolute left-0 top-0 h-full rounded-full transition-[width] duration-200"
+            style={{ width: `${pct}%`, background: "rgb(var(--color-primary-rgb))" }} />
+        </div>
+
+        {/* Time display */}
+        <span className="text-xs opacity-50 flex-shrink-0 font-mono whitespace-nowrap"
+          style={{ fontVariantNumeric: "tabular-nums" }}>
+          {fmt(positionMs)} / {fmt(totalDurationMs)}
+        </span>
+
+        {/* Volume — click icon mutes, hover opens slider. Volume is local-only
+            (each client controls their own listening level). */}
+        <div className="relative flex-shrink-0"
+          onMouseEnter={() => setVolOpen(true)}
+          onMouseLeave={() => setVolOpen(false)}>
+          <button onClick={toggleMute}
+            className="w-7 h-7 flex items-center justify-center rounded opacity-60 hover:opacity-100"
+            title={volume === 0 ? "Unmute" : "Mute"}>
+            {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
+          </button>
+          {volOpen && (
+            <div className="absolute right-0 bottom-full mb-2 z-10 px-3 py-2 rounded-md flex items-center gap-2"
+              style={{
+                background: "rgb(var(--surface-overlay-rgb))",
+                border:     "1px solid rgb(var(--border-rgb))",
+                boxShadow:  "var(--shadow-card)",
+              }}>
+              <input type="range" min="0" max="1" step="0.05" value={volume}
+                onChange={e => setVolume(Number(e.target.value))}
+                className="orange-range w-32" />
+            </div>
+          )}
+        </div>
+
+        <audio
+          ref={audioRef}
+          preload="auto"
+          // Hidden — custom UI above drives play/pause/seek via the ref.
+          // Native controls are inconsistent across browsers and clash
+          // with the theme.
+          style={{ display: "none" }}
+        />
+      </div>
     </div>
   );
 }
@@ -3111,29 +3272,7 @@ export default function GamePage() {
       {audioMode === "all-clients-stream" && round?.track && (
         <AllClientsAudio
           track={round.track}
-          playingSince={room.playing_since}
-          syncMode={(state?.room.settings?.streamSyncMode ?? "synchronized") as "synchronized" | "independent"}
-          isHost={isHost}
-          onHostTogglePlayback={async () => {
-            if (!roomId) return;
-            const now = Date.now();
-            // Toggle: if currently playing, pause (playing_since=null,
-            // paused_at_ms=elapsed). If paused, resume (playing_since=
-            // now-paused_at_ms so client elapsed stays consistent).
-            if (room.playing_since !== null) {
-              const positionMs = now - room.playing_since;
-              await supabase
-                .from("tl_rooms")
-                .update({ playing_since: null, paused_at_ms: positionMs })
-                .eq("id", roomId);
-            } else {
-              const resumeFrom = room.paused_at_ms ?? 0;
-              await supabase
-                .from("tl_rooms")
-                .update({ playing_since: now - resumeFrom, paused_at_ms: null })
-                .eq("id", roomId);
-            }
-          }}
+          coverRevealed={!!round.cover_revealed}
         />
       )}
 
