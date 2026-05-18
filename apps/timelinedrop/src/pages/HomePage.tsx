@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
+import { Button, Input, Modal, Panel } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
-import type { CreateRoomRequest, CreateRoomResponse, TlRoomSettings } from "../lib/types";
+import type { CreateRoomRequest, CreateRoomResponse, CreateRoomRole, TlRoomSettings } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
+
+// Coloured emoji per team slot, matching the design system's team palette
+// (red, blue, green, yellow). Shown next to the team name input so the host
+// can tell at a glance which colour each team is.
+const TEAM_COLOR_EMOJI = ["🔴", "🔵", "🟢", "🟡"] as const;
+function defaultTeamName(i: number): string {
+  return ["Team Red", "Team Blue", "Team Green", "Team Yellow"][i] ?? `Team ${i + 1}`;
+}
 
 export default function HomePage() {
   const navigate    = useNavigate();
@@ -12,14 +20,15 @@ export default function HomePage() {
   // Mode: pick (default) or join input
   const [mode, setMode] = useState<"pick" | "join">("pick");
 
-  // Host modal state
+  // Host modal state — slim by design. Everything else (cards to win, late
+  // join, judge mode, timer, audio, etc.) is configured in the Lobby's
+  // Settings tab AFTER the room is created. Defaults from DEFAULT_TL_SETTINGS
+  // are baked in so 90% of rooms never need to touch Settings.
   const [showHost, setShowHost] = useState(false);
   const [name,     setName]     = useState(session?.displayName ?? "");
-  const [role,     setRole]     = useState<"player" | "dj">("player");
-  const [teams,    setTeams]    = useState<string[]>(["Team Red", "Team Blue"]);
+  const [role,     setRole]     = useState<CreateRoomRole>("player");
+  const [teams,    setTeams]    = useState<string[]>([defaultTeamName(0), defaultTeamName(1)]);
   const [hostTeam, setHostTeam] = useState<number>(0);
-  const [target,   setTarget]   = useState(10);
-  const [settings, setSettings] = useState<TlRoomSettings>({ ...DEFAULT_TL_SETTINGS });
 
   // Join input
   const [code, setCode] = useState("");
@@ -37,12 +46,21 @@ export default function HomePage() {
     if (!name.trim()) { setError("Enter your name"); return; }
     setLoading(true); setError(null);
     try {
+      // Audio mode default depends on whether the host has Spotify connected —
+      // Browser/Local mode is the smoothest experience when Spotify is hooked
+      // up; otherwise default to YouTube-via-bot so the room has audio at all.
+      const settings: TlRoomSettings = {
+        ...DEFAULT_TL_SETTINGS,
+        audioMode: session?.spotify ? "browser" : "all-clients-stream",
+      };
       const body: CreateRoomRequest = {
         name:         name.trim(),
-        win_target:   target,
-        team_names:   teams.map(t => t.trim()).filter(Boolean),
-        host_team:    role === "dj" ? null : hostTeam,
-        is_spectator: role === "dj",
+        win_target:   10, // baked default; host can change in Lobby → Settings tab
+        team_names:   teams.map((t, i) => (t.trim() || defaultTeamName(i))),
+        // host_team only matters for the "player" role; server ignores it
+        // for spectator/dj/gamemaster.
+        host_team:    role === "player" ? hostTeam : null,
+        role,
         settings,
       };
       const res = await fetch("/room/create", {
@@ -158,10 +176,15 @@ export default function HomePage() {
         </Panel>
       )}
 
-      {/* Host modal */}
+      {/* Host modal — slim: only name, role and teams. Everything else
+          lives in Lobby → Settings tab after the room exists. */}
       <Modal open={showHost} onClose={() => { setShowHost(false); setError(null); }}>
         <div className="flex flex-col gap-4">
           <h2 className="font-bold text-xl">Create Room</h2>
+          <p className="text-xs -mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            Pick your role and teams. Tweak game settings, late-join, audio mode
+            and more from the Lobby's Settings tab once the room exists.
+          </p>
 
           {/* Name */}
           {session ? (
@@ -180,34 +203,64 @@ export default function HomePage() {
             />
           )}
 
-          {/* Role */}
+          {/* Role — Player / Spectator / DJ / Gamemaster. Custom grid so
+              all four fit on mobile in a 2x2; descriptions explain the
+              less-obvious ones. */}
           <div>
             <p className="text-sm font-medium mb-2">Your role</p>
-            <Toggle
-              options={[
-                { value: "player", label: "Player" },
-                { value: "dj",     label: "DJ only (no team)" },
-              ]}
-              value={role}
-              onChange={v => setRole(v as "player" | "dj")}
-            />
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: "player",      label: "👤 Player",      hint: "Join a team and play normally" },
+                { value: "spectator",   label: "👁️ Spectator",   hint: "Watch without being on a team" },
+                { value: "dj",          label: "🎧 DJ",          hint: "Run audio without playing" },
+                { value: "gamemaster",  label: "🎲 Gamemaster",  hint: "Run everything solo — single device, no teammates" },
+              ] as const).map(({ value, label, hint }) => {
+                const active = role === value;
+                return (
+                  <button
+                    key={value}
+                    onClick={() => setRole(value)}
+                    title={hint}
+                    className="text-left rounded-lg p-3 transition-all border"
+                    style={{
+                      borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                      background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                    }}
+                  >
+                    <p className="text-sm font-semibold">{label}</p>
+                    <p className="text-[10px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Teams editor */}
+          {/* Teams editor — each row prefixed with the coloured emoji that
+              matches the team's slot palette so the host knows which colour
+              each team will be in the lobby/in-game UI. */}
           <div>
             <p className="text-sm font-medium mb-2">Teams</p>
             <div className="space-y-2">
               {teams.map((t, i) => (
-                <div key={i} className="flex gap-2">
+                <div key={i} className="flex gap-2 items-center">
+                  <span className="text-lg flex-shrink-0 w-6 text-center" aria-hidden="true">
+                    {TEAM_COLOR_EMOJI[i] ?? "⚪"}
+                  </span>
                   <Input
                     value={t}
                     onChange={e => setTeams(ts => ts.map((x, j) => j === i ? e.target.value : x))}
-                    placeholder={`Team ${i + 1}`}
+                    placeholder={defaultTeamName(i)}
+                    className="flex-1"
                   />
                   {teams.length > 2 && (
                     <button
-                      onClick={() => setTeams(ts => ts.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        setTeams(ts => ts.filter((_, j) => j !== i));
+                        // If we removed the team the host was on, fall back to slot 0.
+                        if (hostTeam >= teams.length - 1) setHostTeam(0);
+                      }}
                       className="text-sm px-2 opacity-60 hover:opacity-100"
+                      aria-label={`Remove team ${i + 1}`}
                     >
                       ✕
                     </button>
@@ -216,7 +269,7 @@ export default function HomePage() {
               ))}
               {teams.length < 4 && (
                 <button
-                  onClick={() => setTeams(ts => [...ts, `Team ${ts.length + 1}`])}
+                  onClick={() => setTeams(ts => [...ts, defaultTeamName(ts.length)])}
                   className="text-sm font-medium"
                   style={{ color: "rgb(var(--color-primary-rgb))" }}
                 >
@@ -226,7 +279,8 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Host's starting team — only shown when Player */}
+          {/* Host's starting team — only shown for Player. Spectator/DJ/
+              Gamemaster don't sit on a team. */}
           {role === "player" && teams.length > 0 && (
             <div>
               <p className="text-sm font-medium mb-2">Your team</p>
@@ -237,76 +291,20 @@ export default function HomePage() {
                     <button
                       key={i}
                       onClick={() => setHostTeam(i)}
-                      className="px-3 py-1.5 rounded-full text-sm font-semibold border transition-all"
+                      className="px-3 py-1.5 rounded-full text-sm font-semibold border transition-all flex items-center gap-1.5"
                       style={{
                         borderColor: selected ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
                         background:  selected ? "rgba(var(--color-primary-rgb),0.18)" : "transparent",
                       }}
                     >
-                      {t || `Team ${i + 1}`}
+                      <span aria-hidden="true">{TEAM_COLOR_EMOJI[i] ?? "⚪"}</span>
+                      <span>{t || defaultTeamName(i)}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
           )}
-
-          {/* Cards to win */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-              Cards to win:
-            </label>
-            <select
-              value={target}
-              onChange={e => setTarget(Number(e.target.value))}
-              className="rounded-lg px-3 py-1.5 text-sm"
-              style={{
-                background: "rgba(var(--surface-raised-rgb),0.5)",
-                border:     "1px solid rgba(255,255,255,0.1)",
-                color:      "inherit",
-              }}
-            >
-              {[5, 7, 10, 12, 15].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-
-          {/* Late join */}
-          <div>
-            <p className="text-sm font-medium mb-2">Late join</p>
-            <Toggle
-              options={[
-                { value: "open",            label: "Open" },
-                { value: "spectator-only",  label: "Spectators only" },
-                { value: "closed",          label: "Closed" },
-              ]}
-              value={settings.lateJoinMode ?? "open"}
-              onChange={v => setSettings(s => ({ ...s, lateJoinMode: v as TlRoomSettings["lateJoinMode"] }))}
-            />
-          </div>
-
-          {/* Toggle pills */}
-          <div className="flex flex-wrap gap-2">
-            {([
-              { key: "streamerMode",    on: "📡 Streamer mode ON",   off: "📡 Streamer mode OFF" },
-              { key: "hideSpectators",  on: "👁️ Spectators hidden",  off: "👁️ Show spectators" },
-              { key: "teamSwapEnabled", on: "🔄 Team swap ON",       off: "🔄 Team swap OFF" },
-            ] as const).map(({ key, on, off }) => {
-              const val = !!settings[key];
-              return (
-                <button
-                  key={key}
-                  onClick={() => setSettings(s => ({ ...s, [key]: !val }))}
-                  className="text-sm font-semibold px-3 py-2 rounded-lg border transition-all"
-                  style={{
-                    borderColor: val ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
-                    background:  val ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
-                  }}
-                >
-                  {val ? on : off}
-                </button>
-              );
-            })}
-          </div>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button onClick={createRoom} loading={loading} className="w-full">Create Room</Button>

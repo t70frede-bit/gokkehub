@@ -9,6 +9,9 @@ function randomId(len = 6): string {
   return Math.random().toString(36).slice(2, 2 + len).toUpperCase();
 }
 
+// Sanitize unknown settings input. Keep in lock-step with the matching
+// sanitizer in functions/room/[id]/settings.ts — they share the same
+// allowed value set. Anything unknown is dropped silently.
 function sanitizeSettings(input: unknown): TlRoomSettings {
   const out: TlRoomSettings = {};
   if (!input || typeof input !== "object") return out;
@@ -34,11 +37,21 @@ function sanitizeSettings(input: unknown): TlRoomSettings {
   }
   if (typeof s.skipRecentlyHeard === "boolean") out.skipRecentlyHeard = s.skipRecentlyHeard;
   if (typeof s.singleScreenMode === "boolean")  out.singleScreenMode  = s.singleScreenMode;
+  if (typeof s.gamemasterMode === "boolean")    out.gamemasterMode    = s.gamemasterMode;
   if (s.songSource === "group-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }
-  if (s.audioMode === "browser" || s.audioMode === "discord-bot") {
+  if (s.audioMode === "browser" || s.audioMode === "discord-bot" || s.audioMode === "all-clients-stream") {
     out.audioMode = s.audioMode;
+  }
+  if (s.timerMode === "song-length" || s.timerMode === "fixed" || s.timerMode === "none") {
+    out.timerMode = s.timerMode;
+  }
+  if (typeof s.timerSeconds === "number" && s.timerSeconds >= 10 && s.timerSeconds <= 600) {
+    out.timerSeconds = Math.round(s.timerSeconds);
+  }
+  if (s.tokenEconomy === "standard" || s.tokenEconomy === "bonus" || s.tokenEconomy === "shop") {
+    out.tokenEconomy = s.tokenEconomy;
   }
   return out;
 }
@@ -58,6 +71,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       team_names = ["Team Red", "Team Blue"],
       host_team,
       is_spectator = false,
+      role,
       settings,
     } = body;
 
@@ -67,6 +81,25 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     const roomId   = randomId(6);
     const playerId = crypto.randomUUID();
     const sanitized = sanitizeSettings(settings);
+
+    // Role mapping. New clients send `role`; old clients send is_spectator/host_team.
+    // - player:     joins a team, is_captain becomes true for that team
+    // - dj/spectator: not on a team, is_spectator = true
+    // - gamemaster: not on a team, is_spectator = true, but flips
+    //   settings.gamemasterMode so the room hides multi-player surfaces
+    //   and the host can act as captain for every team (round.ts).
+    let effectiveIsSpectator = is_spectator;
+    let effectiveHostTeam    = host_team;
+    if (role === "player") {
+      effectiveIsSpectator = false;
+    } else if (role === "dj" || role === "spectator") {
+      effectiveIsSpectator = true;
+      effectiveHostTeam    = null;
+    } else if (role === "gamemaster") {
+      effectiveIsSpectator = true;
+      effectiveHostTeam    = null;
+      sanitized.gamemasterMode = true;
+    }
 
     await createRoom(env, {
       id:               roomId,
@@ -95,8 +128,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     let hostTeamId: number | null = null;
-    if (!is_spectator && typeof host_team === "number" && host_team >= 0 && host_team < teams.length) {
-      hostTeamId = teams[host_team].id;
+    if (!effectiveIsSpectator && typeof effectiveHostTeam === "number" && effectiveHostTeam >= 0 && effectiveHostTeam < teams.length) {
+      hostTeamId = teams[effectiveHostTeam].id;
     }
 
     await createPlayer(env, {
@@ -105,9 +138,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       team_id:          hostTeamId,
       name:             name.trim().slice(0, 30),
       // Host becomes captain of their team by default (first joiner on the team).
-      is_captain:       !is_spectator && hostTeamId !== null,
+      is_captain:       !effectiveIsSpectator && hostTeamId !== null,
       is_host:          true,
-      is_spectator:     !!is_spectator,
+      is_spectator:     effectiveIsSpectator,
       discord_id:       session?.discord?.id ?? null,
       lastfm_username:  session?.lastfm?.username ?? null,
       manual_artists:   [],

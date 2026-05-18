@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button, Panel } from "@gokkehub/ui";
 import { supabase } from "../lib/supabase";
-import type { TlTeam, TlRoom } from "../lib/types";
+import { useHeaderControls } from "../App";
+import type { TlTeam, TlRoom, TlRoomSettings } from "../lib/types";
 
 export default function EndPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -12,19 +13,32 @@ export default function EndPage() {
   const [counts,  setCounts]  = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [hostId,  setHostId]  = useState<string | null>(null);
+  const [hideCode, setHideCode] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+
+  // Mirror LobbyPage/GamePage: hide the room code in the global header
+  // when streamer or gamemaster mode is on, so the end-game podium can
+  // be streamed without leaking the join code.
+  const { setHideRoomCode } = useHeaderControls();
+  useEffect(() => {
+    setHideRoomCode(hideCode);
+    return () => setHideRoomCode(false);
+  }, [hideCode, setHideRoomCode]);
 
   useEffect(() => {
     if (!roomId) return;
     (async () => {
       const [teamsRes, roomRes] = await Promise.all([
         supabase.from("tl_teams").select("*").eq("room_id", roomId).order("sort_order"),
-        supabase.from("tl_rooms").select("host_id").eq("id", roomId).single(),
+        supabase.from("tl_rooms").select("host_id, settings").eq("id", roomId).single(),
       ]);
       const ts = (teamsRes.data ?? []) as TlTeam[];
       setTeams(ts);
-      setHostId(((roomRes.data as Pick<TlRoom, "host_id"> | null)?.host_id) ?? null);
+      const room = roomRes.data as Pick<TlRoom, "host_id" | "settings"> | null;
+      setHostId(room?.host_id ?? null);
+      const s = (room?.settings ?? {}) as TlRoomSettings;
+      setHideCode(!!(s.streamerMode || s.gamemasterMode));
       const countMap: Record<number, number> = {};
       for (const t of ts) {
         const r = await supabase.from("tl_timeline").select("*", { count: "exact", head: true }).eq("team_id", t.id);

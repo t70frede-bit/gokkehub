@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
+import { useHeaderControls } from "../App";
 import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
@@ -55,6 +56,15 @@ export default function LobbyPage() {
     if (state?.room.status === "playing") navigate(`/game/${roomId}`);
   }, [state?.room.status, roomId, navigate]);
 
+  // Hide the room code in the global header when streamer mode or gamemaster
+  // mode is on. Reset on unmount so other pages don't inherit the flag.
+  const { setHideRoomCode } = useHeaderControls();
+  const streamerOrGamemaster = !!(state?.room.settings?.streamerMode || state?.room.settings?.gamemasterMode);
+  useEffect(() => {
+    setHideRoomCode(streamerOrGamemaster);
+    return () => setHideRoomCode(false);
+  }, [streamerOrGamemaster, setHideRoomCode]);
+
   if (error)  return <Centered>Error: {error}</Centered>;
   if (!state) return <Centered>Loading…</Centered>;
 
@@ -62,6 +72,11 @@ export default function LobbyPage() {
   const isHost     = state.myPlayer?.is_host ?? false;
   const settings   = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
   const trackCount = room.track_pool?.length ?? 0;
+  // Gamemaster mode is also true for legacy singleScreenMode rooms so they
+  // still get the host-acts-as-everyone behaviour. Drives which Lobby
+  // Settings get hidden — late-join, team-swap, vote judging, multi-client
+  // audio modes are all noise when one human is the entire room.
+  const gamemastering = !!(settings.gamemasterMode || settings.singleScreenMode);
 
   const teamSwap = settings.teamSwapEnabled || isHost;
 
@@ -211,9 +226,11 @@ export default function LobbyPage() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          <Button variant="ghost" size="sm" onClick={copyInviteLink}>
-            {copied ? "✓ Copied" : "📋 Copy link"}
-          </Button>
+          {!streamerOrGamemaster && (
+            <Button variant="ghost" size="sm" onClick={copyInviteLink}>
+              {copied ? "✓ Copied" : "📋 Copy link"}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => navigate("/")}>Leave</Button>
         </div>
       </div>
@@ -266,6 +283,17 @@ export default function LobbyPage() {
           {isHost ? (
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-4">Game Settings</h2>
+              {gamemastering && (
+                <div className="mb-4 px-3 py-2 rounded-md flex items-center gap-2 text-sm"
+                  style={{
+                    background: "rgba(var(--color-primary-rgb),0.10)",
+                    border:     "1px solid rgba(var(--color-primary-rgb),0.35)",
+                    color:      "rgb(var(--text-secondary-rgb))",
+                  }}>
+                  <span>🎲</span>
+                  <span><strong>Gamemaster mode</strong> — you drive every team, room code is hidden, multi-player options are pruned.</span>
+                </div>
+              )}
               <div className="flex flex-col gap-4">
 
                 {/* Cards to win — pill row replaces the dropdown */}
@@ -295,7 +323,8 @@ export default function LobbyPage() {
                   </div>
                 </div>
 
-                {/* Judging mode */}
+                {/* Judging mode — vote-all and next-team-captain are pruned
+                    in gamemaster mode since they assume multiple humans. */}
                 <div>
                   <p className="text-sm font-medium mb-2">Who decides if the guess was right?</p>
                   <div className="grid grid-cols-2 gap-2">
@@ -304,7 +333,9 @@ export default function LobbyPage() {
                       { value: "next-team-captain", label: "🎯 Next team",      hint: "Captain of the team after this one" },
                       { value: "host",              label: "⚖️ Host",          hint: "The host always decides" },
                       { value: "vote-all",          label: "🗳️ Everyone votes", hint: "Timer-bounded vote from all players" },
-                    ] as const).map(({ value, label, hint }) => {
+                    ] as const)
+                      .filter(o => !(gamemastering && (o.value === "vote-all" || o.value === "next-team-captain")))
+                      .map(({ value, label, hint }) => {
                       const active = settings.judgeMode === value;
                       return (
                         <button
@@ -448,28 +479,33 @@ export default function LobbyPage() {
                     <div className="mt-3 flex flex-col gap-4 pt-3"
                       style={{ borderTop: "1px dashed rgb(var(--border-rgb))" }}
                     >
-                      {/* Late join */}
-                      <div>
-                        <p className="text-sm font-medium mb-2">Late join</p>
-                        <Toggle
-                          options={[
-                            { value: "open",            label: "Open" },
-                            { value: "spectator-only",  label: "Spectators only" },
-                            { value: "closed",          label: "Closed" },
-                          ]}
-                          value={settings.lateJoinMode}
-                          onChange={v => saveSettings({ lateJoinMode: v as LateJoinMode })}
-                        />
-                      </div>
+                      {/* Late join — hidden in gamemaster mode (one human = no one to "join late"). */}
+                      {!gamemastering && (
+                        <div>
+                          <p className="text-sm font-medium mb-2">Late join</p>
+                          <Toggle
+                            options={[
+                              { value: "open",            label: "Open" },
+                              { value: "spectator-only",  label: "Spectators only" },
+                              { value: "closed",          label: "Closed" },
+                            ]}
+                            value={settings.lateJoinMode}
+                            onChange={v => saveSettings({ lateJoinMode: v as LateJoinMode })}
+                          />
+                        </div>
+                      )}
 
-                      {/* Pill toggles */}
+                      {/* Pill toggles. Team-swap is gamemaster-irrelevant
+                          (one player drives everyone). singleScreenMode is
+                          superseded by the Gamemaster role at Create-Room
+                          time; legacy rooms keep working via back-compat in
+                          actsAsCaptain. */}
                       <div className="flex flex-wrap gap-2">
                         {([
-                          { key: "streamerMode",     on: "📡 Streamer mode ON",  off: "📡 Streamer mode OFF" },
-                          { key: "hideSpectators",   on: "👁️ Spectators hidden", off: "👁️ Show spectators" },
-                          { key: "teamSwapEnabled",  on: "🔄 Team swap ON",      off: "🔄 Team swap OFF" },
-                          { key: "singleScreenMode", on: "🎮 Single-screen ON",  off: "🎮 Single-screen OFF" },
-                        ] as const).map(({ key, on, off }) => {
+                          { key: "streamerMode",     on: "📡 Streamer mode ON",  off: "📡 Streamer mode OFF", show: true },
+                          { key: "hideSpectators",   on: "👁️ Spectators hidden", off: "👁️ Show spectators",   show: !gamemastering },
+                          { key: "teamSwapEnabled",  on: "🔄 Team swap ON",      off: "🔄 Team swap OFF",     show: !gamemastering },
+                        ] as const).filter(t => t.show).map(({ key, on, off }) => {
                           const val = !!settings[key];
                           return (
                             <button
@@ -623,6 +659,22 @@ export default function LobbyPage() {
                   {playlistError && <p className="text-sm text-red-400">{playlistError}</p>}
                   {playlistMsg   && <p className="text-sm text-green-400">{playlistMsg}</p>}
 
+                  {/* Help note — Spotify rejects the playlist API when the
+                      caller doesn't own the playlist (or it's not public &
+                      owned by the requester's app). Cheapest fix is to
+                      duplicate the playlist into the host's own account. */}
+                  <div className="text-xs px-3 py-2 rounded-md leading-relaxed"
+                    style={{
+                      background: "rgba(var(--color-primary-rgb),0.06)",
+                      border:     "1px solid rgba(var(--color-primary-rgb),0.20)",
+                      color:      "rgb(var(--text-secondary-rgb))",
+                    }}>
+                    💡 The playlist must be created by <strong>you</strong>, or copied to your own playlist:
+                    <div className="mt-1 opacity-80">
+                      Spotify → select playlist → <code style={{ fontFamily: "var(--font-mono)" }}>…</code> → Add to other playlist → + New playlist → copy that playlist's URL.
+                    </div>
+                  </div>
+
                   <p className="text-xs">
                     <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{trackCount}</strong>{" "}
                     <span style={{ color: "rgb(var(--text-muted-rgb))" }}>
@@ -634,17 +686,23 @@ export default function LobbyPage() {
             </Panel>
           )}
 
-          {/* Audio source — Browser (default) vs Discord bot. The bot lives
-              in a separate Node.js process; see bots/musix-discord/README. */}
+          {/* Audio source. Renamed in v0.3 to be clearer to players:
+              "Browser" → "Spotify (Local audio)"  (only viable if host has Spotify connected)
+              "All clients" → "YouTube (Shared audio)"  (each player streams locally via the bot proxy)
+              "Discord bot" stays as-is.
+
+              In gamemaster mode only the local-audio option makes sense (one
+              human, one device) — the multi-client and Discord-bot variants
+              are hidden. */}
           {isHost && (
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-3">Audio</h2>
               <Toggle
-                options={[
-                  { value: "browser",            label: "🌐 Browser" },
+                options={([
+                  { value: "browser",            label: "🎵 Spotify (Local audio)" },
                   { value: "discord-bot",        label: "🤖 Discord bot" },
-                  { value: "all-clients-stream", label: "🎧 All clients" },
-                ]}
+                  { value: "all-clients-stream", label: "🎧 YouTube (Shared audio)" },
+                ] as const).filter(o => !(gamemastering && o.value !== "browser"))}
                 value={settings.audioMode}
                 onChange={v => saveSettings({ audioMode: v as AudioMode })}
               />
@@ -655,8 +713,11 @@ export default function LobbyPage() {
                     border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
                     color:      "rgb(var(--text-secondary-rgb))",
                   }}>
-                  🌐 The host's browser plays each song. Share your tab audio in Discord (or be
-                  in person) so everyone hears the same thing.
+                  🎵 Your browser plays each song via the Spotify Web Playback SDK (your{" "}
+                  <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
+                    Spotify account
+                  </a> must be connected). Share your tab audio in Discord — or play together
+                  in person — so the other players hear the same thing.
                 </p>
               )}
               {settings.audioMode === "all-clients-stream" && (

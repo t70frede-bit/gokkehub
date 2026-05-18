@@ -1,3 +1,4 @@
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
 import { GameHeader } from "@gokkehub/ui";
 import { useSession } from "./hooks/useSession";
@@ -17,12 +18,44 @@ function useRoomCodeFromPath(): string | undefined {
   return m?.[1];
 }
 
-export default function App() {
+// Lets pages flip the room-code chip off in the global header (streamer mode,
+// gamemaster mode). Pages call `useHeaderControls().setHideRoomCode(true)`
+// in a useEffect that depends on the relevant settings; App reads the
+// current value and passes it to GameHeader. Resets to false on unmount so
+// the next page doesn't inherit a stale value.
+interface HeaderControls {
+  hideRoomCode: boolean;
+  setHideRoomCode: (b: boolean) => void;
+}
+const HeaderControlsContext = createContext<HeaderControls>({
+  hideRoomCode: false,
+  setHideRoomCode: () => {},
+});
+export function useHeaderControls(): HeaderControls {
+  return useContext(HeaderControlsContext);
+}
+function HeaderControlsProvider({ children }: { children: ReactNode }) {
+  const [hideRoomCode, setHideRoomCode] = useState(false);
+  return (
+    <HeaderControlsContext.Provider value={{ hideRoomCode, setHideRoomCode }}>
+      {children}
+    </HeaderControlsContext.Provider>
+  );
+}
+
+function AppShell() {
   const { session } = useSession();
   const roomCode    = useRoomCodeFromPath();
+  const { hideRoomCode } = useHeaderControls();
   return (
     <div className="min-h-dvh flex flex-col">
-      <GameHeader appName="musix" session={session} LinkComponent={Link} roomCode={roomCode} />
+      <GameHeader
+        appName="musix"
+        session={session}
+        LinkComponent={Link}
+        roomCode={roomCode}
+        hideRoomCode={hideRoomCode}
+      />
       <main className="flex-1 flex flex-col">
         <Routes>
           <Route path="/"              element={<HomePage />} />
@@ -36,5 +69,13 @@ export default function App() {
         </Routes>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <HeaderControlsProvider>
+      <AppShell />
+    </HeaderControlsProvider>
   );
 }

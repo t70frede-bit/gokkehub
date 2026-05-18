@@ -29,6 +29,7 @@ function sanitize(input: unknown): TlRoomSettings {
   }
   if (typeof s.skipRecentlyHeard === "boolean") out.skipRecentlyHeard = s.skipRecentlyHeard;
   if (typeof s.singleScreenMode === "boolean")  out.singleScreenMode  = s.singleScreenMode;
+  if (typeof s.gamemasterMode === "boolean")    out.gamemasterMode    = s.gamemasterMode;
   if (s.songSource === "group-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }

@@ -4,6 +4,7 @@ import { Button, Modal, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
+import { useHeaderControls } from "../App";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../lib/types";
@@ -2218,7 +2219,19 @@ export default function GamePage() {
 
   const isDJ       = state?.myPlayer?.is_host ?? false;
   const isHost     = state?.myPlayer?.is_host ?? false;
-  const singleScreen = !!state?.room.settings?.singleScreenMode;
+  // Gamemaster mode (or legacy singleScreenMode) collapses captain authority
+  // into the host. Either flag makes the host stand in for every team's
+  // captain in turn-taking; mirrors the server-side actsAsCaptain check.
+  const singleScreen = !!(state?.room.settings?.gamemasterMode || state?.room.settings?.singleScreenMode);
+
+  // Hide the room code in the global header when streamer mode or gamemaster
+  // mode is on. Mirrors the LobbyPage effect. Resets on unmount.
+  const { setHideRoomCode } = useHeaderControls();
+  const hideCode = !!(state?.room.settings?.streamerMode || state?.room.settings?.gamemasterMode);
+  useEffect(() => {
+    setHideRoomCode(hideCode);
+    return () => setHideRoomCode(false);
+  }, [hideCode, setHideRoomCode]);
   // Audio source — browser (Spotify Web SDK in this tab) vs discord-bot
   // (separate Node.js bot in the host's voice channel; see bots/musix-discord).
   // Default is browser to preserve the original behaviour.

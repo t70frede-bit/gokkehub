@@ -116,34 +116,47 @@ export interface TlRoomSettings {
   /** @deprecated kept for back-compat — UI no longer surfaces this. */
   playlistMode?:       PlaylistMode;
   skipRecentlyHeard?:  boolean;       // 14-day blacklist toggle
-  singleScreenMode?:   boolean;       // host plays for every team on one device
-  songSource?:         SongSource;    // group-taste (default) | playlist
-  audioMode?:          AudioMode;     // browser (default) | discord-bot
-  timerMode?:          TimerMode;     // song-length (default) | fixed | none
+  /** @deprecated superseded by gamemasterMode — kept so older rooms keep working. */
+  singleScreenMode?:   boolean;
+  /** Host acts as captain for every team and the room hides multi-player surfaces
+   *  (room code, late-join, team-swap, vote judging, multi-client audio modes).
+   *  Used for solo play, demos, or running the game on one device. */
+  gamemasterMode?:     boolean;
+  songSource?:         SongSource;    // playlist (default) | group-taste
+  audioMode?:          AudioMode;     // browser if host has Spotify, else all-clients-stream
+  timerMode?:          TimerMode;     // none (default) | song-length | fixed
   timerSeconds?:       number;        // used when timerMode === "fixed"
-  tokenEconomy?:       TokenEconomy;  // bonus (default) | standard | shop
+  tokenEconomy?:       TokenEconomy;  // standard (default) | bonus | shop
   /** @deprecated — sync mode dropped, all-clients-stream is always independent. */
   streamSyncMode?:     StreamSyncMode;
 }
 
+// Defaults baked in so a brand-new room hits sensible values without the host
+// having to touch Lobby Settings. The Create Room modal stays minimal — anyone
+// who wants to deviate flips it later in the Lobby's Settings tab.
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   lateJoinMode:      "open",
   streamerMode:      false,
   hideSpectators:    false,
   teamSwapEnabled:   false,
-  judgeMode:         "team-captain",
+  judgeMode:         "team-captain",   // own team self-judges
   voteTimerSeconds:  20,
   difficulty:        "medium",
   playlistMode:      "as-is",
   skipRecentlyHeard: true,
   singleScreenMode:  false,
-  songSource:        "group-taste",
-  audioMode:         "browser",
-  timerMode:         "song-length",
+  gamemasterMode:    false,
+  songSource:        "playlist",       // playlist is the most common entry point
+  audioMode:         "browser",        // overridden at Create-Room time when host has no Spotify
+  timerMode:         "none",           // captain plays at their own pace
   timerSeconds:      120,
-  tokenEconomy:      "bonus",
+  tokenEconomy:      "standard",       // one Song Skipper per correct round, classic Hitster
   streamSyncMode:    "independent",
 };
+
+// Host's chosen lobby role on the Create Room modal. Maps to server-side
+// flags (is_spectator, settings.gamemasterMode, host_team).
+export type CreateRoomRole = "player" | "dj" | "spectator" | "gamemaster";
 
 export interface TlRoom {
   id:               string;       // 6-char code
@@ -372,8 +385,12 @@ export interface CreateRoomRequest {
   name:          string; // host's display name if not logged in
   win_target:    number;
   team_names:    string[];
-  host_team?:    number | null; // 0-based index into team_names; null/undefined → DJ-only spectator
+  host_team?:    number | null; // 0-based index into team_names; null/undefined → spectator/DJ/gamemaster
   is_spectator?: boolean;       // host joins as DJ-only spectator
+  /** Lobby role chosen on Create Room. Server uses this to set `settings.gamemasterMode`
+   *  and is_spectator when not supplied directly. Falls back to host_team/is_spectator
+   *  for old clients that don't send role. */
+  role?:         CreateRoomRole;
   settings?:     TlRoomSettings;
 }
 

@@ -90,11 +90,13 @@ function maybeTopUpPool(
   if (waitUntil) waitUntil(work); else void work;
 }
 
-// In single-screen mode the host stands in for every team's captain (so one
-// device can drive the whole game). This helper centralises the check.
+// In gamemaster (or legacy singleScreenMode) the host stands in for every
+// team's captain so one device can drive the whole game. This helper
+// centralises the check.
 function actsAsCaptain(room: TlRoom, captain: TlPlayer | undefined, playerId: string): boolean {
   if (captain && captain.id === playerId) return true;
-  if (room.settings?.singleScreenMode && room.host_id === playerId) return true;
+  const gamemastering = !!(room.settings?.gamemasterMode || room.settings?.singleScreenMode);
+  if (gamemastering && room.host_id === playerId) return true;
   return false;
 }
 
