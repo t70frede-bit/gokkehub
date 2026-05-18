@@ -100,6 +100,39 @@ function actsAsCaptain(room: TlRoom, captain: TlPlayer | undefined, playerId: st
   return false;
 }
 
+// Gamemaster mode forces "host" judging — the gamemaster is the only human
+// in the room, so "team captain" / "next team captain" / "vote all" would
+// either gate nobody (no captain on the host's nonexistent team, no opposing
+// captain, no other voters) or require fake votes. Keeping the user's
+// stored judgeMode value untouched lets them switch back if they later
+// leave gamemaster mode.
+function effectiveJudgeMode(room: Pick<TlRoom, "settings">): JudgeMode {
+  if (room.settings?.gamemasterMode || room.settings?.singleScreenMode) return "host";
+  return (room.settings?.judgeMode ?? "team-captain") as JudgeMode;
+}
+
+// Update a single pending-track entry's releaseYear inside team.pending_tracks
+// JSON, e.g. when a year correction is approved and the cached SpotifyTrack
+// still holds the wrong Spotify year. PostgREST doesn't have an in-place
+// JSON array update, so we read → mutate → write back.
+async function patchPendingTrackYear(env: Env, teamId: number, trackId: string, year: number) {
+  const teamRes = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/tl_teams?id=eq.${teamId}&select=pending_tracks`,
+    {
+      headers: {
+        apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    },
+  );
+  if (!teamRes.ok) return;
+  const rows = await teamRes.json() as Array<{ pending_tracks?: Array<{ id: string; releaseYear?: number; [k: string]: unknown }> }>;
+  const current = rows[0]?.pending_tracks ?? [];
+  if (!current.some(t => t.id === trackId)) return;
+  const patched = current.map(t => t.id === trackId ? { ...t, releaseYear: year } : t);
+  await updateTeam(env, teamId, { pending_tracks: patched as never });
+}
+
 // ── Stage (live staging — captain's tentative placement) ────────────────────
 
 async function handleStage(req: Request, roomId: string, env: Env) {
@@ -265,7 +298,7 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
   const me = players.find(p => p.id === player_id);
   if (!me) return json({ error: "Player not in room" }, 403, req);
 
-  const judgeMode: JudgeMode = (room.settings?.judgeMode ?? "team-captain") as JudgeMode;
+  const judgeMode: JudgeMode = effectiveJudgeMode(room);
   const eligible = isJudgeEligible(judgeMode, me, room.host_id, room.active_team_id ?? null, teams, players);
   if (!eligible) return json({ error: "Not eligible to judge in this mode" }, 403, req);
 
@@ -397,7 +430,12 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
   return json({ ok: true, approved: approve }, 200, req);
 }
 
-// Update the round's corrected_year and (if already locked) the timeline entry's year too.
+// Update the round's corrected_year and propagate the new year to every place
+// the old (wrong) year may have been cached: the locked timeline entry if
+// already there, and team.pending_tracks for cards still on the spotlight
+// rail. Without the pending-tracks patch, the rail visually keeps a card at
+// its original Spotify year even though the round is now marked correct,
+// which is what the user actually sees first.
 async function applyYearCorrection(env: Env, round: TlRound, year: number) {
   await updateRound(env, round.id, { corrected_year: year } as Partial<TlRound>);
   // Patch the timeline entry if this track has been locked already.
@@ -412,6 +450,12 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
     },
     body: JSON.stringify({ corrected_year: year, year }),
   });
+
+  // Patch the same track inside team.pending_tracks JSON so the timeline
+  // rail's pending-card row reflects the corrected year before turn-end.
+  // The rail merges locked entries + pending tracks by year, so leaving the
+  // old releaseYear here makes the card sit between the wrong gap markers.
+  await patchPendingTrackYear(env, round.team_id, round.track.id, year);
 
   // Re-evaluate placement against the corrected year. If a wrong placement
   // now falls within the captain's window, flip outcome to "correct" and
@@ -441,8 +485,12 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
         const rows = await teamRes.json() as Array<{ pending_tracks?: Array<{ id: string }> }>;
         const current = rows[0]?.pending_tracks ?? [];
         if (!current.some(t => t.id === round.track.id)) {
+          // Restore with the corrected releaseYear so the timeline rail
+          // visualises the card at the (now correct) year, not the wrong
+          // Spotify default it would have used otherwise.
+          const trackCorrected = { ...round.track, releaseYear: year };
           await updateTeam(env, round.team_id, {
-            pending_tracks: [...current, round.track] as never,
+            pending_tracks: [...current, trackCorrected] as never,
           });
         }
       }
@@ -655,7 +703,7 @@ async function handleFinalize(req: Request, roomId: string, env: Env, _waitUntil
   if (round.judging_finalized)    return json({ ok: true, already: true }, 200, req);
   if (round.outcome !== "correct") return json({ error: "Cannot finalize" }, 400, req);
 
-  const judgeMode = (room.settings?.judgeMode ?? "team-captain") as JudgeMode;
+  const judgeMode = effectiveJudgeMode(room);
   if (judgeMode !== "vote-all") return json({ error: "Only vote-all needs finalize" }, 400, req);
 
   // Verify the timer has actually expired (or all voters in)

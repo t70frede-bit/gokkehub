@@ -691,9 +691,9 @@ export default function LobbyPage() {
               "All clients" → "YouTube (Shared audio)"  (each player streams locally via the bot proxy)
               "Discord bot" stays as-is.
 
-              In gamemaster mode only the local-audio option makes sense (one
-              human, one device) — the multi-client and Discord-bot variants
-              are hidden. */}
+              In gamemaster mode the Discord-bot option is hidden — there's
+              no second human to share a voice channel with. Spotify and
+              YouTube both still make sense for one person on one device. */}
           {isHost && (
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-3">Audio</h2>
@@ -702,7 +702,7 @@ export default function LobbyPage() {
                   { value: "browser",            label: "🎵 Spotify (Local audio)" },
                   { value: "discord-bot",        label: "🤖 Discord bot" },
                   { value: "all-clients-stream", label: "🎧 YouTube (Shared audio)" },
-                ] as const).filter(o => !(gamemastering && o.value !== "browser"))}
+                ] as const).filter(o => !(gamemastering && o.value === "discord-bot"))}
                 value={settings.audioMode}
                 onChange={v => saveSettings({ audioMode: v as AudioMode })}
               />

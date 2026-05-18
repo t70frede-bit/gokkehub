@@ -2257,8 +2257,18 @@ export default function GamePage() {
       .update({ playing_since: Date.now(), paused_at_ms: null })
       .eq("id", roomId);
   }, [isHost, audioMode, state?.round?.id, roomId]);
-  // In single-screen mode the host stands in for whoever's playing. They get
-  // captain powers on whatever team is currently active.
+  // In gamemaster / single-screen mode the host has team_id=null (joined as
+  // a spectator at Create-Room time) but should behave as though they're on
+  // whichever team is currently active — that's the whole point of the
+  // mode. Using `effectiveMyTeamId` instead of myPlayer.team_id downstream
+  // makes the team-spotlight, captain controls, guess form and token tray
+  // gate correctly. Falls back to the player's real team_id outside
+  // gamemaster mode.
+  const effectiveMyTeamId: number | null =
+    (singleScreen && isHost)
+      ? (state?.room.active_team_id ?? state?.myPlayer?.team_id ?? null)
+      : (state?.myPlayer?.team_id ?? null);
+
   const isMyTurn   = !!(state?.room.active_team_id && (
     state.myPlayer?.team_id === state.room.active_team_id
     || (singleScreen && isHost)
@@ -2826,7 +2836,10 @@ export default function GamePage() {
 
       {/* ── Teams' timelines: spotlight on the active team, others compact ─── */}
       {(() => {
-        const myTeamId       = myPlayer?.team_id ?? null;
+        // Gamemaster mode: effectiveMyTeamId already follows the active team
+        // so spotlight/isMyTeam gates light up around whoever's playing,
+        // matching how the gamemaster mentally owns every team's turn.
+        const myTeamId       = effectiveMyTeamId;
         // Spotlight = whoever's turn it is. Falls back to my team between rounds.
         const spotlightId    = room.active_team_id ?? myTeamId ?? teams[0]?.id ?? null;
         const spotlightTeam  = teams.find(t => t.id === spotlightId) ?? null;
@@ -3145,7 +3158,13 @@ export default function GamePage() {
         // above the suggestion fields. Same anchor song from the same year.
         const referenceNote     = [...notes].reverse().find(n => n.kind === "reference");
 
-        const iAmActiveTeam      = !!myPlayer && myPlayer.team_id === room.active_team_id;
+        // In gamemaster mode the host owns the active team, so they count
+        // as on the active team for guess-form gating even though their
+        // own team_id is null.
+        const iAmActiveTeam      = !!myPlayer && (
+          myPlayer.team_id === room.active_team_id
+          || (singleScreen && isHost)
+        );
         const isCaptainHere      = iAmCaptain && isMyTurn;
         const isActiveTeammate   = iAmActiveTeam && !isCaptainHere;
         const isObserver         = !iAmActiveTeam;
@@ -3341,11 +3360,22 @@ export default function GamePage() {
       {/* Reveal overlay — driven by round.outcome OR round.skipped (realtime) */}
       {round && (round.outcome !== null || round.skipped) && (() => {
         const settings  = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
-        const judgeMode: JudgeMode = settings.judgeMode;
+        // Gamemaster mode forces "host" — the host is the only human and
+        // their stored judgeMode value would otherwise gate them out
+        // (team-captain checks myPlayer.is_captain, but the gamemaster
+        // is a spectator with team_id=null). Mirrors effectiveJudgeMode
+        // on the server.
+        const judgeMode: JudgeMode = (settings.gamemasterMode || settings.singleScreenMode)
+          ? "host"
+          : settings.judgeMode;
 
-        // Determine if this viewer is eligible to judge under the current mode
+        // Determine if this viewer is eligible to judge under the current mode.
+        // For the gamemaster (a spectator) we drop the !is_spectator guard so
+        // they can judge as host — they ARE the host even though their
+        // is_spectator flag is true.
+        const isGamemasterHost = (settings.gamemasterMode || settings.singleScreenMode) && myPlayer?.id === room.host_id;
         let isJudgeEligible = false;
-        if (myPlayer && !myPlayer.is_spectator) {
+        if (myPlayer && (!myPlayer.is_spectator || isGamemasterHost)) {
           if (judgeMode === "host")              isJudgeEligible = myPlayer.id === room.host_id;
           else if (judgeMode === "team-captain") isJudgeEligible = myPlayer.is_captain && myPlayer.team_id === room.active_team_id;
           else if (judgeMode === "next-team-captain") {
