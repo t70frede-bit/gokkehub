@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Badge, Button, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
+import { Badge, Button, CopyInviteButton, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import { useHeaderControls } from "../App";
@@ -39,7 +39,6 @@ export default function LobbyPage() {
   const [playlistMsg,    setPlaylistMsg]    = useState<string | null>(null);
   const [starting,       setStarting]       = useState(false);
   const [startError,     setStartError]     = useState<string | null>(null);
-  const [copied,         setCopied]         = useState(false);
   // "Advanced settings" collapse on the host's settings panel
   const [advancedOpen,   setAdvancedOpen]   = useState(false);
   // Lobby tabs — host-only toggle between team formation and full
@@ -84,16 +83,6 @@ export default function LobbyPage() {
   const visiblePlayers = players.filter(p => !(settings.hideSpectators && !isHost && p.is_spectator && p.id !== myPlayerId));
 
   // ── Handlers ────────────────────────────────────────────────────────────────
-
-  async function copyInviteLink() {
-    // Players land on gokkehub.com — the hub looks the code up across games
-    // and forwards them to the right subdomain. Hosts continue to navigate
-    // directly to the game site.
-    const baseUrl = `https://gokkehub.com/join?room=${encodeURIComponent(roomId ?? "")}`;
-    await navigator.clipboard.writeText(baseUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
 
   async function addPlaylist() {
     if (!playlistUrl.trim()) return;
@@ -259,10 +248,11 @@ export default function LobbyPage() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          {!streamerOrGamemaster && (
-            <Button variant="ghost" size="sm" onClick={copyInviteLink}>
-              {copied ? "✓ Copied" : "📋 Copy link"}
-            </Button>
+          {!streamerOrGamemaster && roomId && (
+            <CopyInviteButton
+              url={`https://gokkehub.com/join?room=${encodeURIComponent(roomId)}`}
+              size="md"
+            />
           )}
           <Button variant="ghost" size="sm" onClick={() => navigate("/")}>Leave</Button>
         </div>

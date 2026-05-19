@@ -7,10 +7,12 @@
   },
   "files": ["src"],
   "dependencies": {
+    "qrcode": "^1.5.3",
     "react": "^18.3.0"
   },
   "devDependencies": {
     "@gokkehub/config": "*",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^18.3.0",
     "typescript": "^5.4.0"
   },

@@ -24,11 +24,16 @@ export default function HomePage() {
   // join, judge mode, timer, audio, etc.) is configured in the Lobby's
   // Settings tab AFTER the room is created. Defaults from DEFAULT_TL_SETTINGS
   // are baked in so 90% of rooms never need to touch Settings.
-  const [showHost, setShowHost] = useState(false);
-  const [name,     setName]     = useState(session?.displayName ?? "");
-  const [role,     setRole]     = useState<CreateRoomRole>("player");
-  const [teams,    setTeams]    = useState<string[]>([defaultTeamName(0), defaultTeamName(1)]);
-  const [hostTeam, setHostTeam] = useState<number>(0);
+  const [showHost,     setShowHost]     = useState(false);
+  const [name,         setName]         = useState(session?.displayName ?? "");
+  const [role,         setRole]         = useState<CreateRoomRole>("player");
+  const [teams,        setTeams]        = useState<string[]>([defaultTeamName(0), defaultTeamName(1)]);
+  const [hostTeam,     setHostTeam]     = useState<number>(0);
+  // Streamer mode lives on Create Room (not Lobby Settings) because it
+  // affects what the host sees from the moment the room exists — once
+  // the URL is in the address bar, hiding the code afterwards is too
+  // late. Everything else stays in Lobby Settings.
+  const [streamerMode, setStreamerMode] = useState(false);
 
   // Join input
   const [code, setCode] = useState("");
@@ -52,6 +57,7 @@ export default function HomePage() {
       const settings: TlRoomSettings = {
         ...DEFAULT_TL_SETTINGS,
         audioMode: session?.spotify ? "browser" : "all-clients-stream",
+        streamerMode,
       };
       const body: CreateRoomRequest = {
         name:         name.trim(),
@@ -305,6 +311,26 @@ export default function HomePage() {
               </div>
             </div>
           )}
+
+          {/* Streamer mode — hides the room code + invite button + QR
+              everywhere it would otherwise appear (global header, lobby
+              sub-header). Useful for streamers / videos where the join
+              code leaking into frame would let randoms hop in. The URL
+              itself can't be hidden from the address bar, so a streamer
+              should also run fullscreen. Lives on Create Room because
+              switching it on AFTER the room is visible is too late. */}
+          <button
+            onClick={() => setStreamerMode(v => !v)}
+            className="text-sm font-semibold px-3 py-2 rounded-md border transition-all self-start"
+            style={{
+              borderColor: streamerMode ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+              background:  streamerMode ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+            }}
+            title="Hide the room code from the UI so it doesn't end up on stream. URL can't be stripped — go fullscreen too."
+            type="button"
+          >
+            📡 Streamer mode {streamerMode ? "ON" : "OFF"}
+          </button>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button onClick={createRoom} loading={loading} className="w-full">Create Room</Button>
