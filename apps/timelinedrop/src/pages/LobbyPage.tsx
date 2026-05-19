@@ -659,16 +659,22 @@ export default function LobbyPage() {
                 </div>
               )}
 
-              {/* Playlist branch */}
+              {/* Playlist branch — accepts BOTH Spotify and YouTube playlist
+                  URLs. The server detects which by URL shape and routes
+                  accordingly. YouTube branch: bot fetches the playlist
+                  items, server maps each video to a Spotify track via
+                  search, the youtubeVideoId is preserved on each track so
+                  YouTube-shared audio mode streams the exact curated video
+                  instead of re-searching for it at play time. */}
               {settings.songSource === "playlist" && (
                 <div className="mt-4 flex flex-col gap-3">
                   <div>
-                    <p className="text-sm font-medium mb-2">Spotify playlist URL</p>
+                    <p className="text-sm font-medium mb-2">Playlist URL <span className="opacity-60 font-normal">(Spotify or YouTube)</span></p>
                     <div className="flex gap-2">
                       <Input
                         value={playlistUrl}
                         onChange={e => setPlaylistUrl(e.target.value)}
-                        placeholder="https://open.spotify.com/playlist/…"
+                        placeholder="https://open.spotify.com/playlist/… or https://youtube.com/playlist?list=…"
                         className="flex-1"
                         onKeyDown={e => e.key === "Enter" && addPlaylist()}
                       />
@@ -681,18 +687,19 @@ export default function LobbyPage() {
 
                   {/* Help note — Spotify rejects the playlist API when the
                       caller doesn't own the playlist (or it's not public &
-                      owned by the requester's app). Cheapest fix is to
-                      duplicate the playlist into the host's own account. */}
+                      owned by the requester's app). YouTube playlists work
+                      regardless of ownership. */}
                   <div className="text-xs px-3 py-2 rounded-md leading-relaxed"
                     style={{
                       background: "rgba(var(--color-primary-rgb),0.06)",
                       border:     "1px solid rgba(var(--color-primary-rgb),0.20)",
                       color:      "rgb(var(--text-secondary-rgb))",
                     }}>
-                    💡 The playlist must be created by <strong>you</strong>, or copied to your own playlist:
-                    <div className="mt-1 opacity-80">
+                    💡 <strong>Spotify playlists</strong> must be created by you, or copied to your own playlist:
+                    <div className="mt-1 mb-2 opacity-80">
                       Spotify → select playlist → <code style={{ fontFamily: "var(--font-mono)" }}>…</code> → Add to other playlist → + New playlist → copy that playlist's URL.
                     </div>
+                    <strong>YouTube playlists</strong> work as-is — paste the share link or the <code style={{ fontFamily: "var(--font-mono)" }}>?list=…</code> URL. Each video is matched to a Spotify track for the timeline, and YouTube-shared audio mode streams the exact curated video.
                   </div>
 
                   <p className="text-xs">

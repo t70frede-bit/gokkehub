@@ -127,6 +127,82 @@ export interface SearchHit {
   durationSec: number;
 }
 
+export interface PlaylistItem {
+  videoId:     string;
+  title:       string;
+  channel:     string;     // uploading channel name; useful as artist fallback
+  durationSec: number;
+}
+
+// Extract a YouTube playlist ID from a URL, or accept a raw playlist ID.
+// Handles /playlist?list=, watch?v=&list=, music.youtube.com variants.
+// Playlist IDs: PL/UU/LL/PU/OL/RD-prefixed, 16+ base64-like chars.
+const PLAYLIST_ID_RE = /(?:[?&]list=|^)((?:PL|UU|LL|PU|OL|RD)[A-Za-z0-9_-]{10,})/;
+export function extractPlaylistId(input: string): string | null {
+  const trimmed = input.trim();
+  // Bare ID
+  if (/^(?:PL|UU|LL|PU|OL|RD)[A-Za-z0-9_-]{10,}$/.test(trimmed)) return trimmed;
+  const m = trimmed.match(PLAYLIST_ID_RE);
+  return m ? m[1] : null;
+}
+
+// Fetch a YouTube playlist's items. Uses Innertube (youtubei.js) which is
+// the same client the search path uses, so we don't add a second dep.
+// Caps at 200 items so a 1000-track radio mix doesn't OOM us.
+const PLAYLIST_ITEM_CAP = 200;
+
+export async function getPlaylistItems(playlistId: string): Promise<PlaylistItem[]> {
+  const yt = await getInnertube();
+  // youtubei.js's typed Playlist object exposes `items`, but the typings
+  // vary across versions. Cast through unknown and normalise.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let pl: any;
+  try {
+    pl = await yt.getPlaylist(playlistId);
+  } catch (err) {
+    console.warn(`[resolver] getPlaylist failed for ${playlistId}:`, err);
+    throw new Error(`Playlist not found or private`);
+  }
+
+  // Flatten the playlist into a single array. yt.getPlaylist returns one
+  // page; getContinuation extends it. We paginate up to the cap.
+  const out: PlaylistItem[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let current: any = pl;
+  for (let page = 0; page < 5 && out.length < PLAYLIST_ITEM_CAP; page++) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items: any[] = current?.items ?? current?.videos ?? [];
+    for (const v of items) {
+      if (out.length >= PLAYLIST_ITEM_CAP) break;
+      const videoId = v?.id ?? v?.video_id;
+      if (!videoId) continue;
+      const title =
+        typeof v?.title === "string"
+          ? v.title
+          : (v?.title?.text ?? "");
+      if (!title) continue;
+      const channel =
+        typeof v?.author === "string"
+          ? v.author
+          : (v?.author?.name ?? v?.channel?.name ?? v?.channel_name ?? "");
+      const durationSec =
+        typeof v?.duration?.seconds === "number"
+          ? v.duration.seconds
+          : (typeof v?.duration === "number" ? v.duration : 0);
+      out.push({ videoId, title, channel, durationSec });
+    }
+    // Try to paginate. The continuation getter name varies by version.
+    if (typeof current?.getContinuation === "function") {
+      try { current = await current.getContinuation(); }
+      catch { break; }
+    } else {
+      break;
+    }
+  }
+
+  return out;
+}
+
 // Match a YouTube video ID out of a URL, a youtu.be short link, a /shorts/
 // link, a music.youtube.com link, or a bare 11-char video ID.
 const VIDEO_ID_RE = /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|^)([A-Za-z0-9_-]{11})(?:\b|$)/;

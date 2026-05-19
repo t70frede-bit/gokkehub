@@ -1,14 +1,22 @@
 // ── Spotify ───────────────────────────────────────────────────────────────────
 
 export interface SpotifyTrack {
-  id:          string;
-  name:        string;
-  artist:      string;
-  albumName:   string;
-  releaseYear: number;
-  coverUrl:    string;
-  uri:         string;            // spotify:track:ID — required for Web Playback SDK
-  durationMs?: number;            // captured from Spotify search; used by song-length timer mode
+  id:               string;
+  name:             string;
+  artist:           string;
+  albumName:        string;
+  releaseYear:      number;
+  coverUrl:         string;
+  uri:              string;       // spotify:track:ID — required for Web Playback SDK
+  durationMs?:      number;       // captured from Spotify search; used by song-length timer mode
+  /** Set when a track was imported from a YouTube playlist. The bot's
+   *  /stream-track endpoint passes this through ?video_id= to skip the
+   *  YouTube re-search and stream the exact curated video — preserves the
+   *  host's intent (their playlist had THIS video, not a Spotify-mapped
+   *  one that the bot's search heuristic might map to). Optional so
+   *  Spotify-playlist and group-taste tracks (which don't know their
+   *  YouTube counterpart yet) stay unchanged. */
+  youtubeVideoId?: string;
 }
 
 // ── Database rows ─────────────────────────────────────────────────────────────

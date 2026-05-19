@@ -988,13 +988,17 @@ function AllClientsAudio({
   }, [volume]);
 
   // Build the stream URL for a given seek offset. Used by both the
-  // initial load and the seek-by-reload path.
+  // initial load and the seek-by-reload path. When the track has a
+  // youtubeVideoId (set on tracks imported from a YouTube playlist),
+  // pass it through so the bot skips the YouTube re-search and streams
+  // the exact curated video — preserves the host's playlist intent.
   function streamUrl(seekSec: number): string {
     const params = new URLSearchParams({
       spotify_id: track.id,
       name:       track.name,
       artist:     track.artist,
     });
+    if (track.youtubeVideoId) params.set("video_id", track.youtubeVideoId);
     if (seekSec > 0) params.set("seek", String(seekSec));
     if (STREAM_PROXY_TOKEN) params.set("token", STREAM_PROXY_TOKEN);
     return `${STREAM_PROXY_URL.replace(/\/$/, "")}/stream-track?${params}`;

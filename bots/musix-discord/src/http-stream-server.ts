@@ -17,7 +17,7 @@
 // Override via STREAM_CORS env (comma-separated list, or "*" for any).
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawnYtDlpAudioStream, resolveTrack } from "./resolver.js";
+import { spawnYtDlpAudioStream, resolveTrack, getPlaylistItems, extractPlaylistId } from "./resolver.js";
 
 const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
@@ -173,19 +173,41 @@ export function startHttpStreamServer(): void {
     // nothing has stamped a videoId on the round yet. Clients pass the
     // Spotify track they already have via realtime, the bot resolves
     // (cache-hit on repeats), then streams the same yt-dlp output.
+    //
+    // ?video_id=X shortcut: if the track was imported from a YouTube
+    // playlist it already knows its source video. Skipping resolveTrack
+    // saves a search and guarantees we stream the exact curated video.
     if (url.pathname === "/stream-track") {
       if (!checkToken(req, url)) {
         res.writeHead(401, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
         res.end("Unauthorized");
         return;
       }
+      const seekSec   = Math.max(0, parseInt(url.searchParams.get("seek") ?? "0", 10) || 0);
+
+      // Direct video_id path — bypass YouTube search entirely.
+      const directVideoId = url.searchParams.get("video_id");
+      if (directVideoId && VIDEO_ID_RE.test(directVideoId)) {
+        console.log(`[http] /stream-track video_id=${directVideoId} seek=${seekSec}`);
+        if (req.method === "HEAD") {
+          res.writeHead(200, {
+            "Content-Type":  "application/octet-stream",
+            "Cache-Control": "no-store",
+            ...corsHeaders(req.headers.origin),
+          });
+          res.end();
+          return;
+        }
+        await handleStream(req, res, directVideoId, seekSec);
+        return;
+      }
+
       const spotifyId = url.searchParams.get("spotify_id") ?? "";
       const name      = url.searchParams.get("name")       ?? "";
       const artist    = url.searchParams.get("artist")     ?? "";
-      const seekSec   = Math.max(0, parseInt(url.searchParams.get("seek") ?? "0", 10) || 0);
       if (!spotifyId || !name) {
         res.writeHead(400, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
-        res.end("spotify_id and name required");
+        res.end("spotify_id and name required (or video_id)");
         return;
       }
       const resolved = await resolveTrack({ id: spotifyId, name, artists: artist ? [artist] : [] });
@@ -205,6 +227,36 @@ export function startHttpStreamServer(): void {
         return;
       }
       await handleStream(req, res, resolved.videoId, seekSec);
+      return;
+    }
+
+    // /playlist-items — fetch a YouTube playlist's items. Called by the
+    // Pages function during /room/:id/playlist when the host pastes a
+    // YouTube playlist URL. Returns the same JSON regardless of method;
+    // we only support GET to keep the route stateless.
+    if (url.pathname === "/playlist-items") {
+      if (!checkToken(req, url)) {
+        res.writeHead(401, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end("Unauthorized");
+        return;
+      }
+      const id = url.searchParams.get("id") ?? "";
+      const playlistId = extractPlaylistId(id);
+      if (!playlistId) {
+        res.writeHead(400, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({ error: "Invalid playlist id or URL" }));
+        return;
+      }
+      console.log(`[http] /playlist-items ${playlistId}`);
+      try {
+        const items = await getPlaylistItems(playlistId);
+        res.writeHead(200, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({ playlist_id: playlistId, items }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.writeHead(502, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({ error: msg }));
+      }
       return;
     }
 
