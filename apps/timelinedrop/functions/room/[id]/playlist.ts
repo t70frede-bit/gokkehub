@@ -7,6 +7,14 @@ import { getRoom, updateRoom, fetchPlaylistTracks, refreshSpotifyToken } from ".
 import type { AddPlaylistResponse, SpotifyTrack } from "../../../src/lib/types";
 import { STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../../../src/lib/types";
 
+// Feature flag — YouTube-playlist import is disabled while we sort out
+// the operator workflow for the bot's Spotify client-credentials env
+// vars. Flip to true to bring it back; supporting code (URL parser,
+// bot fetch, AllClientsAudio video_id shortcut, youtubeVideoId field
+// on SpotifyTrack) is intact so re-enabling is a one-line change.
+// Mirror the matching client copy in LobbyPage.tsx if you flip this.
+const YOUTUBE_PLAYLIST_ENABLED = false;
+
 // URL type detection. YouTube playlist URLs have list=PLxxxx; Spotify
 // playlist URLs match /playlist/<id>. Order matters — a YouTube watch
 // URL with &list= should NOT match the Spotify regex, so we check
@@ -104,16 +112,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
     const parsed = parsePlaylistUrl(url);
     if (parsed.kind === "invalid") {
-      return json({ error: "Couldn't recognise this URL as a Spotify or YouTube playlist" }, 400, req);
+      return json({ error: "Couldn't recognise this URL as a Spotify playlist" }, 400, req);
+    }
+    if (parsed.kind === "youtube" && !YOUTUBE_PLAYLIST_ENABLED) {
+      return json({ error: "YouTube playlist import is temporarily disabled. Please use a Spotify playlist URL for now." }, 400, req);
     }
 
     // Spotify branch needs the host's OAuth token to read their playlist
-    // (Spotify search doesn't expose the playlist contents). YouTube
-    // branch doesn't — the bot does its own client-credentials Spotify
-    // search, so anyone can import a YouTube playlist regardless of
-    // whether they have Spotify connected.
+    // (Spotify search doesn't expose the playlist contents).
     if (parsed.kind === "spotify" && !session.spotify) {
-      return json({ error: "Connect Spotify on your profile at account.gokkehub.com first to import a Spotify playlist (YouTube playlists work without it)." }, 403, req);
+      return json({ error: "Connect Spotify on your profile at account.gokkehub.com first" }, 403, req);
     }
 
     let imported: SpotifyTrack[] = [];
