@@ -570,7 +570,7 @@ export default function LobbyPage() {
               <Toggle
                 options={[
                   { value: "group-taste", label: "🎧 Group taste" },
-                  { value: "playlist",    label: "🔗 Spotify playlist" },
+                  { value: "playlist",    label: "🔗 YouTube/Spotify playlist" },
                 ]}
                 value={settings.songSource}
                 onChange={v => saveSettings({ songSource: v as SongSource })}

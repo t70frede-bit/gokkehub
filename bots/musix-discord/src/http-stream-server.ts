@@ -18,6 +18,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawnYtDlpAudioStream, resolveTrack, getPlaylistItems, extractPlaylistId } from "./resolver.js";
+import { resolvePlaylistItems } from "./spotify-search.js";
 
 const HTTP_PORT     = parseInt(process.env.PORT ?? "8081", 10);
 const STREAM_TOKEN  = process.env.STREAM_TOKEN ?? "";
@@ -227,6 +228,49 @@ export function startHttpStreamServer(): void {
         return;
       }
       await handleStream(req, res, resolved.videoId, seekSec);
+      return;
+    }
+
+    // /playlist-resolve — full end-to-end YouTube playlist → SpotifyTrack[]
+    // resolution. Called by the Pages /room/:id/playlist function so the
+    // Spotify search loop runs on the bot (no subrequest cap) instead of
+    // on Cloudflare Pages (50/request). Uses Spotify client-credentials
+    // auth — no user OAuth token required, so hosts without a Spotify
+    // account can still import YouTube playlists.
+    if (url.pathname === "/playlist-resolve") {
+      if (!checkToken(req, url)) {
+        res.writeHead(401, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end("Unauthorized");
+        return;
+      }
+      const id = url.searchParams.get("id") ?? "";
+      const playlistId = extractPlaylistId(id);
+      if (!playlistId) {
+        res.writeHead(400, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({ error: "Invalid playlist id or URL" }));
+        return;
+      }
+      console.log(`[http] /playlist-resolve ${playlistId}`);
+      try {
+        const items  = await getPlaylistItems(playlistId);
+        if (items.length === 0) {
+          res.writeHead(404, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+          res.end(JSON.stringify({ error: "YouTube playlist is empty or unavailable" }));
+          return;
+        }
+        const tracks = await resolvePlaylistItems(items);
+        res.writeHead(200, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({
+          playlist_id: playlistId,
+          item_count:  items.length,
+          tracks,                            // mapped SpotifyTracks ready to drop into track_pool
+          unmatched:   items.length - tracks.length,
+        }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.writeHead(502, { "Content-Type": "application/json", ...corsHeaders(req.headers.origin) });
+        res.end(JSON.stringify({ error: msg }));
+      }
       return;
     }
 

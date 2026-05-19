@@ -4,7 +4,6 @@ import { parseSessionId } from "@gokkehub/auth/cookie";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import { getRoom, updateRoom, fetchPlaylistTracks, refreshSpotifyToken } from "../../_supabase";
-import { searchTrackUri } from "../../_spotify";
 import type { AddPlaylistResponse, SpotifyTrack } from "../../../src/lib/types";
 import { STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../../../src/lib/types";
 
@@ -34,69 +33,29 @@ function parsePlaylistUrl(raw: string): ParsedUrl {
   return { kind: "invalid" };
 }
 
-// Strip noise that YouTube uploaders pile onto video titles before we
-// try to match them against Spotify. "Bohemian Rhapsody (Official Music
-// Video) [HD]" → "Bohemian Rhapsody".
-function cleanYouTubeTitle(s: string): string {
-  return s
-    .replace(/\s*\([^)]*(?:official|video|audio|music|lyrics?|hd|4k|remastered?|mv)[^)]*\)/gi, "")
-    .replace(/\s*\[[^\]]*(?:official|video|audio|music|lyrics?|hd|4k|remastered?|mv)[^\]]*\]/gi, "")
-    .replace(/\s*[-–—|]\s*(?:official|video|audio|music|lyric|hd|4k|mv).*$/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
+// Single call to the bot does the full YouTube-playlist resolve:
+// fetches the items, parses each title into artist/track guesses,
+// searches Spotify with client credentials, returns ready-to-use
+// SpotifyTracks. Doing all of that here on Cloudflare Pages would
+// blow the 50-subrequest budget for any non-trivial playlist.
+interface BotResolveResponse {
+  playlist_id?: string;
+  item_count?:  number;
+  unmatched?:   number;
+  tracks?:      SpotifyTrack[];
+  error?:       string;
 }
 
-// Try to split a YouTube title into (artist, track). Most uploads use
-// "Artist - Title" or "Title - Artist"; channels named after the artist
-// usually use the former and just put the title alone. We try both
-// orderings and let the Spotify search confirm the right one.
-interface ArtistTrackGuess { artist: string; track: string }
-function guessArtistTrack(title: string, channel: string): ArtistTrackGuess[] {
-  const cleaned = cleanYouTubeTitle(title);
-  const guesses: ArtistTrackGuess[] = [];
-  // Common separator dashes; pick the FIRST occurrence so "Foo - Bar - Baz"
-  // splits as artist="Foo", track="Bar - Baz".
-  const dashSplit = cleaned.split(/\s+[-–—]\s+/);
-  if (dashSplit.length >= 2) {
-    const first = dashSplit[0].trim();
-    const rest  = dashSplit.slice(1).join(" - ").trim();
-    if (first && rest) {
-      guesses.push({ artist: first, track: rest });
-      guesses.push({ artist: rest,  track: first });
-    }
-  }
-  // Channel-as-artist fallback. Often the channel name has " - Topic"
-  // suffix on auto-generated channels — strip it.
-  const ch = channel.replace(/\s*-\s*Topic\s*$/i, "").trim();
-  if (ch) guesses.push({ artist: ch, track: cleaned });
-  // Last resort — just the cleaned title as the track, blank artist.
-  // searchTrackUri can still hit on the bare track name in many cases.
-  guesses.push({ artist: "", track: cleaned });
-  // De-dup
-  const seen = new Set<string>();
-  return guesses.filter(g => {
-    const k = `${g.artist.toLowerCase()}::${g.track.toLowerCase()}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
-
-interface BotPlaylistItem { videoId: string; title: string; channel: string; durationSec: number }
-interface BotPlaylistResponse { playlist_id?: string; items?: BotPlaylistItem[]; error?: string }
-
-async function fetchYouTubePlaylistItems(playlistId: string): Promise<BotPlaylistItem[]> {
+async function fetchYouTubePlaylistResolve(playlistId: string): Promise<BotResolveResponse> {
   const params = new URLSearchParams({ id: playlistId });
   if (STREAM_PROXY_TOKEN) params.set("token", STREAM_PROXY_TOKEN);
-  const url = `${STREAM_PROXY_URL.replace(/\/$/, "")}/playlist-items?${params}`;
+  const url = `${STREAM_PROXY_URL.replace(/\/$/, "")}/playlist-resolve?${params}`;
   const res = await fetch(url);
+  const data = await res.json().catch(() => ({})) as BotResolveResponse;
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Bot proxy returned ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(data.error ?? `Bot proxy returned ${res.status}`);
   }
-  const data = await res.json() as BotPlaylistResponse;
-  if (data.error) throw new Error(data.error);
-  return data.items ?? [];
+  return data;
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -110,10 +69,6 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   try {
     const session = await getSession(env.SESSIONS, req);
     if (!session) return json({ error: "Not authenticated — sign in first" }, 401, req);
-
-    if (!session.spotify) {
-      return json({ error: "Connect Spotify on your profile at account.gokkehub.com first" }, 403, req);
-    }
 
     const room = await getRoom(env, roomId);
     if (!room) return json({ error: "Room not found" }, 404, req);
@@ -132,28 +87,34 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       return json({ error: "Couldn't recognise this URL as a Spotify or YouTube playlist" }, 400, req);
     }
 
-    // Refresh Spotify token if needed — both branches need it. The YouTube
-    // branch uses it to search Spotify for each video's matched track;
-    // the Spotify branch uses it to read the playlist directly.
-    let { accessToken, refreshToken, expiresAt } = session.spotify;
-    if (Date.now() > expiresAt - 60_000) {
-      const refreshed = await refreshSpotifyToken(env, refreshToken);
-      accessToken = refreshed.access_token;
-      expiresAt   = Date.now() + refreshed.expires_in * 1000;
-      const sessionId = parseSessionId(req.headers.get("Cookie"));
-      if (sessionId) {
-        await env.SESSIONS.put(
-          sessionId,
-          JSON.stringify({ ...session, spotify: { ...session.spotify, accessToken, expiresAt } }),
-          { expirationTtl: 604800 }
-        );
-      }
+    // Spotify branch needs the host's OAuth token to read their playlist
+    // (Spotify search doesn't expose the playlist contents). YouTube
+    // branch doesn't — the bot does its own client-credentials Spotify
+    // search, so anyone can import a YouTube playlist regardless of
+    // whether they have Spotify connected.
+    if (parsed.kind === "spotify" && !session.spotify) {
+      return json({ error: "Connect Spotify on your profile at account.gokkehub.com first to import a Spotify playlist (YouTube playlists work without it)." }, 403, req);
     }
 
     let imported: SpotifyTrack[] = [];
     let listName = "";
 
     if (parsed.kind === "spotify") {
+      // session.spotify is non-null thanks to the gate above.
+      let { accessToken, refreshToken, expiresAt } = session.spotify!;
+      if (Date.now() > expiresAt - 60_000) {
+        const refreshed = await refreshSpotifyToken(env, refreshToken);
+        accessToken = refreshed.access_token;
+        expiresAt   = Date.now() + refreshed.expires_in * 1000;
+        const sessionId = parseSessionId(req.headers.get("Cookie"));
+        if (sessionId) {
+          await env.SESSIONS.put(
+            sessionId,
+            JSON.stringify({ ...session, spotify: { ...session.spotify!, accessToken, expiresAt } }),
+            { expirationTtl: 604800 }
+          );
+        }
+      }
       const playlistId = parsed.id;
       // Fetch playlist name
       const metaRes = await fetch(
@@ -169,39 +130,24 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       listName = (await metaRes.json() as { name: string }).name;
       imported = await fetchPlaylistTracks(env, playlistId, accessToken);
     } else {
-      // YouTube branch: ask the bot's HTTP proxy for the playlist items,
-      // then map each video → Spotify track via Spotify search. Tracks
-      // we can't map to Spotify are silently dropped (game's playback
-      // paths all assume a Spotify track exists).
-      let items: BotPlaylistItem[];
+      // YouTube branch: single call to the bot's /playlist-resolve route
+      // which does playlist fetch + Spotify search + track shaping in one
+      // shot. Cloudflare Pages free plan caps each request at 50
+      // subrequests; running the search loop here blew it at ~15 videos.
+      // The bot has no such cap, so this scales cleanly to ~200 items.
+      let resolved: BotResolveResponse;
       try {
-        items = await fetchYouTubePlaylistItems(parsed.id);
+        resolved = await fetchYouTubePlaylistResolve(parsed.id);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return json({ error: `Couldn't load YouTube playlist: ${msg}` }, 502, req);
       }
-      if (items.length === 0) {
-        return json({ error: "YouTube playlist is empty or unavailable" }, 400, req);
-      }
-      listName = `YouTube playlist (${items.length} videos)`;
-
-      // Search Spotify for each item. Sequential to respect Spotify's
-      // rate limit; small inter-call delay matches searchManyWithDelay.
-      const seen = new Set<string>();
-      for (const item of items) {
-        const guesses = guessArtistTrack(item.title, item.channel);
-        let hit: SpotifyTrack | null = null;
-        for (const g of guesses) {
-          hit = await searchTrackUri(accessToken, g.artist, g.track);
-          if (hit) break;
-        }
-        if (!hit) continue;
-        if (seen.has(hit.id)) continue;
-        seen.add(hit.id);
-        imported.push({ ...hit, youtubeVideoId: item.videoId });
-        // Light pacing — 60 calls/min keeps us well under Spotify's limits.
-        await new Promise(r => setTimeout(r, 60));
-      }
+      imported = resolved.tracks ?? [];
+      const itemCount = resolved.item_count ?? imported.length;
+      const unmatched = resolved.unmatched ?? 0;
+      listName = unmatched > 0
+        ? `YouTube playlist (${imported.length} of ${itemCount} videos matched to Spotify)`
+        : `YouTube playlist (${imported.length} videos)`;
     }
 
     if (imported.length === 0) {
