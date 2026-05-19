@@ -50,10 +50,30 @@ async function fetchYouTubePlaylistResolve(playlistId: string): Promise<BotResol
   const params = new URLSearchParams({ id: playlistId });
   if (STREAM_PROXY_TOKEN) params.set("token", STREAM_PROXY_TOKEN);
   const url = `${STREAM_PROXY_URL.replace(/\/$/, "")}/playlist-resolve?${params}`;
-  const res = await fetch(url);
-  const data = await res.json().catch(() => ({})) as BotResolveResponse;
+
+  // Explicit 25s timeout so we never let the request linger past Cloudflare's
+  // wall-clock and trigger an edge 502 — better to surface our own JSON
+  // "bot proxy timed out" error than an HTML page.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    throw new Error(`Bot proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Read as text first so a non-JSON 5xx (e.g. openresty's branded HTML
+  // 502 page when its upstream times out) still surfaces a usable error
+  // body instead of crashing res.json() and falling through.
+  const rawBody = await res.text().catch(() => "");
+  let data: BotResolveResponse = {};
+  try { data = JSON.parse(rawBody) as BotResolveResponse; } catch { /* not JSON */ }
   if (!res.ok) {
-    throw new Error(data.error ?? `Bot proxy returned ${res.status}`);
+    const detail = data.error ?? (rawBody ? rawBody.slice(0, 200) : `HTTP ${res.status}`);
+    throw new Error(`Bot proxy returned ${res.status}: ${detail}`);
   }
   return data;
 }
