@@ -105,12 +105,25 @@ export default function LobbyPage() {
         credentials: "include",
         body:        JSON.stringify({ url: playlistUrl.trim() }),
       });
-      const data = await res.json() as { added: number; total: number; name: string; error?: string };
-      if (!res.ok) { setPlaylistError(data.error ?? "Failed to add playlist"); return; }
-      setPlaylistMsg(`Added ${data.added} songs from "${data.name}" (${data.total} total)`);
+      // Read as text first so a Cloudflare-edge 5xx HTML page (e.g.
+      // "Too many subrequests") doesn't crash res.json() and dump the
+      // user into a generic "Network error" message. Try to parse as
+      // JSON; fall back to the raw text excerpt so the actual cause
+      // surfaces instead of being silently swallowed.
+      const raw = await res.text();
+      let parsed: { added?: number; total?: number; name?: string; error?: string } = {};
+      try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
+      if (!res.ok) {
+        const detail = parsed.error
+          ?? (raw ? `HTTP ${res.status}: ${raw.slice(0, 300)}` : `HTTP ${res.status}`);
+        setPlaylistError(detail);
+        return;
+      }
+      setPlaylistMsg(`Added ${parsed.added ?? 0} songs from "${parsed.name ?? "playlist"}" (${parsed.total ?? 0} total)`);
       setPlaylistUrl("");
-    } catch {
-      setPlaylistError("Network error — check your connection and try again");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPlaylistError(`Couldn't reach the server: ${msg}`);
     } finally {
       setAddingPlaylist(false);
     }
