@@ -33,6 +33,8 @@ import {
   ButtonStyle,
   Events,
   MessageFlags,
+  type Guild,
+  type VoiceState,
 } from "discord.js";
 import { createClient, RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -59,6 +61,13 @@ import {
   type ResolvedTrack,
 } from "./resolver.js";
 import { startHttpStreamServer } from "./http-stream-server.js";
+import {
+  setSessionStoreClient,
+  upsertSession,
+  deleteSession,
+  loadAllSessions,
+  type PersistedSession,
+} from "./session-store.js";
 
 // ── Env ─────────────────────────────────────────────────────────────────────
 const {
@@ -103,6 +112,7 @@ const supabase: SupabaseClient = createClient(SB_URL, SB_SERVICE, {
 // Give the resolver access to Supabase so the YouTube-report flow can
 // read/write tl_youtube_reports without env-wiring of its own.
 setSupabaseClient(supabase);
+setSessionStoreClient(supabase);
 
 // Shape we read off tl_rooms for validation. Only the fields we use.
 interface TlRoomLite {
@@ -503,10 +513,17 @@ function describeSession(s: Session) {
   return `mode=${s.mode} room=${s.roomId ?? "(none)"} guild=${s.guildId} channel=${s.voiceChannelId}`;
 }
 
-async function teardownSession(guildId: string): Promise<Session | null> {
+// keepPersisted: leave the tl_discord_sessions row in place so the next
+// boot can recover this session. Used ONLY by the graceful-shutdown path —
+// every other caller (leave, AFK, kicked, mode-switch) wants the row gone.
+async function teardownSession(
+  guildId: string,
+  opts: { keepPersisted?: boolean } = {},
+): Promise<Session | null> {
   const existing = sessions.get(guildId);
   if (!existing) return null;
   sessions.delete(guildId);
+  if (!opts.keepPersisted) void deleteSession(guildId);
   const q = queues.get(guildId);
   if (q) {
     stopProgressTimer(q);
@@ -553,27 +570,20 @@ function preserveMusicQueueBeforeTeardown(guildId: string): void {
 // returns null) if the user isn't in a voice channel or the handshake fails.
 // Used by both /musix join (with realtime subscription added on top) and
 // /musix test (without).
-async function setupVoiceConnection(
-  ix: ChatInputCommandInteraction,
-): Promise<{ voice: VoiceConnection; player: AudioPlayer; voiceChannelId: string } | null> {
-  if (!ix.guildId || !ix.guild) {
-    await ix.editReply("This command only works in a server.");
-    return null;
-  }
-  const member = ix.guild.members.cache.get(ix.user.id)
-    ?? (await ix.guild.members.fetch(ix.user.id).catch(() => null));
-  const voiceChannelId = member?.voice?.channelId ?? null;
-  if (!voiceChannelId) {
-    await ix.editReply("Join a voice channel first, then try again.");
-    return null;
-  }
-
+// Interaction-free core: join a specific voice channel in a guild and
+// return a ready voice connection + player. Throws on failure so both the
+// interaction wrapper (which turns it into a user-facing message) and the
+// boot-time recovery path (which logs + drops the session) can handle it.
+async function connectToVoiceChannel(
+  guild: Guild,
+  voiceChannelId: string,
+): Promise<{ voice: VoiceConnection; player: AudioPlayer }> {
   let voice: VoiceConnection;
   try {
     voice = joinVoiceChannel({
       channelId:      voiceChannelId,
-      guildId:        ix.guildId,
-      adapterCreator: ix.guild.voiceAdapterCreator,
+      guildId:        guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
       selfDeaf:       true,
       selfMute:       false,
     });
@@ -590,13 +600,8 @@ async function setupVoiceConnection(
     await entersState(voice, VoiceConnectionStatus.Ready, 20_000);
   } catch (err) {
     const lastState = voice! ? voice.state.status : "(no connection)";
-    console.error(`[musix-bot] voice connection failed (last state: ${lastState}):`, err);
     try { (voice!).destroy(); } catch { /* may not exist */ }
-    await ix.editReply(
-      "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
-      "permissions on that channel, then try again.",
-    );
-    return null;
+    throw new Error(`voice connection failed (last state: ${lastState}): ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const player = createAudioPlayer();
@@ -606,11 +611,39 @@ async function setupVoiceConnection(
   player.on("error", (err) => console.warn(`[player/error] ${err.message}`));
   voice.subscribe(player);
   voice.on(VoiceConnectionStatus.Disconnected, () =>
-    console.log(`[voice] disconnected from guild ${ix.guildId}`));
+    console.log(`[voice] disconnected from guild ${guild.id}`));
   voice.on(VoiceConnectionStatus.Destroyed, () =>
-    console.log(`[voice] destroyed for guild ${ix.guildId}`));
+    console.log(`[voice] destroyed for guild ${guild.id}`));
 
-  return { voice, player, voiceChannelId };
+  return { voice, player };
+}
+
+async function setupVoiceConnection(
+  ix: ChatInputCommandInteraction,
+): Promise<{ voice: VoiceConnection; player: AudioPlayer; voiceChannelId: string } | null> {
+  if (!ix.guildId || !ix.guild) {
+    await ix.editReply("This command only works in a server.");
+    return null;
+  }
+  const member = ix.guild.members.cache.get(ix.user.id)
+    ?? (await ix.guild.members.fetch(ix.user.id).catch(() => null));
+  const voiceChannelId = member?.voice?.channelId ?? null;
+  if (!voiceChannelId) {
+    await ix.editReply("Join a voice channel first, then try again.");
+    return null;
+  }
+
+  try {
+    const { voice, player } = await connectToVoiceChannel(ix.guild, voiceChannelId);
+    return { voice, player, voiceChannelId };
+  } catch (err) {
+    console.error(`[musix-bot] ${err instanceof Error ? err.message : String(err)}`);
+    await ix.editReply(
+      "Couldn't connect to the voice channel. Make sure the bot has **Connect** + **Speak** " +
+      "permissions on that channel, then try again.",
+    );
+    return null;
+  }
 }
 
 // Subset of timelinedrop's SpotifyTrack we actually need — see
@@ -1278,6 +1311,156 @@ async function registerCommands() {
 }
 
 // ── Command handlers ────────────────────────────────────────────────────────
+// Build a game-mode Session, wire its realtime subscription, register it in
+// the live map and arm AFK disconnect. Shared by /musix join and boot-time
+// recovery so the (large) realtime callback block isn't duplicated. The
+// callbacks close over the returned session, so it's constructed before the
+// subscription is attached.
+function buildGameSession(params: {
+  guildId:         string;
+  roomCode:        string;
+  voiceChannelId:  string;
+  invitedByUserId: string;
+  textChannelId:   string | null;
+  voice:           VoiceConnection;
+  player:          AudioPlayer;
+}): Session {
+  const session: Session = {
+    mode:                    "game",
+    roomId:                  params.roomCode,
+    guildId:                 params.guildId,
+    voiceChannelId:          params.voiceChannelId,
+    invitedByUserId:         params.invitedByUserId,
+    startedAt:               Date.now(),
+    realtime:                null,
+    voice:                   params.voice,
+    player:                  params.player,
+    currentRoundId:          null,
+    currentRoundTeamId:      null,
+    currentRoundDurationSec: 0,
+    currentVideoId:          null,
+    currentTrackId:          null,
+    currentSongLimitSeconds: null,
+    reportedVideoFor:        null,
+    lastRedoRequestedAt:     null,
+    currentTurnTeamId:       null,
+    currentTurnHistory:      [],
+    scoresAtTurnStart:       new Map(),
+    afkTimer:                null,
+    songLimitTimer:          null,
+    playStartedAt:           0,
+    pauseStartedAt:          null,
+    pausedAccumulatedMs:     0,
+    notificationChannelId:   params.textChannelId,
+    currentMessage:          null,
+    progressTimer:           null,
+  };
+
+  session.realtime = startRealtimeForRoom(params.roomCode, {
+    onRoundInsert: (round) => { void playRoundTrack(session, round); },
+    onRoundUpdate: (round) => {
+      // Song Limiter token can change song_limit_seconds mid-round; outcome
+      // changes don't drive playback but we refresh the message so the
+      // scoreboard stays current.
+      if (round.id === session.currentRoundId) {
+        session.currentSongLimitSeconds = round.song_limit_seconds ?? null;
+        maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
+        void handleVideoReportApprovedTransition(session, round);
+        void handleRedoRequestedTransition(session, round);
+      }
+      // Mirror outcome/force_locked changes into the turn history so the
+      // active turn message and (later) the finalized summary list the
+      // right ✓/✗/🔒 marks beside each song.
+      if (round.id != null) {
+        const entry = session.currentTurnHistory.find(h => h.roundId === round.id);
+        if (entry) {
+          if (round.outcome === "correct" || round.outcome === "incorrect") {
+            entry.outcome = round.outcome;
+          }
+          if (round.force_locked != null) {
+            entry.forceLocked = !!round.force_locked;
+          }
+        }
+      }
+      void tickGameNowPlaying(session);
+    },
+    onRoomUpdate: (room) => {
+      syncPauseFromRoom(session, room);
+      // Game finished — finalize the current turn message with a game-over
+      // summary so the channel doesn't leave an open scoreboard hanging.
+      if (room.status === "finished" && session.currentTurnTeamId !== null && session.currentMessage) {
+        const prevTeamId = session.currentTurnTeamId;
+        // Mark consumed so we only fire once per status transition.
+        session.currentTurnTeamId = null;
+        void finalizePreviousTurnMessage(session, prevTeamId, "game-over");
+      }
+    },
+  });
+
+  sessions.set(params.guildId, session);
+  attachAfkDisconnect(session);
+  return session;
+}
+
+// Boot-time recovery (Phase 6). Re-establish every persisted game session:
+// re-join the voice channel, rebuild the live Session, and resume the active
+// round if the game's still in progress. Rows whose guild/room are gone,
+// finished, or no longer in discord-bot mode are dropped.
+async function recoverSessions(): Promise<void> {
+  const rows = await loadAllSessions();
+  if (rows.length === 0) return;
+  console.log(`[musix-bot] recovering ${rows.length} persisted session(s)...`);
+  for (const row of rows) {
+    try {
+      await recoverOneSession(row);
+    } catch (err) {
+      console.warn(`[musix-bot] recovery failed for guild ${row.guild_id}, dropping row:`, err);
+      await deleteSession(row.guild_id);
+    }
+  }
+}
+
+async function recoverOneSession(row: PersistedSession): Promise<void> {
+  const guild = await client.guilds.fetch(row.guild_id).catch(() => null);
+  if (!guild) {
+    console.log(`[musix-bot] recovery: guild ${row.guild_id} not found, dropping`);
+    await deleteSession(row.guild_id);
+    return;
+  }
+  const room = await fetchRoom(row.room_id);
+  if (!room || room.status === "finished" || room.settings?.audioMode !== "discord-bot") {
+    console.log(`[musix-bot] recovery: room ${row.room_id} gone/finished/not-bot-mode, dropping`);
+    await deleteSession(row.guild_id);
+    return;
+  }
+
+  const { voice, player } = await connectToVoiceChannel(guild, row.voice_channel_id);
+  const session = buildGameSession({
+    guildId:         row.guild_id,
+    roomCode:        row.room_id,
+    voiceChannelId:  row.voice_channel_id,
+    invitedByUserId: row.invited_by_user_id ?? "",
+    textChannelId:   row.text_channel_id,
+    voice,
+    player,
+  });
+  // Touch updated_at so we can tell live rows from stale ones later.
+  void upsertSession(row);
+
+  // Resume the active round directly (no welcome video on recovery — we
+  // want to get back to the game audio as fast as possible).
+  const midGameRoundId = (room.status === "playing" && room.current_round_id != null)
+    ? room.current_round_id
+    : null;
+  if (midGameRoundId != null) {
+    const activeRound = await fetchRoundById(midGameRoundId);
+    if (activeRound && activeRound.outcome === null) {
+      await playRoundTrack(session, activeRound);
+    }
+  }
+  console.log(`[musix-bot] recovered ${describeSession(session)}`);
+}
+
 async function handleJoin(ix: ChatInputCommandInteraction) {
   if (!ix.guildId || !ix.guild) {
     await ix.reply({ content: "This command only works in a server.", flags: MessageFlags.Ephemeral });
@@ -1319,83 +1502,25 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   const conn = await setupVoiceConnection(ix);
   if (!conn) return;
 
-  // Build the session first so the realtime callbacks below can close over
-  // it — they need access to the live session state (current round, song
-  // limit timer) for the room-update pause sync and Song Limiter.
-  const session: Session = {
-    mode:                    "game",
-    roomId:                  roomCode,
-    guildId:                 ix.guildId,
-    voiceChannelId:          conn.voiceChannelId,
-    invitedByUserId:         ix.user.id,
-    startedAt:               Date.now(),
-    realtime:                null,
-    voice:                   conn.voice,
-    player:                  conn.player,
-    currentRoundId:          null,
-    currentRoundTeamId:      null,
-    currentRoundDurationSec: 0,
-    currentVideoId:          null,
-    currentTrackId:          null,
-    currentSongLimitSeconds: null,
-    reportedVideoFor:        null,
-    lastRedoRequestedAt:     null,
-    currentTurnTeamId:       null,
-    currentTurnHistory:      [],
-    scoresAtTurnStart:       new Map(),
-    afkTimer:                null,
-    songLimitTimer:          null,
-    playStartedAt:           0,
-    pauseStartedAt:          null,
-    pausedAccumulatedMs:     0,
-    notificationChannelId:   ix.channelId,
-    currentMessage:          null,
-    progressTimer:           null,
-  };
-
-  session.realtime = startRealtimeForRoom(roomCode, {
-    onRoundInsert: (round) => { void playRoundTrack(session, round); },
-    onRoundUpdate: (round) => {
-      // Song Limiter token can change song_limit_seconds mid-round; outcome
-      // changes don't drive playback but we refresh the message so the
-      // scoreboard stays current.
-      if (round.id === session.currentRoundId) {
-        session.currentSongLimitSeconds = round.song_limit_seconds ?? null;
-        maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
-        void handleVideoReportApprovedTransition(session, round);
-        void handleRedoRequestedTransition(session, round);
-      }
-      // Mirror outcome/force_locked changes into the turn history so the
-      // active turn message and (later) the finalized summary list the
-      // right ✓/✗/🔒 marks beside each song.
-      if (round.id != null) {
-        const entry = session.currentTurnHistory.find(h => h.roundId === round.id);
-        if (entry) {
-          if (round.outcome === "correct" || round.outcome === "incorrect") {
-            entry.outcome = round.outcome;
-          }
-          if (round.force_locked != null) {
-            entry.forceLocked = !!round.force_locked;
-          }
-        }
-      }
-      void tickGameNowPlaying(session);
-    },
-    onRoomUpdate: (room) => {
-      syncPauseFromRoom(session, room);
-      // Game finished — finalize the current turn message with a game-over
-      // summary so the channel doesn't leave an open scoreboard hanging.
-      if (room.status === "finished" && session.currentTurnTeamId !== null && session.currentMessage) {
-        const prevTeamId = session.currentTurnTeamId;
-        // Mark consumed so we only fire once per status transition.
-        session.currentTurnTeamId = null;
-        void finalizePreviousTurnMessage(session, prevTeamId, "game-over");
-      }
-    },
+  const session = buildGameSession({
+    guildId:         ix.guildId,
+    roomCode,
+    voiceChannelId:  conn.voiceChannelId,
+    invitedByUserId: ix.user.id,
+    textChannelId:   ix.channelId,
+    voice:           conn.voice,
+    player:          conn.player,
   });
 
-  sessions.set(ix.guildId, session);
-  attachAfkDisconnect(session);
+  // Persist for restart recovery (Phase 6). Fire-and-forget — a
+  // persistence hiccup shouldn't block the join.
+  void upsertSession({
+    guild_id:           ix.guildId,
+    room_id:            roomCode,
+    voice_channel_id:   conn.voiceChannelId,
+    text_channel_id:    ix.channelId,
+    invited_by_user_id: ix.user.id,
+  });
 
   // If the game's already in progress when we join, the round-INSERT
   // realtime event has already fired before we subscribed — schedule the
@@ -1710,6 +1835,12 @@ client.once(Events.ClientReady, async (c) => {
   } catch (err) {
     console.error("[musix-bot] Failed to register commands:", err);
   }
+  // Phase 6 — re-join voice channels the bot was in before this restart.
+  try {
+    await recoverSessions();
+  } catch (err) {
+    console.error("[musix-bot] session recovery threw:", err);
+  }
 });
 
 client.on(Events.InteractionCreate, async (ix) => {
@@ -1745,11 +1876,50 @@ client.on(Events.InteractionCreate, async (ix) => {
   }
 });
 
+// Voice-state changes for the BOT ITSELF (Phase 6 reliability). Discord
+// fires this when the bot is dragged to another channel or disconnected /
+// kicked from voice. We only act when a LIVE session exists — our own
+// teardown deletes the session from the map first, so the channelId=null
+// event it triggers is ignored here (no double-teardown).
+client.on(Events.VoiceStateUpdate, (_oldState: VoiceState, newState: VoiceState) => {
+  const botId = client.user?.id;
+  if (!botId || newState.id !== botId) return;   // only the bot's own state
+  const guildId = newState.guild.id;
+  const session = sessions.get(guildId);
+  if (!session) return;
+
+  const newChannelId = newState.channelId;
+  if (newChannelId === null) {
+    // Disconnected / kicked from voice by a server member or admin.
+    console.log(`[voice] bot removed from voice in guild ${guildId} — tearing down session`);
+    void teardownSession(guildId);   // also deletes the persisted row
+    return;
+  }
+  if (newChannelId !== session.voiceChannelId) {
+    // Dragged to a different channel — @discordjs/voice follows the move
+    // automatically; we just update our record + the persisted row so a
+    // later recovery re-joins the right channel.
+    console.log(`[voice] bot moved ${session.voiceChannelId} → ${newChannelId} in guild ${guildId}`);
+    session.voiceChannelId = newChannelId;
+    if (session.mode === "game" && session.roomId) {
+      void upsertSession({
+        guild_id:           guildId,
+        room_id:            session.roomId,
+        voice_channel_id:   newChannelId,
+        text_channel_id:    session.notificationChannelId,
+        invited_by_user_id: session.invitedByUserId,
+      });
+    }
+  }
+});
+
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 async function shutdown(signal: string) {
   console.log(`[musix-bot] ${signal} received — tearing down...`);
   for (const guildId of Array.from(sessions.keys())) {
-    await teardownSession(guildId);
+    // keepPersisted: this is a graceful shutdown (deploy/restart), so we
+    // WANT the rows to survive — recoverSessions() re-joins on next boot.
+    await teardownSession(guildId, { keepPersisted: true });
   }
   client.destroy();
   process.exit(0);
