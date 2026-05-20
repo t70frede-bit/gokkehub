@@ -358,3 +358,51 @@ input[type="range"].orange-range::-moz-range-thumb {
   60%  { opacity: 1; filter: blur(0); }
   100% { transform: scale(1) rotate(0deg); opacity: 1; filter: blur(0); }
 }
+
+/* ── End-game finale (EndPage) ──────────────────────────────────────── */
+
+/* Podium steps rise from the floor on mount, staggered by inline delay so
+   2nd/3rd settle before the winner punches up. Overshoot easing gives a
+   small bounce as each step lands. */
+@keyframes podiumRise {
+  0%   { transform: scaleY(0);   opacity: 0; }
+  60%  { opacity: 1; }
+  100% { transform: scaleY(1);   opacity: 1; }
+}
+.podium-step {
+  transform-origin: bottom center;
+  animation: podiumRise 0.55s cubic-bezier(0.34, 1.45, 0.64, 1) forwards;
+}
+
+/* The winner's name/medal block pops in after the steps have risen. */
+@keyframes finaleStampIn {
+  0%   { transform: scale(1.8) rotate(-6deg); opacity: 0; }
+  55%  { transform: scale(0.94) rotate(1deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg);    opacity: 1; }
+}
+.finale-stamp { animation: finaleStampIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* Confetti — a fixed-position piece that falls the full viewport height
+   once and fades. Colour, horizontal position, delay, duration and drift
+   are set inline per piece so the burst looks organic. */
+@keyframes confettiFall {
+  0%   { transform: translate3d(0, -12vh, 0) rotate(0deg);      opacity: 1; }
+  100% { transform: translate3d(var(--drift, 0), 110vh, 0) rotate(720deg); opacity: 0; }
+}
+.confetti-piece {
+  position: fixed;
+  top: 0;
+  width: 8px;
+  height: 13px;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 30;
+  will-change: transform, opacity;
+  animation: confettiFall var(--dur, 2.6s) cubic-bezier(0.45, 0, 0.7, 1) var(--delay, 0s) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .podium-step  { animation: none; transform: scaleY(1); opacity: 1; }
+  .finale-stamp { animation: none; }
+  .confetti-piece { display: none; }
+}
