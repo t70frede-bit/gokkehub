@@ -289,6 +289,10 @@ export interface TlRound {
   // gets re-judged or the realtime echo replays.
   shop_artist_pointed:            boolean;
   shop_song_pointed:              boolean;
+  // Artist Picker (migration 020): set when the captain chose this round's
+  // song via the artist_picker token. The round earns no token/shop reward
+  // — picking a song you know shouldn't also hand you a bonus.
+  bonus_blocked:                  boolean;
 }
 
 export interface StageRequest {

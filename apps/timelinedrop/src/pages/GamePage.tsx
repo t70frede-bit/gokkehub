@@ -2142,6 +2142,10 @@ export default function GamePage() {
   // Card Remover arming — captain clicks the token, picks an opposing card
   // in the picker modal, then the POST burns the token + deletes the card.
   const [cardRemoverArmed, setCardRemoverArmed] = useState(false);
+  // Artist Picker — two-phase via /room/:id/picker. First click fetches 3
+  // artist options (null = closed), then the modal POSTs the chosen one.
+  const [artistPickerOptions, setArtistPickerOptions] = useState<string[] | null>(null);
+  const [artistPickerBusy, setArtistPickerBusy] = useState(false);
   // Cover-reveal floating thumbnail: click to enlarge.
   const [coverEnlarged, setCoverEnlarged] = useState(false);
 
@@ -2562,9 +2566,52 @@ export default function GamePage() {
   }
 
   // Use a typed token via the /token endpoint. Effects vary by type.
+  // Artist Picker uses its own /picker endpoint (pool swap), not /token.
+  // Phase 1: fetch the 3 artist options and open the picker modal.
+  async function openArtistPicker() {
+    if (!round) return;
+    setTokenTrayOpen(false);
+    setArtistPickerBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/picker`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, action: "options" }),
+      });
+      const data = await res.json().catch(() => ({})) as { options?: string[]; error?: string };
+      if (!res.ok) { showActionError(`Artist Picker: ${data.error ?? res.status}`); return; }
+      setArtistPickerOptions(data.options ?? []);
+    } catch (err) {
+      showActionError(`Artist Picker: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setArtistPickerBusy(false);
+    }
+  }
+  // Phase 2: commit the chosen artist. Round track updates via realtime.
+  async function pickArtist(artist: string) {
+    if (!round) return;
+    setArtistPickerBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/picker`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, action: "pick", choice: artist }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        showActionError(`Artist Picker: ${data.error ?? res.status}`);
+        return;
+      }
+      setArtistPickerOptions(null);
+    } catch (err) {
+      showActionError(`Artist Picker: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setArtistPickerBusy(false);
+    }
+  }
+
   async function useTypedToken(type: TokenType, payload?: Record<string, unknown>) {
     if (!round) return;
     if (type === "song_skipper") return useSongSkipperToken();
+    if (type === "artist_picker") { void openArtistPicker(); return; }
     if (type === "more_or_less") {
       // Two-phase: first click opens the "pick a card" mode, the actual POST
       // happens when the captain clicks a timeline card.
@@ -3568,6 +3615,50 @@ export default function GamePage() {
             Cancel
           </button>
         </div>
+      )}
+
+      {/* ── Artist Picker ──────────────────────────────────────────────── */}
+      {artistPickerOptions !== null && (
+        <Modal open onClose={() => setArtistPickerOptions(null)} maxWidth="420px">
+          <h2
+            className="font-extrabold mb-1"
+            style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
+          >
+            🎤 Artist Picker
+          </h2>
+          <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+            Pick an artist and this round's song becomes one of theirs. You won't
+            earn a token from a song you chose.
+          </p>
+          {artistPickerOptions.length === 0 ? (
+            <p className="text-sm opacity-70">No upcoming artists to pick from right now.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {artistPickerOptions.map(a => (
+                <button
+                  key={a}
+                  onClick={() => pickArtist(a)}
+                  disabled={artistPickerBusy}
+                  className="text-left rounded-lg px-4 py-3 font-semibold transition-all border disabled:opacity-50"
+                  style={{
+                    borderColor: "rgba(var(--color-primary-rgb),0.4)",
+                    background:  "rgba(var(--color-primary-rgb),0.10)",
+                  }}
+                >
+                  🎤 {a}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => setArtistPickerOptions(null)}
+            disabled={artistPickerBusy}
+            className="mt-4 text-xs underline disabled:opacity-50"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Cancel
+          </button>
+        </Modal>
       )}
 
       {/* ── Card Remover picker ────────────────────────────────────────── */}

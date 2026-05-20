@@ -1038,6 +1038,9 @@ async function awardBonusIfEligible(
   tokenEconomy: "standard" | "bonus" | "shop",
 ): Promise<TlTeam | null> {
   if (!round || round.bonus_awarded) return null;
+  // Artist Picker (and future Genre Picker) rounds earn no reward — the
+  // captain chose the song, so a bonus on top would be a freebie.
+  if (round.bonus_blocked) return null;
   if (round.outcome !== "correct") return null;
   if (round.artist_correct !== true || round.songname_correct !== true) return null;
   // Shop mode handles rewards per-correct-field via maybeAwardShopPoints;
@@ -1082,6 +1085,7 @@ async function maybeAwardShopPoints(
 ): Promise<TlTeam | null> {
   if (tokenEconomy !== "shop") return null;
   if (!round || round.outcome !== "correct") return null;
+  if (round.bonus_blocked) return null;   // Artist/Genre Picker rounds earn nothing
   let pointsToAdd = 0;
   const roundUpdate: Partial<TlRound> = {};
   if (round.artist_correct === true && !round.shop_artist_pointed) {

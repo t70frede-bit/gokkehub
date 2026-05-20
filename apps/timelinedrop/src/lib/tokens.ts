@@ -78,7 +78,7 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     short: "Artist pick",
     description: "Pick one of three artists for the next card. You can't earn tokens from that round.",
     icon: "🎤",
-    implemented: false,
+    implemented: true,
   },
 
   // ── during_listen ────────────────────────────────────────────────────────
