@@ -18,26 +18,40 @@ function useRoomCodeFromPath(): string | undefined {
   return m?.[1];
 }
 
-// Lets pages flip the room-code chip off in the global header (streamer mode,
-// gamemaster mode). Pages call `useHeaderControls().setHideRoomCode(true)`
-// in a useEffect that depends on the relevant settings; App reads the
-// current value and passes it to GameHeader. Resets to false on unmount so
-// the next page doesn't inherit a stale value.
-interface HeaderControls {
-  hideRoomCode: boolean;
-  setHideRoomCode: (b: boolean) => void;
+// Lets pages control the global header's room-code chip + invite button.
+//
+// Two independent flags:
+//  - hideRoomCode: hides the always-visible room-code chip. ON for both
+//    streamer mode (don't leak the code on stream) and gamemaster mode.
+//  - hideInvite:   hides the copy-link / QR button. ON only for gamemaster
+//    mode (solo play, nobody to invite). Streamer mode KEEPS the invite
+//    button so the host can still share the link with friends — the code
+//    just isn't pinned to the top of the screen the whole time.
+//
+// hideRoomCode DEFAULTS TO TRUE: the header reads roomCode from the URL
+// instantly, but whether to show it depends on room settings that load
+// async. Defaulting hidden means a streamer room never flashes its code
+// for the frame before the settings arrive. Pages flip it to the real
+// value once room data is loaded (and reset to the safe default on
+// unmount). Normal rooms briefly hide the code on load then reveal it —
+// an acceptable trade for never leaking a streamer's code.
+interface HeaderState { hideRoomCode: boolean; hideInvite: boolean }
+interface HeaderControls extends HeaderState {
+  setHeaderControls: (next: HeaderState) => void;
 }
+const DEFAULT_HEADER: HeaderState = { hideRoomCode: true, hideInvite: false };
 const HeaderControlsContext = createContext<HeaderControls>({
-  hideRoomCode: false,
-  setHideRoomCode: () => {},
+  ...DEFAULT_HEADER,
+  setHeaderControls: () => {},
 });
 export function useHeaderControls(): HeaderControls {
   return useContext(HeaderControlsContext);
 }
+export const DEFAULT_HEADER_CONTROLS = DEFAULT_HEADER;
 function HeaderControlsProvider({ children }: { children: ReactNode }) {
-  const [hideRoomCode, setHideRoomCode] = useState(false);
+  const [state, setState] = useState<HeaderState>(DEFAULT_HEADER);
   return (
-    <HeaderControlsContext.Provider value={{ hideRoomCode, setHideRoomCode }}>
+    <HeaderControlsContext.Provider value={{ ...state, setHeaderControls: setState }}>
       {children}
     </HeaderControlsContext.Provider>
   );
@@ -46,7 +60,7 @@ function HeaderControlsProvider({ children }: { children: ReactNode }) {
 function AppShell() {
   const { session } = useSession();
   const roomCode    = useRoomCodeFromPath();
-  const { hideRoomCode } = useHeaderControls();
+  const { hideRoomCode, hideInvite } = useHeaderControls();
   return (
     <div className="min-h-dvh flex flex-col">
       <GameHeader
@@ -55,6 +69,7 @@ function AppShell() {
         LinkComponent={Link}
         roomCode={roomCode}
         hideRoomCode={hideRoomCode}
+        hideInvite={hideInvite}
       />
       <main className="flex-1 flex flex-col">
         <Routes>

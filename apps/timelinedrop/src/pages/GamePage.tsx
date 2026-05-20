@@ -4,7 +4,7 @@ import { Button, Modal, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
-import { useHeaderControls } from "../App";
+import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
 import { supabase } from "../lib/supabase";
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../lib/types";
@@ -2228,14 +2228,21 @@ export default function GamePage() {
   // captain in turn-taking; mirrors the server-side actsAsCaptain check.
   const singleScreen = !!(state?.room.settings?.gamemasterMode || state?.room.settings?.singleScreenMode);
 
-  // Hide the room code in the global header when streamer mode or gamemaster
-  // mode is on. Mirrors the LobbyPage effect. Resets on unmount.
-  const { setHideRoomCode } = useHeaderControls();
-  const hideCode = !!(state?.room.settings?.streamerMode || state?.room.settings?.gamemasterMode);
+  // Drive the global header's code chip + invite button. Mirrors LobbyPage:
+  // hideRoomCode for streamer OR gamemaster; hideInvite for gamemaster only.
+  // Gated on stateLoaded so the code never flashes before settings arrive.
+  const { setHeaderControls } = useHeaderControls();
+  const headerStateLoaded   = !!state;
+  const headerStreamerMode  = !!state?.room.settings?.streamerMode;
+  const headerGamemaster    = !!(state?.room.settings?.gamemasterMode || state?.room.settings?.singleScreenMode);
   useEffect(() => {
-    setHideRoomCode(hideCode);
-    return () => setHideRoomCode(false);
-  }, [hideCode, setHideRoomCode]);
+    if (!headerStateLoaded) return;
+    setHeaderControls({
+      hideRoomCode: headerStreamerMode || headerGamemaster,
+      hideInvite:   headerGamemaster,
+    });
+    return () => setHeaderControls(DEFAULT_HEADER_CONTROLS);
+  }, [headerStateLoaded, headerStreamerMode, headerGamemaster, setHeaderControls]);
   // Audio source — browser (Spotify Web SDK in this tab) vs discord-bot
   // (separate Node.js bot in the host's voice channel; see bots/musix-discord).
   // Default is browser to preserve the original behaviour.

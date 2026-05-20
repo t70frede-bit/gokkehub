@@ -30,8 +30,12 @@ export interface GameHeaderProps {
 
   /** Optional active room — when set, the header shows the code centred and a copy-link button. */
   roomCode?:      string;
-  /** Hide the room code (streamer mode). */
+  /** Hide the always-visible room-code chip (streamer mode + gamemaster mode). */
   hideRoomCode?:  boolean;
+  /** Hide the copy-link / QR button (gamemaster mode only). Streamer mode
+   *  leaves this false so the host can still share the join link even
+   *  though the code chip is hidden. */
+  hideInvite?:    boolean;
   /** Override the invite URL — defaults to https://gokkehub.com/join?room=CODE so players land on the hub. */
   inviteUrl?:     string;
   /** Override the small label rendered before the code (default: "Lobby"). */
@@ -63,6 +67,7 @@ export function GameHeader({
   rightExtras,
   roomCode,
   hideRoomCode = false,
+  hideInvite   = false,
   inviteUrl,
   roomLabel    = "Room",
 }: GameHeaderProps) {
@@ -121,9 +126,11 @@ export function GameHeader({
         )}
       </div>
 
-      {/* Right: copy invite + extras + account */}
+      {/* Right: copy invite + extras + account. The invite button is gated
+          by hideInvite (gamemaster), NOT hideRoomCode — so a streamer who's
+          hidden the code chip can still copy/share the join link. */}
       <div className="flex items-center gap-2 flex-shrink-0">
-        {roomCode && !hideRoomCode && (
+        {roomCode && !hideInvite && (
           <CopyInviteButton
             url={inviteUrl ?? `https://gokkehub.com/join?room=${encodeURIComponent(roomCode)}`}
           />

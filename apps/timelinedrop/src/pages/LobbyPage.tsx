@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, CopyInviteButton, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
-import { useHeaderControls } from "../App";
+import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
 import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
@@ -55,14 +55,24 @@ export default function LobbyPage() {
     if (state?.room.status === "playing") navigate(`/game/${roomId}`);
   }, [state?.room.status, roomId, navigate]);
 
-  // Hide the room code in the global header when streamer mode or gamemaster
-  // mode is on. Reset on unmount so other pages don't inherit the flag.
-  const { setHideRoomCode } = useHeaderControls();
-  const streamerOrGamemaster = !!(state?.room.settings?.streamerMode || state?.room.settings?.gamemasterMode);
+  // Drive the global header's code chip + invite button.
+  //  - hideRoomCode: streamer OR gamemaster (don't pin the code on screen)
+  //  - hideInvite:   gamemaster only (streamer can still share the link)
+  // Only set once room data has loaded (stateLoaded) so the chip never
+  // flashes the code for the frame before settings arrive — the context
+  // defaults to hidden. Reset to that default on unmount.
+  const { setHeaderControls } = useHeaderControls();
+  const stateLoaded     = !!state;
+  const streamerMode    = !!state?.room.settings?.streamerMode;
+  const gamemasterMode  = !!(state?.room.settings?.gamemasterMode || state?.room.settings?.singleScreenMode);
   useEffect(() => {
-    setHideRoomCode(streamerOrGamemaster);
-    return () => setHideRoomCode(false);
-  }, [streamerOrGamemaster, setHideRoomCode]);
+    if (!stateLoaded) return;
+    setHeaderControls({
+      hideRoomCode: streamerMode || gamemasterMode,
+      hideInvite:   gamemasterMode,
+    });
+    return () => setHeaderControls(DEFAULT_HEADER_CONTROLS);
+  }, [stateLoaded, streamerMode, gamemasterMode, setHeaderControls]);
 
   if (error)  return <Centered>Error: {error}</Centered>;
   if (!state) return <Centered>Loading…</Centered>;
@@ -248,7 +258,10 @@ export default function LobbyPage() {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          {!streamerOrGamemaster && roomId && (
+          {/* Show the copy/QR control in streamer mode too — the streamer
+              still needs to invite friends; only the always-on code chip
+              is hidden. Gamemaster mode is solo, so no invite there. */}
+          {!gamemastering && roomId && (
             <CopyInviteButton
               url={`https://gokkehub.com/join?room=${encodeURIComponent(roomId)}`}
               size="md"
