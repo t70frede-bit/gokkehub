@@ -2188,6 +2188,29 @@ export default function GamePage() {
 
   // Host-only management menu.
   const [hostMenuOpen, setHostMenuOpen] = useState(false);
+  // "❗ Error?" button — any player can flag an issue with the current round
+  // (no song playing, wrong song, bad audio, other). Host then approves via
+  // the top-level banner. Reuses the existing video_report_* propose/approve
+  // columns plus the new issue_report_reason text (migration 021).
+  const [errorMenuOpen, setErrorMenuOpen] = useState(false);
+  const [errorBusy,     setErrorBusy]     = useState(false);
+  async function reportIssue(reason: string) {
+    if (!round) return;
+    setErrorBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/round?action=report-video`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, reason }),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        console.warn("[error?] report failed:", res.status, t.slice(0, 200));
+      }
+    } finally {
+      setErrorBusy(false);
+      setErrorMenuOpen(false);
+    }
+  }
   // Dev tools — only renders if the signed-in user's Discord handle is in
   // DEV_USERNAMES. Server gates the /room/:id/dev endpoint by the same list,
   // so a manual flip here without the server allowlist does nothing.
@@ -2922,6 +2945,24 @@ export default function GamePage() {
               title="Developer tools (you only)"
             >
               🛠 Dev
+            </button>
+          )}
+
+          {/* Error? button — any player can flag a problem with the current
+              round (no song playing, wrong song, etc.). Host approves via
+              the top-level banner that appears mid-round. */}
+          {round && (
+            <button
+              onClick={() => setErrorMenuOpen(true)}
+              className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+              style={{
+                background: round.video_report_proposed ? "rgba(220,160,0,0.22)" : "rgba(220,60,60,0.12)",
+                border:     `1px solid ${round.video_report_proposed ? "rgba(220,160,0,0.55)" : "rgba(220,60,60,0.35)"}`,
+                color:      round.video_report_proposed ? "rgb(220,160,0)" : "rgb(220,140,140)",
+              }}
+              title="Report an issue with this round (no song playing, wrong song, etc.)"
+            >
+              ❗ Error?
             </button>
           )}
 
@@ -3758,6 +3799,86 @@ export default function GamePage() {
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {/* ── Error? reasons modal ───────────────────────────────────────── */}
+      {errorMenuOpen && round && (
+        <Modal open onClose={() => setErrorMenuOpen(false)} maxWidth="420px">
+          <h2 className="font-extrabold mb-1"
+            style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
+            ❗ Report an issue
+          </h2>
+          <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+            What's wrong? The host will see your report and decide what to do.
+          </p>
+          <div className="flex flex-col gap-2">
+            {[
+              { emoji: "🔇", label: "No song is playing at all" },
+              { emoji: "🎵", label: "Wrong song or bad audio"   },
+              { emoji: "⏯",  label: "Audio is glitching / cutting out" },
+              { emoji: "📝", label: "Other issue"               },
+            ].map(({ emoji, label }) => (
+              <button
+                key={label}
+                onClick={() => reportIssue(label)}
+                disabled={errorBusy}
+                className="text-left rounded-lg px-4 py-3 font-semibold transition-all border disabled:opacity-50"
+                style={{
+                  borderColor: "rgba(220,60,60,0.4)",
+                  background:  "rgba(220,60,60,0.10)",
+                }}
+              >
+                {emoji} {label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setErrorMenuOpen(false)}
+            disabled={errorBusy}
+            className="mt-4 text-xs underline disabled:opacity-50"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Cancel
+          </button>
+        </Modal>
+      )}
+
+      {/* Host approval banner for in-flight issue reports. Appears mid-round
+          (before reveal) so the host can act on it without waiting until the
+          guess is over. The in-reveal ReportVideoControl handles the same
+          report once the reveal panel is up, so we suppress this banner
+          after outcome resolves to avoid double-rendering. */}
+      {round && round.video_report_proposed && !round.video_report_approved && isHost && round.outcome === null && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-40 rounded-lg p-3 flex items-center gap-3 max-w-[min(560px,92vw)]"
+          style={{
+            top:        "calc(var(--header-height, 56px) + 8px)",
+            background: "rgba(220,160,0,0.18)",
+            border:     "1px solid rgba(220,160,0,0.55)",
+            boxShadow:  "var(--shadow-elevated)",
+          }}
+        >
+          <span style={{ color: "rgb(220,160,0)", fontSize: "var(--text-sm)" }}>
+            ⚠ <strong>{round.video_report_proposed_name ?? "A player"}</strong> reports
+            {round.issue_report_reason ? <>: <em>{round.issue_report_reason}</em></> : <> an issue with this round</>}
+          </span>
+          <div className="flex gap-1 ml-auto flex-shrink-0">
+            <button
+              onClick={() => approveVideoReport(true)}
+              className="text-xs font-bold px-2.5 py-1 rounded"
+              style={{ background: "rgba(40,180,60,0.22)", color: "rgb(40,180,60)", border: "1px solid rgba(40,180,60,0.5)" }}
+            >
+              ✓ Approve
+            </button>
+            <button
+              onClick={() => approveVideoReport(false)}
+              className="text-xs font-bold px-2.5 py-1 rounded"
+              style={{ background: "rgba(220,60,60,0.18)", color: "rgb(220,60,60)", border: "1px solid rgba(220,60,60,0.45)" }}
+            >
+              ✗ Reject
+            </button>
+          </div>
         </div>
       )}
 

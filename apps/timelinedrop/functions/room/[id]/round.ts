@@ -501,8 +501,13 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
 // ── Bad-YouTube-version flow (player proposes; host approves; redo) ─────────
 
 async function handleReportVideo(req: Request, roomId: string, env: Env) {
-  const body = await req.json() as { round_id: number; player_id: string };
+  const body = await req.json() as { round_id: number; player_id: string; reason?: string };
   const { round_id, player_id } = body;
+  // Trim + cap the reason so the column doesn't grow unbounded if some
+  // future UI lets players free-type their own. Empty / unset → null.
+  const reason = typeof body.reason === "string"
+    ? body.reason.trim().slice(0, 200) || null
+    : null;
 
   const [room, round, players] = await Promise.all([
     getRoom(env, roomId), getRound(env, round_id), getPlayers(env, roomId),
@@ -515,8 +520,9 @@ async function handleReportVideo(req: Request, roomId: string, env: Env) {
     video_report_proposed:      true,
     video_report_proposed_by:   player_id,
     video_report_proposed_name: me.name,
+    issue_report_reason:        reason,
   } as Partial<TlRound>);
-  return json({ ok: true, proposed: true }, 200, req);
+  return json({ ok: true, proposed: true, reason }, 200, req);
 }
 
 async function handleApproveVideoReport(req: Request, roomId: string, env: Env) {

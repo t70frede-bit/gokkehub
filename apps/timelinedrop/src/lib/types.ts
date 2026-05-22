@@ -283,6 +283,10 @@ export interface TlRound {
   video_report_proposed_name:     string | null;
   video_report_approved:          boolean;
   redo_requested_at:              string | null; // ISO timestamp
+  // Migration 021 — free-text reason supplied by the "Error?" button so the
+  // host's approval banner can show "Player X reports: <reason>" instead of
+  // a generic "wrong video" label. Reuses the same propose/approve flags.
+  issue_report_reason:            string | null;
   // Shop-mode idempotency guards (migration 018). When tokenEconomy ===
   // "shop", flipping artist_correct/songname_correct to true credits +1
   // point to the team; the flag below stops re-credits if the field
