@@ -1311,6 +1311,51 @@ async function registerCommands() {
 }
 
 // ── Command handlers ────────────────────────────────────────────────────────
+// Pick the text channel the bot should speak in. If a command is run in a
+// channel whose name contains "bot", the bot answers right there. Otherwise
+// it looks for any text channel whose name contains "bot" (e.g. #bot-spam,
+// #musix-bot) and routes its output there to keep the other channels clean.
+// Falls back to the invoked channel when no such channel exists. Reads from
+// the guild channel cache (populated by the Guilds intent — no extra intent
+// needed). Applies to every command + the ongoing game/queue messages.
+function resolveBotChannelId(guild: Guild | null, invokedChannelId: string | null): string | null {
+  if (!guild || !invokedChannelId) return invokedChannelId;
+  const invoked = guild.channels.cache.get(invokedChannelId) as { name?: string } | undefined;
+  if ((invoked?.name ?? "").toLowerCase().includes("bot")) return invokedChannelId;
+  const botChannel = guild.channels.cache.find((c) => {
+    const ch = c as { name?: string; isTextBased?: () => boolean; isVoiceBased?: () => boolean };
+    return typeof ch.name === "string"
+      && ch.name.toLowerCase().includes("bot")
+      && ch.isTextBased?.() === true
+      && ch.isVoiceBased?.() !== true;
+  });
+  return botChannel?.id ?? invokedChannelId;
+}
+
+// Send a command's public answer to the resolved bot channel. Discord
+// requires us to respond to the interaction itself, so when the answer is
+// routed elsewhere we ack the invoked channel with a small pointer; when
+// the bot channel IS the invoked channel we just reply in place.
+async function answerInBotChannel(ix: ChatInputCommandInteraction, content: string): Promise<void> {
+  const targetId = resolveBotChannelId(ix.guild, ix.channelId);
+  if (targetId && targetId !== ix.channelId) {
+    try {
+      const ch = await client.channels.fetch(targetId);
+      if (ch && ch.isTextBased() && "send" in ch) {
+        await (ch as unknown as { send: (c: string) => Promise<unknown> }).send(content);
+        const pointer = `↪ Replied in <#${targetId}>`;
+        if (ix.deferred || ix.replied) await ix.editReply(pointer);
+        else                            await ix.reply({ content: pointer, flags: MessageFlags.Ephemeral });
+        return;
+      }
+    } catch (err) {
+      console.warn("[musix-bot] bot-channel redirect failed, replying in place:", err);
+    }
+  }
+  if (ix.deferred || ix.replied) await ix.editReply(content);
+  else                            await ix.reply(content);
+}
+
 // Build a game-mode Session, wire its realtime subscription, register it in
 // the live map and arm AFK disconnect. Shared by /musix join and boot-time
 // recovery so the (large) realtime callback block isn't duplicated. The
@@ -1502,12 +1547,16 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   const conn = await setupVoiceConnection(ix);
   if (!conn) return;
 
+  // Route all of this game's messages (now-playing, turn summaries) to the
+  // server's bot channel when /join was run somewhere else.
+  const botChannelId = resolveBotChannelId(ix.guild, ix.channelId);
+
   const session = buildGameSession({
     guildId:         ix.guildId,
     roomCode,
     voiceChannelId:  conn.voiceChannelId,
     invitedByUserId: ix.user.id,
-    textChannelId:   ix.channelId,
+    textChannelId:   botChannelId,
     voice:           conn.voice,
     player:          conn.player,
   });
@@ -1518,7 +1567,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     guild_id:           ix.guildId,
     room_id:            roomCode,
     voice_channel_id:   conn.voiceChannelId,
-    text_channel_id:    ix.channelId,
+    text_channel_id:    botChannelId,
     invited_by_user_id: ix.user.id,
   });
 
@@ -1553,7 +1602,7 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
     playTestTone(conn.player, 660, 0.8, "welcome chime");
   }
 
-  await ix.editReply(
+  await answerInBotChannel(ix,
     `🎵 Joined <#${conn.voiceChannelId}> and following room **${roomCode}**. ` +
     `Each new round will play the song in voice automatically.`,
   );
@@ -1578,7 +1627,7 @@ async function handleLeave(ix: ChatInputCommandInteraction) {
     return;
   }
   const where = cleared.roomId ? `room **${cleared.roomId}**` : "the voice channel";
-  await ix.reply(`👋 Left ${where}. ${cleared.mode === "music" ? "Queue saved — `/musix play` to resume." : ""}`.trim());
+  await answerInBotChannel(ix, `👋 Left ${where}. ${cleared.mode === "music" ? "Queue saved — `/musix play` to resume." : ""}`.trim());
   console.log(`[musix-bot] /leave → cleared session: ${describeSession(cleared)}`);
 }
 
@@ -1671,7 +1720,9 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
   };
 
   const queue = getOrCreateQueue(ix.guildId);
-  if (ix.channelId) queue.notificationChannelId = ix.channelId;
+  // Auto-advance / now-playing messages route to the bot channel too.
+  const queueChannelId = resolveBotChannelId(ix.guild, ix.channelId);
+  if (queueChannelId) queue.notificationChannelId = queueChannelId;
   queue.upcoming.push(item);
 
   // If nothing is currently playing, advance immediately — that pops the
@@ -1685,9 +1736,9 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
     // reply is a brief acknowledgement.
     const willPlay = queue.upcoming[0]!;
     if (willPlay === item) {
-      await ix.editReply(`▶ Starting playback — **${item.title}** (${fmtSec(item.durationSec)}).`);
+      await answerInBotChannel(ix, `▶ Starting playback — **${item.title}** (${fmtSec(item.durationSec)}).`);
     } else {
-      await ix.editReply(
+      await answerInBotChannel(ix,
         `➕ Queued **${item.title}** at #${queue.upcoming.length}. ` +
         `Resuming queue from **${willPlay.title}**.`,
       );
@@ -1695,7 +1746,7 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
     void advanceQueue(session); // default notify:true → channel.send
   } else {
     const position = queue.upcoming.length;
-    await ix.editReply(`➕ Queued **${item.title}** (${fmtSec(item.durationSec)}) at position #${position}.`);
+    await answerInBotChannel(ix, `➕ Queued **${item.title}** (${fmtSec(item.durationSec)}) at position #${position}.`);
   }
   console.log(`[musix-bot] /${label} → queued "${item.title}" (queue=${queue.upcoming.length}, current=${queue.current?.title ?? "(none)"})`);
 }
