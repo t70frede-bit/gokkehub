@@ -229,11 +229,17 @@ function stripSongSuffix(s: string): string {
  */
 export function normalizeAnswer(raw: string, kind: "artist" | "songname"): string {
   let s = raw.toLowerCase().trim();
+  // Drop apostrophes (straight ', curly ’ ‘, backtick `, accent ´) by
+  // JOINING the letters — so "don't" === "dont", "rock'n'roll" === "rocknroll".
+  // Done before the generic punctuation strip (which would also remove them,
+  // but explicit-and-early guarantees every apostrophe glyph collapses the
+  // same way and survives the suffix pass intact).
+  s = s.replace(/['’‘`´]/g, "");
   if (kind === "songname") {
     s = stripSongSuffix(s);
   }
   s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");      // strip accents
-  s = s.replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();    // strip punctuation, collapse whitespace
+  s = s.replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();    // strip remaining punctuation, collapse whitespace
   return s;
 }
 

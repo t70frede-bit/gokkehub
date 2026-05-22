@@ -2,10 +2,16 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button, Modal, Panel } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
+import { useSession } from "../hooks/useSession";
 import { useDJAudio, useListenerAudio } from "../hooks/useAudio";
 import { useDJWebRTC, useListenerWebRTC } from "../hooks/useWebRTC";
 import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
 import { supabase } from "../lib/supabase";
+
+// Discord handles that unlock the dev tools panel. The server gates the
+// /room/:id/dev endpoint by the SAME list against session.displayName, so
+// changing this here without updating the server has no effect.
+const DEV_USERNAMES = new Set(["goksi0501"]);
 import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
@@ -1400,6 +1406,10 @@ interface RevealProps {
    *  wrong placement when round.recovery_armed is true. */
   pendingTracks:        SpotifyTrack[];
   onJudge:              (verdict: boolean) => Promise<void>;
+  /** Shop mode only: judge artist + songname independently (1 point each). */
+  onJudgeKind:          (kind: "artist" | "songname", verdict: boolean) => Promise<void>;
+  /** tokenEconomy === "shop" — split the combined judge into per-field rows. */
+  shopEnabled:          boolean;
   onFinalize:           () => Promise<void>;
   onStop:               () => void;
   onNext:               () => void;
@@ -1414,7 +1424,7 @@ interface RevealProps {
 function RevealOverlay({
   round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost, isDiscordBot,
   myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
-  onJudge, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
+  onJudge, onJudgeKind, shopEnabled, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
   onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
@@ -1638,20 +1648,44 @@ function RevealOverlay({
               )}
             </div>
 
-            <CombinedJudgeRow
-              songnameGuess={round.songname_guess ?? ""}
-              artistGuess={round.artist_guess ?? ""}
-              actualSongname={round.track.name}
-              actualArtist={round.track.artist}
-              verdict={combinedVerdict}
-              canJudge={isJudgeEligible}
-              onJudge={onJudge}
-              voteMode={isVoteMode}
-              finalized={finalized}
-              votes={round.songname_votes}
-              myPlayerId={myPlayerId}
-              totalVoters={totalEligibleVoters}
-            />
+            {shopEnabled ? (
+              // Shop mode: artist + song scored independently (1 point each),
+              // so judge each on its own row instead of one combined verdict.
+              <div className="space-y-2">
+                <SplitJudgeRow
+                  label="Song name"
+                  guess={round.songname_guess ?? ""}
+                  actual={round.track.name}
+                  verdict={round.songname_correct}
+                  canJudge={isJudgeEligible}
+                  onJudge={(v) => onJudgeKind("songname", v)}
+                />
+                <SplitJudgeRow
+                  label="Artist"
+                  guess={round.artist_guess ?? ""}
+                  actual={round.track.artist}
+                  verdict={round.artist_correct}
+                  canJudge={isJudgeEligible}
+                  onJudge={(v) => onJudgeKind("artist", v)}
+                />
+                <p className="text-[11px] opacity-50 text-center">Each correct field = 1 point 🪙</p>
+              </div>
+            ) : (
+              <CombinedJudgeRow
+                songnameGuess={round.songname_guess ?? ""}
+                artistGuess={round.artist_guess ?? ""}
+                actualSongname={round.track.name}
+                actualArtist={round.track.artist}
+                verdict={combinedVerdict}
+                canJudge={isJudgeEligible}
+                onJudge={onJudge}
+                voteMode={isVoteMode}
+                finalized={finalized}
+                votes={round.songname_votes}
+                myPlayerId={myPlayerId}
+                totalVoters={totalEligibleVoters}
+              />
+            )}
 
             {!isJudgeEligible && !finalized && (
               <p className="text-xs text-center opacity-50">{judgePendingMessage(judgeMode)}</p>
@@ -1750,6 +1784,63 @@ function YearStamp({ year, variant }: { year: number; variant: "right" | "wrong"
         }}>
           {year}
         </p>
+      </div>
+    </div>
+  );
+}
+
+// One judgeable field (artist OR song name) with its own ✓/✗. Used in shop
+// mode where each field is worth a point independently. verdict is the
+// per-field round flag (artist_correct / songname_correct).
+function SplitJudgeRow({
+  label, guess, actual, verdict, canJudge, onJudge,
+}: {
+  label:    string;
+  guess:    string;
+  actual:   string;
+  verdict:  boolean | null;
+  canJudge: boolean;
+  onJudge:  (v: boolean) => void;
+}) {
+  return (
+    <div className="rounded-lg p-3"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+      <p className="text-[10px] uppercase tracking-wider opacity-50 mb-0.5">{label}</p>
+      <p className="text-sm">
+        <span className="opacity-60">Guessed </span>
+        <span className="font-semibold">{guess || <span className="opacity-40 italic">—</span>}</span>
+      </p>
+      <p className="text-xs mb-2">
+        <span className="opacity-50">Actual </span>
+        <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actual}</span>
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => canJudge && onJudge(true)}
+          disabled={!canJudge}
+          className="text-sm font-bold py-1.5 rounded transition-all disabled:cursor-default"
+          style={{
+            background: verdict === true ? "rgba(40,180,60,0.22)" : "transparent",
+            border:    `1px solid ${verdict === true ? "rgba(40,180,60,0.65)" : "rgba(255,255,255,0.12)"}`,
+            color:      verdict === true ? "rgb(40,180,60)" : "rgb(var(--text-muted-rgb))",
+            opacity:    canJudge ? 1 : 0.7,
+          }}
+        >
+          ✓ Correct
+        </button>
+        <button
+          onClick={() => canJudge && onJudge(false)}
+          disabled={!canJudge}
+          className="text-sm font-bold py-1.5 rounded transition-all disabled:cursor-default"
+          style={{
+            background: verdict === false ? "rgba(220,60,60,0.22)" : "transparent",
+            border:    `1px solid ${verdict === false ? "rgba(220,60,60,0.65)" : "rgba(255,255,255,0.12)"}`,
+            color:      verdict === false ? "rgb(220,60,60)" : "rgb(var(--text-muted-rgb))",
+            opacity:    canJudge ? 1 : 0.7,
+          }}
+        >
+          ✗ Wrong
+        </button>
       </div>
     </div>
   );
@@ -2097,6 +2188,29 @@ export default function GamePage() {
 
   // Host-only management menu.
   const [hostMenuOpen, setHostMenuOpen] = useState(false);
+  // Dev tools — only renders if the signed-in user's Discord handle is in
+  // DEV_USERNAMES. Server gates the /room/:id/dev endpoint by the same list,
+  // so a manual flip here without the server allowlist does nothing.
+  const { session: devSession } = useSession();
+  const isDev = !!devSession?.displayName && DEV_USERNAMES.has(devSession.displayName.toLowerCase());
+  const [devOpen, setDevOpen] = useState(false);
+  const [devBusy, setDevBusy] = useState(false);
+  async function devAdjustPoints(teamId: number, delta: number) {
+    if (!roomId || !myPlayerId) return;
+    setDevBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/dev`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ player_id: myPlayerId, action: "adjust-points", team_id: teamId, delta }),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        console.warn("[dev] adjust-points failed:", res.status, t.slice(0, 200));
+      }
+    } finally {
+      setDevBusy(false);
+    }
+  }
 
   // Player-leave notifications (transient).
   const [leaveToasts, setLeaveToasts] = useState<{ id: string; name: string }[]>([]);
@@ -2478,6 +2592,16 @@ export default function GamePage() {
     });
   }
 
+  // Shop mode: judge artist or song individually (server credits 1 point per
+  // correct field via maybeAwardShopPoints).
+  async function judgeKind(kind: "artist" | "songname", verdict: boolean) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=judge`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, kind, verdict }),
+    });
+  }
+
   async function proposeYearCorrection(year: number) {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=propose-year`, {
@@ -2782,6 +2906,24 @@ export default function GamePage() {
             );
           })()}
           {/* Timer moved to next to the team name (above). */}
+
+          {/* Dev tools — only visible if the signed-in user is in DEV_USERNAMES.
+              Opens a small modal to nudge team state for testing (shop
+              points only for now; expand as needed). */}
+          {isDev && (
+            <button
+              onClick={() => setDevOpen(true)}
+              className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+              style={{
+                background: "rgba(220,140,40,0.18)",
+                border:     "1px solid rgba(220,140,40,0.45)",
+                color:      "rgb(220,160,90)",
+              }}
+              title="Developer tools (you only)"
+            >
+              🛠 Dev
+            </button>
+          )}
 
           {/* Host management menu */}
           {isHost && (
@@ -3464,6 +3606,8 @@ export default function GamePage() {
             pendingCount={activeTeam?.pending_tracks?.length ?? 0}
             pendingTracks={(activeTeam?.pending_tracks ?? []) as SpotifyTrack[]}
             onJudge={judge}
+            onJudgeKind={judgeKind}
+            shopEnabled={settings.tokenEconomy === "shop"}
             onFinalize={finalizeJudgment}
             onStop={() => doTurnAction("stop")}
             onNext={() => doTurnAction("next")}
@@ -3615,6 +3759,48 @@ export default function GamePage() {
             Cancel
           </button>
         </div>
+      )}
+
+      {/* ── Dev tools (goksi0501 only) ─────────────────────────────────── */}
+      {devOpen && isDev && (
+        <Modal open onClose={() => setDevOpen(false)} maxWidth="460px">
+          <h2 className="font-extrabold mb-1"
+            style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
+            🛠 Developer tools
+          </h2>
+          <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+            Adjust live state for testing. Not visible to anyone else.
+          </p>
+          <p className="text-xs uppercase tracking-wider opacity-60 mb-2">Shop points (per team)</p>
+          <div className="flex flex-col gap-2">
+            {teams.map(t => (
+              <div key={t.id} className="flex items-center gap-2 px-3 py-2 rounded-md"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <span className="flex-1 font-semibold text-sm truncate" title={t.name}>{t.name}</span>
+                <span className="text-sm font-mono opacity-80 w-10 text-right">{t.points ?? 0}</span>
+                {[-5, -1, +1, +5].map(d => (
+                  <button
+                    key={d}
+                    onClick={() => devAdjustPoints(t.id, d)}
+                    disabled={devBusy}
+                    className="text-xs font-bold px-2 py-1 rounded transition-all disabled:opacity-50"
+                    style={{
+                      background: d > 0 ? "rgba(40,180,60,0.15)" : "rgba(220,60,60,0.15)",
+                      border:     `1px solid ${d > 0 ? "rgba(40,180,60,0.45)" : "rgba(220,60,60,0.45)"}`,
+                      color:       d > 0 ? "rgb(40,180,60)" : "rgb(220,60,60)",
+                      minWidth:    "36px",
+                    }}
+                  >
+                    {d > 0 ? `+${d}` : d}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] opacity-50 mt-4">
+            Want more knobs (score / tokens)? Say the word and I'll wire them in.
+          </p>
+        </Modal>
       )}
 
       {/* ── Artist Picker ──────────────────────────────────────────────── */}
