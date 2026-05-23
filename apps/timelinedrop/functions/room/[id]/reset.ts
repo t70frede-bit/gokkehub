@@ -58,6 +58,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   }
 
   await req(env, "DELETE", "tl_team_tokens", `room_id=eq.${roomId}`);
+  await req(env, "DELETE", "tl_shop_pings",  `room_id=eq.${roomId}`);
   await req(env, "DELETE", "tl_rounds",      `room_id=eq.${roomId}`);
 
   // Zero out every team's per-game state.

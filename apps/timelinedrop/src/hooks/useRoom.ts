@@ -2,8 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import type {
   TlRoom, TlTeam, TlPlayer, TlRound,
-  TlTimelineEntry, TlNote, TlPing, TlTeamToken, GameState,
+  TlTimelineEntry, TlNote, TlPing, TlShopPing, TlTeamToken, GameState,
 } from "../lib/types";
+
+// Shop pings auto-expire on the client this many seconds after creation.
+// Server-side they sit in tl_shop_pings until reset; the cutoff here is
+// purely UI ("the captain saw it, move on").
+const SHOP_PING_TTL_SEC = 12;
 
 export function useRoom(roomId: string | undefined, myPlayerId: string | undefined) {
   const [state, setState] = useState<GameState | null>(null);
@@ -33,9 +38,11 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
 
       // Load timeline for all teams
       const teamIds = (teamsRes.data as TlTeam[]).map(t => t.id);
-      const [timelineRes, tokensRes] = await Promise.all([
+      const cutoff  = new Date(Date.now() - SHOP_PING_TTL_SEC * 1000).toISOString();
+      const [timelineRes, tokensRes, shopPingsRes] = await Promise.all([
         supabase.from("tl_timeline").select("*").in("team_id", teamIds).order("position"),
         supabase.from("tl_team_tokens").select("*").eq("room_id", roomId).is("used_at", null),
+        supabase.from("tl_shop_pings").select("*").eq("room_id", roomId).gte("created_at", cutoff).order("created_at"),
       ]);
 
       const timelines: Record<number, TlTimelineEntry[]> = {};
@@ -79,6 +86,7 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
         timelines,
         notes,
         pings,
+        shopPings: (shopPingsRes.data ?? []) as TlShopPing[],
         tokens,
         myPlayer: ((playersRes.data ?? []) as TlPlayer[]).find(p => p.id === myPlayerId) ?? null,
         tokenActivation: null,
@@ -244,6 +252,13 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           if (typeof removedId !== "number") return s;
           return { ...s, pings: s.pings.filter(p => p.id !== removedId) };
         }))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "tl_shop_pings", filter: `room_id=eq.${roomId}` },
+        (payload) => setState(s => {
+          if (!s) return s;
+          const sp = payload.new as TlShopPing;
+          if (s.shopPings.some(p => p.id === sp.id)) return s;
+          return { ...s, shopPings: [...s.shopPings, sp] };
+        }))
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_team_tokens", filter: `room_id=eq.${roomId}` },
         (payload) => {
           // Detect activation: an UPDATE whose new.used_at is set. used_at is
@@ -286,6 +301,21 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
       channel.unsubscribe();
     };
   }, [roomId, myPlayerId]);
+
+  // Sweep expired shop pings out of local state. The server keeps them in
+  // tl_shop_pings until reset, but the UI only cares about recent ones.
+  useEffect(() => {
+    const t = setInterval(() => {
+      setState(s => {
+        if (!s || s.shopPings.length === 0) return s;
+        const cutoff = Date.now() - SHOP_PING_TTL_SEC * 1000;
+        const next = s.shopPings.filter(p => Date.parse(p.created_at) >= cutoff);
+        if (next.length === s.shopPings.length) return s;
+        return { ...s, shopPings: next };
+      });
+    }, 1500);
+    return () => clearInterval(t);
+  }, []);
 
   return { state, error, clearTokenActivation };
 }

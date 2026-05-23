@@ -2864,6 +2864,15 @@ export default function GamePage() {
     // realtime tl_team_tokens INSERT + tl_teams UPDATE handle the UI refresh
   }
 
+  async function pingShopToken(teamId: number, tokenType: string) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/shop-ping`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ player_id: myPlayerId, team_id: teamId, token_type: tokenType }),
+    });
+    // realtime INSERT pushes the row to every client (incl. ours).
+  }
+
   async function dismissPing(pingId: number) {
     if (!myPlayerId) return;
     try {
@@ -4084,15 +4093,16 @@ export default function GamePage() {
                         const spec = TOKEN_CATALOG[type as TokenType];
                         const affordable = pts >= cost;
                         const buyable    = canBuy && affordable;
+                        // Pings for this team's tile. canBuy means I AM that
+                        // captain — in which case I see incoming pings as a
+                        // 🔔 badge. Anyone else sees a small "Ping" button.
+                        const tilePings = (state?.shopPings ?? []).filter(
+                          p => p.team_id === viewTeam.id && p.token_type === type,
+                        );
                         return (
-                          <button
+                          <div
                             key={type}
-                            onClick={async () => {
-                              if (!buyable) return;
-                              await buyToken(type);
-                            }}
-                            disabled={!buyable}
-                            className="text-left rounded-md p-2 flex items-start gap-2 transition-all disabled:cursor-not-allowed"
+                            className="rounded-md p-2 flex items-start gap-2 transition-all relative"
                             style={{
                               background: buyable ? "rgba(var(--color-primary-rgb),0.10)" : "transparent",
                               border:     `1px solid rgba(var(--color-primary-rgb), ${buyable ? 0.35 : 0.12})`,
@@ -4117,8 +4127,50 @@ export default function GamePage() {
                                 </span>
                               </div>
                               <p className="text-[11px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{spec.description}</p>
+                              <div className="flex items-center gap-2 mt-1.5">
+                                {buyable && (
+                                  <button
+                                    onClick={() => buyToken(type)}
+                                    className="text-[11px] font-bold px-2 py-0.5 rounded"
+                                    style={{
+                                      background: "rgba(var(--color-primary-rgb),0.22)",
+                                      color:      "rgb(var(--color-primary-rgb))",
+                                      border:     "1px solid rgba(var(--color-primary-rgb),0.5)",
+                                    }}
+                                  >
+                                    Buy
+                                  </button>
+                                )}
+                                {!canBuy && (
+                                  <button
+                                    onClick={() => pingShopToken(viewTeam.id, type)}
+                                    className="text-[11px] px-2 py-0.5 rounded transition-transform active:scale-95"
+                                    style={{
+                                      background: "rgba(220,160,0,0.12)",
+                                      color:      "rgb(220,160,0)",
+                                      border:     "1px solid rgba(220,160,0,0.4)",
+                                    }}
+                                    title={isMyTeamShop ? "Nudge your captain to buy this" : "Suggest this to the other team"}
+                                  >
+                                    🔔 Ping
+                                  </button>
+                                )}
+                                {tilePings.length > 0 && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                    style={{
+                                      background: "rgba(220,160,0,0.22)",
+                                      color:      "rgb(220,160,0)",
+                                      border:     "1px solid rgba(220,160,0,0.5)",
+                                    }}
+                                    title={tilePings.map(p => p.player_name).join(", ")}
+                                  >
+                                    🔔 {tilePings.length}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>

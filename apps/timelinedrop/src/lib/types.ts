@@ -250,6 +250,16 @@ export interface TlPlayer {
 
 export type Confidence = "known" | "likely" | "stretch" | "wild";
 
+export interface TlShopPing {
+  id:          number;
+  room_id:     string;
+  team_id:     number;
+  token_type:  string;
+  player_id:   string;
+  player_name: string;
+  created_at:  string;
+}
+
 export interface TlTeamToken {
   id:             number;
   room_id:        string;
@@ -404,6 +414,7 @@ export interface GameState {
   timelines:        Record<number, TlTimelineEntry[]>; // teamId → sorted entries
   notes:            TlNote[];
   pings:            TlPing[];
+  shopPings:        TlShopPing[];                  // shop-tile attention bumps (migration 024)
   tokens:           Record<number, TlTeamToken[]>; // teamId → tokens (granted, not yet used)
   myPlayer:         TlPlayer | null;
   tokenActivation:  TokenActivation | null;       // most recent activation; cleared by consumer
