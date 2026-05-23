@@ -23,11 +23,11 @@ const COUNTER_WINDOW_SEC = 15;
 // participate; one-shot destructive tokens (card_remover, artist_picker)
 // are NOT counterable — by the time a counter fires the effect has
 // already mutated opponent state and undoing it is brittle.
-// Tokens whose effect can be cleanly rolled back via a single round
-// column flip. One-shot tokens that write to other tables (reference_point
-// inserts a tl_notes row; card_remover deletes a tl_timeline row;
-// artist_picker rotates the upcoming pool) are NOT counterable because
-// the rollback path would need to track + reverse those side-effects.
+// Tokens whose effect can be reversed. Most flip a single round column;
+// reference_point's rollback deletes the system-authored tl_notes row
+// it inserted (round-keyed lookup, no migration needed). Tokens that
+// already mutated opponent state (card_remover, artist_picker) are
+// excluded — undoing those is brittle.
 const COUNTERABLE = new Set<string>([
   "cover_reveal",
   "cover_reveal_before",
@@ -36,6 +36,7 @@ const COUNTERABLE = new Set<string>([
   "year_span_5",
   "force_lock",
   "song_limiter",
+  "reference_point",
 ]);
 
 async function rollbackEffect(env: Env, roundId: number, tokenType: string): Promise<void> {
@@ -59,6 +60,22 @@ async function rollbackEffect(env: Env, roundId: number, tokenType: string): Pro
     case "song_limiter":
       await updateRound(env, roundId, { song_limit_seconds: null });
       return;
+    case "reference_point": {
+      // Reference Point inserts a single tl_notes row (kind="reference",
+      // player_id="system") per round. We round-key the delete instead of
+      // tracking a specific note id — only one reference note ever
+      // exists per round, so this is unambiguous + needs no schema.
+      const url = `${env.SUPABASE_URL}/rest/v1/tl_notes?round_id=eq.${roundId}&kind=eq.reference&player_id=eq.system`;
+      await fetch(url, {
+        method:  "DELETE",
+        headers: {
+          apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          Prefer:        "return=minimal",
+        },
+      });
+      return;
+    }
     default:
       return;
   }
