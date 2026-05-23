@@ -1421,10 +1421,10 @@ interface RevealProps {
   onFinalize:           () => Promise<void>;
   onStop:               () => void;
   onNext:               () => void;
-  onProposeYear:        (year: number) => Promise<void>;
+  onProposeYear:        (year: number, refundToken?: boolean) => Promise<void>;
   onApproveYear:        (approve: boolean) => Promise<void>;
   onRecoveryPick:       (trackId: string) => Promise<void>;
-  onReportVideo:        () => Promise<void>;
+  onReportVideo:        (requestRedo?: boolean) => Promise<void>;
   onApproveVideoReport: (approve: boolean) => Promise<void>;
   onRedoRound:          () => Promise<void>;
 }
@@ -1494,7 +1494,6 @@ function RevealOverlay({
             round={round}
             isHost={isHost}
             myPlayerId={myPlayerId}
-            onPropose={onProposeYear}
             onApprove={onApproveYear}
           />
 
@@ -1503,9 +1502,15 @@ function RevealOverlay({
             isHost={isHost}
             isDiscordBot={isDiscordBot}
             myPlayerId={myPlayerId}
-            onReport={onReportVideo}
             onApprove={onApproveVideoReport}
             onRedo={onRedoRound}
+          />
+
+          <IssueDropdown
+            round={round}
+            isDiscordBot={isDiscordBot}
+            onProposeYear={onProposeYear}
+            onReportVideo={onReportVideo}
           />
 
           <div className="rounded-xl p-3"
@@ -1543,7 +1548,6 @@ function RevealOverlay({
             round={round}
             isHost={isHost}
             myPlayerId={myPlayerId}
-            onPropose={onProposeYear}
             onApprove={onApproveYear}
           />
 
@@ -1552,9 +1556,15 @@ function RevealOverlay({
             isHost={isHost}
             isDiscordBot={isDiscordBot}
             myPlayerId={myPlayerId}
-            onReport={onReportVideo}
             onApprove={onApproveVideoReport}
             onRedo={onRedoRound}
+          />
+
+          <IssueDropdown
+            round={round}
+            isDiscordBot={isDiscordBot}
+            onProposeYear={onProposeYear}
+            onReportVideo={onReportVideo}
           />
 
           <div className="rounded-xl p-3"
@@ -1630,7 +1640,6 @@ function RevealOverlay({
           round={round}
           isHost={isHost}
           myPlayerId={myPlayerId}
-          onPropose={onProposeYear}
           onApprove={onApproveYear}
         />
 
@@ -1639,9 +1648,15 @@ function RevealOverlay({
           isHost={isHost}
           isDiscordBot={isDiscordBot}
           myPlayerId={myPlayerId}
-          onReport={onReportVideo}
           onApprove={onApproveVideoReport}
           onRedo={onRedoRound}
+        />
+
+        <IssueDropdown
+          round={round}
+          isDiscordBot={isDiscordBot}
+          onProposeYear={onProposeYear}
+          onReportVideo={onReportVideo}
         />
 
         {hasGuess && (
@@ -1952,23 +1967,23 @@ function CombinedJudgeRow({
 
 // Year correction: any player can propose, host approves. Host's own propose
 // applies immediately (the server takes care of that). When a proposal is
-// pending, the host sees an approve/reject banner.
+// pending, the host sees an approve/reject banner. Trigger/editor moved into
+// IssueDropdown (the unified "❓ Correct an issue?" entry); this widget now
+// only renders pending banners and the corrected-year badge.
 function YearCorrectionWidget({
-  round, isHost, myPlayerId, onPropose, onApprove,
+  round, isHost, myPlayerId, onApprove,
 }: {
   round:       TlRound;
   isHost:      boolean;
   myPlayerId:  string;
-  onPropose:   (year: number) => Promise<void>;
   onApprove:   (approve: boolean) => Promise<void>;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState<string>(String(round.corrected_year ?? round.track.releaseYear));
-  const [busy, setBusy]       = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const corrected = round.corrected_year !== null;
   const proposed  = round.year_correction_proposed !== null;
   const proposedByMe = round.year_correction_proposed_by === myPlayerId;
+  const wantsRefund = round.issue_request_type === "year_refund";
 
   // Host: pending approval banner
   if (proposed && isHost) {
@@ -1978,6 +1993,7 @@ function YearCorrectionWidget({
         <span style={{ color: "rgb(220,160,0)" }}>
           ⚠️ <strong>{round.year_correction_proposed_name ?? "Someone"}</strong> proposes year{" "}
           <strong>{round.year_correction_proposed}</strong> instead of <strong>{round.track.releaseYear}</strong>
+          {wantsRefund && <em> &nbsp;+ refund their used token</em>}
         </span>
         <div className="flex gap-2 ml-auto">
           <button
@@ -1986,7 +2002,7 @@ function YearCorrectionWidget({
             className="text-xs font-bold px-3 py-1 rounded"
             style={{ background: "rgba(40,180,60,0.2)", color: "rgb(40,180,60)", border: "1px solid rgba(40,180,60,0.4)" }}
           >
-            ✓ Approve
+            ✓ Approve{wantsRefund && " + refund"}
           </button>
           <button
             onClick={async () => { setBusy(true); try { await onApprove(false); } finally { setBusy(false); } }}
@@ -2005,7 +2021,8 @@ function YearCorrectionWidget({
   if (proposed) {
     return (
       <p className="text-xs text-center opacity-70" style={{ color: "rgb(220,160,0)" }}>
-        ⏳ {proposedByMe ? "You" : (round.year_correction_proposed_name ?? "Someone")} proposed <strong>{round.year_correction_proposed}</strong> — waiting for host
+        ⏳ {proposedByMe ? "You" : (round.year_correction_proposed_name ?? "Someone")} proposed <strong>{round.year_correction_proposed}</strong>
+        {wantsRefund && " (+ token refund)"} — waiting for host
       </p>
     );
   }
@@ -2019,57 +2036,7 @@ function YearCorrectionWidget({
     );
   }
 
-  // Editor (open or trigger)
-  if (!editing) {
-    return (
-      <button
-        onClick={() => setEditing(true)}
-        className="text-xs opacity-50 hover:opacity-90 underline"
-      >
-        Year wrong? Propose a correction
-      </button>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2 justify-center flex-wrap">
-      <span className="text-xs opacity-60">Correct year:</span>
-      <input
-        type="number"
-        min={1900}
-        max={2100}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        autoFocus
-        className="w-20 rounded px-2 py-1 text-sm font-mono outline-none"
-        style={{
-          background: "rgba(var(--surface-raised-rgb),0.5)",
-          border:     "1px solid rgba(255,255,255,0.15)",
-          color:      "inherit",
-        }}
-      />
-      <button
-        onClick={async () => {
-          const y = parseInt(draft, 10);
-          if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
-          setBusy(true);
-          try { await onPropose(y); setEditing(false); }
-          finally { setBusy(false); }
-        }}
-        disabled={busy}
-        className="text-xs font-bold px-3 py-1 rounded"
-        style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.4)" }}
-      >
-        {isHost ? "Apply" : "Propose"}
-      </button>
-      <button
-        onClick={() => setEditing(false)}
-        className="text-xs opacity-50"
-      >
-        Cancel
-      </button>
-    </div>
-  );
+  return null;
 }
 
 // ── Bad-YouTube-version widget ────────────────────────────────────────────────
@@ -2079,13 +2046,12 @@ function YearCorrectionWidget({
 // IS the source of truth there).
 function VideoReportWidget({
   round, isHost, isDiscordBot, myPlayerId,
-  onReport, onApprove, onRedo,
+  onApprove, onRedo,
 }: {
   round:         TlRound;
   isHost:        boolean;
   isDiscordBot:  boolean;
   myPlayerId:    string;
-  onReport:      () => Promise<void>;
   onApprove:     (approve: boolean) => Promise<void>;
   onRedo:        () => Promise<void>;
 }) {
@@ -2094,9 +2060,10 @@ function VideoReportWidget({
   if (!isDiscordBot) return null;
   if (!round.bot_video_id) return null;  // bot hasn't published a video yet (e.g. browser audio mode just switched)
 
-  const proposed   = round.video_report_proposed;
+  const proposed     = round.video_report_proposed;
   const proposedByMe = round.video_report_proposed_by === myPlayerId;
-  const approved   = round.video_report_approved;
+  const approved     = round.video_report_approved;
+  const wantsRedo    = round.issue_request_type === "video_redo";
 
   // Host: pending approval banner
   if (proposed && isHost) {
@@ -2104,7 +2071,8 @@ function VideoReportWidget({
       <div className="rounded-lg p-3 text-sm flex items-center gap-2 flex-wrap"
         style={{ background: "rgba(220,160,0,0.12)", border: "1px solid rgba(220,160,0,0.4)" }}>
         <span style={{ color: "rgb(220,160,0)" }}>
-          👎 <strong>{round.video_report_proposed_name ?? "Someone"}</strong> says this is the wrong YouTube version (wrong song, bad audio, music video with long intro, etc.).
+          👎 <strong>{round.video_report_proposed_name ?? "Someone"}</strong> says this is the wrong YouTube version
+          {wantsRedo && <em> &nbsp;+ wants the round redone</em>}.
         </span>
         <div className="flex gap-2 ml-auto">
           <button
@@ -2113,7 +2081,7 @@ function VideoReportWidget({
             className="text-xs font-bold px-3 py-1 rounded"
             style={{ background: "rgba(40,180,60,0.2)", color: "rgb(40,180,60)", border: "1px solid rgba(40,180,60,0.4)" }}
           >
-            ✓ Approve
+            ✓ Approve{wantsRedo && " + redo"}
           </button>
           <button
             onClick={async () => { setBusy(true); try { await onApprove(false); } finally { setBusy(false); } }}
@@ -2132,7 +2100,8 @@ function VideoReportWidget({
   if (proposed) {
     return (
       <p className="text-xs text-center opacity-70" style={{ color: "rgb(220,160,0)" }}>
-        ⏳ {proposedByMe ? "You" : (round.video_report_proposed_name ?? "Someone")} flagged the YouTube version — waiting for host
+        ⏳ {proposedByMe ? "You" : (round.video_report_proposed_name ?? "Someone")} flagged the YouTube version
+        {wantsRedo && " (+ redo)"} — waiting for host
       </p>
     );
   }
@@ -2164,15 +2133,169 @@ function VideoReportWidget({
     );
   }
 
-  // Default: trigger button (any player)
+  return null;
+}
+
+// ── Unified "❓ Correct an issue?" dropdown ───────────────────────────────────
+// Replaces the two separate trigger links ("Year wrong?" and "Wrong song?").
+// One entry point, four branches:
+//   1. Correct year                    (server: propose-year, no refund)
+//   2. Correct year + refund my token  (server: propose-year, refund_token: true)
+//   3. Report YouTube version          (server: report-video, no redo)
+//   4. Report video + do the round over (server: report-video, request_redo: true)
+// Hidden once anything is already proposed/approved — the existing widgets
+// take over for those states.
+function IssueDropdown({
+  round, isDiscordBot, onProposeYear, onReportVideo,
+}: {
+  round:          TlRound;
+  isDiscordBot:   boolean;
+  onProposeYear:  (year: number, refundToken: boolean) => Promise<void>;
+  onReportVideo:  (requestRedo: boolean) => Promise<void>;
+}) {
+  type Branch = null | "year" | "year_refund" | "video" | "video_redo";
+  const [open, setOpen]   = useState(false);
+  const [branch, setBranch] = useState<Branch>(null);
+  const [draft, setDraft]   = useState<string>(String(round.corrected_year ?? round.track.releaseYear));
+  const [busy, setBusy]     = useState(false);
+
+  // Already proposed / corrected → don't show the trigger; the year/video
+  // widgets handle the in-flight state. Hide entirely once everything's done.
+  const yearLocked  = round.year_correction_proposed !== null;
+  const videoLocked = round.video_report_proposed || round.video_report_approved;
+  if (yearLocked || videoLocked) return null;
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="text-xs opacity-60 hover:opacity-100 underline"
+      >
+        ❓ Correct an issue?
+      </button>
+    );
+  }
+
+  // Submit a year branch — needs a valid 1900–2100 number.
+  async function submitYear(refund: boolean) {
+    const y = parseInt(draft, 10);
+    if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
+    setBusy(true);
+    try {
+      await onProposeYear(y, refund);
+      setOpen(false);
+      setBranch(null);
+    } finally { setBusy(false); }
+  }
+
+  async function submitVideo(redo: boolean) {
+    setBusy(true);
+    try {
+      await onReportVideo(redo);
+      setOpen(false);
+      setBranch(null);
+    } finally { setBusy(false); }
+  }
+
   return (
-    <button
-      onClick={async () => { setBusy(true); try { await onReport(); } finally { setBusy(false); } }}
-      disabled={busy}
-      className="text-xs opacity-50 hover:opacity-90 underline"
-    >
-      👎 Wrong song or bad YouTube version? Let us know
-    </button>
+    <div className="rounded-lg p-3 text-sm space-y-2"
+      style={{ background: "rgba(var(--surface-raised-rgb),0.55)", border: "1px solid rgba(255,255,255,0.1)" }}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider opacity-60">Correct an issue</span>
+        <button onClick={() => { setOpen(false); setBranch(null); }} className="text-xs opacity-50">Cancel</button>
+      </div>
+
+      {branch === null && (
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => setBranch("year")}
+            className="text-left text-xs px-3 py-2 rounded"
+            style={{ background: "rgba(var(--color-primary-rgb),0.12)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.35)" }}
+          >
+            📅 Correct the year
+          </button>
+          <button
+            onClick={() => setBranch("year_refund")}
+            className="text-left text-xs px-3 py-2 rounded"
+            style={{ background: "rgba(var(--color-primary-rgb),0.12)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.35)" }}
+          >
+            📅 Correct the year <em>and refund my used token</em>
+          </button>
+          {isDiscordBot && round.bot_video_id && (
+            <>
+              <button
+                onClick={() => setBranch("video")}
+                className="text-left text-xs px-3 py-2 rounded"
+                style={{ background: "rgba(220,160,0,0.12)", color: "rgb(220,160,0)", border: "1px solid rgba(220,160,0,0.4)" }}
+              >
+                👎 Report the YouTube version
+              </button>
+              <button
+                onClick={() => setBranch("video_redo")}
+                className="text-left text-xs px-3 py-2 rounded"
+                style={{ background: "rgba(220,160,0,0.12)", color: "rgb(220,160,0)", border: "1px solid rgba(220,160,0,0.4)" }}
+              >
+                👎 Report video <em>and do the round over</em>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {(branch === "year" || branch === "year_refund") && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs opacity-70">
+            {branch === "year_refund"
+              ? "Propose a correct year. If the host approves, your used token from this round will be refunded."
+              : "Propose a correct year for this song."}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs opacity-60">Year:</span>
+            <input
+              type="number" min={1900} max={2100} value={draft}
+              onChange={e => setDraft(e.target.value)}
+              autoFocus
+              className="w-24 rounded px-2 py-1 text-sm font-mono outline-none"
+              style={{
+                background: "rgba(var(--surface-raised-rgb),0.5)",
+                border:     "1px solid rgba(255,255,255,0.15)",
+                color:      "inherit",
+              }}
+            />
+            <button
+              onClick={() => submitYear(branch === "year_refund")}
+              disabled={busy}
+              className="text-xs font-bold px-3 py-1 rounded"
+              style={{ background: "rgba(var(--color-primary-rgb),0.2)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.4)" }}
+            >
+              Submit
+            </button>
+            <button onClick={() => setBranch(null)} className="text-xs opacity-50">← back</button>
+          </div>
+        </div>
+      )}
+
+      {(branch === "video" || branch === "video_redo") && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs opacity-70">
+            {branch === "video_redo"
+              ? "Flag this YouTube pick AND ask the host to redo the round with a different one."
+              : "Flag this YouTube pick so the bot tries a different version next time."}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => submitVideo(branch === "video_redo")}
+              disabled={busy}
+              className="text-xs font-bold px-3 py-1 rounded"
+              style={{ background: "rgba(220,160,0,0.2)", color: "rgb(220,160,0)", border: "1px solid rgba(220,160,0,0.4)" }}
+            >
+              Submit
+            </button>
+            <button onClick={() => setBranch(null)} className="text-xs opacity-50">← back</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2637,11 +2760,11 @@ export default function GamePage() {
     });
   }
 
-  async function proposeYearCorrection(year: number) {
+  async function proposeYearCorrection(year: number, refundToken = false) {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=propose-year`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, year }),
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, year, refund_token: refundToken }),
     });
   }
 
@@ -2658,11 +2781,11 @@ export default function GamePage() {
   // click Redo to replay the round with a different YouTube video. The
   // musix-discord bot watches tl_rounds for video_report_approved +
   // redo_requested_at and reacts (reportVideo + re-resolve + re-play).
-  async function reportVideo() {
+  async function reportVideo(requestRedo = false) {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=report-video`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId }),
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, request_redo: requestRedo }),
     });
   }
 
@@ -4025,6 +4148,7 @@ export default function GamePage() {
           <span style={{ color: "rgb(220,160,0)", fontSize: "var(--text-sm)" }}>
             ⚠ <strong>{round.video_report_proposed_name ?? "A player"}</strong> reports
             {round.issue_report_reason ? <>: <em>{round.issue_report_reason}</em></> : <> an issue with this round</>}
+            {round.issue_request_type === "video_redo" && <> &nbsp;(+ requests a redo)</>}
           </span>
           <div className="flex gap-1 ml-auto flex-shrink-0">
             <button

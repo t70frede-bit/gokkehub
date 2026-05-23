@@ -367,8 +367,9 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
 // ── Year correction (player proposes; host approves) ────────────────────────
 
 async function handleProposeYear(req: Request, roomId: string, env: Env) {
-  const body = await req.json() as ProposeYearCorrectionRequest;
+  const body = await req.json() as ProposeYearCorrectionRequest & { refund_token?: boolean };
   const { round_id, player_id, year } = body;
+  const refundToken = !!body.refund_token;
 
   if (!Number.isInteger(year) || year < 1900 || year > 2100) {
     return json({ error: "Year must be between 1900 and 2100" }, 400, req);
@@ -385,20 +386,20 @@ async function handleProposeYear(req: Request, roomId: string, env: Env) {
   // Host applies immediately; everyone else proposes for host approval.
   if (me.is_host || room.host_id === player_id) {
     await applyYearCorrection(env, round, year);
-    // Persist globally so the corrected year flows to the timeline when
-    // the pending card locks — and so every future room inherits it.
-    // Audit fields capture who; in this branch it's the host, who just
-    // self-approved by being host. (Audit visible via migration 017.)
     await upsertSongCorrection(env, round.track.id, year, roomId, me.id, me.name);
-    return json({ ok: true, applied: true }, 200, req);
+    if (refundToken) {
+      await refundTokenForRound(env, round.team_id, round.id);
+    }
+    return json({ ok: true, applied: true, refunded: refundToken }, 200, req);
   }
 
   await updateRound(env, round_id, {
     year_correction_proposed:      year,
     year_correction_proposed_by:   player_id,
     year_correction_proposed_name: me.name,
+    issue_request_type:            refundToken ? "year_refund" : "year",
   } as Partial<TlRound>);
-  return json({ ok: true, proposed: year }, 200, req);
+  return json({ ok: true, proposed: year, refund: refundToken }, 200, req);
 }
 
 async function handleApproveYear(req: Request, roomId: string, env: Env) {
@@ -410,13 +411,9 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
   if (room.host_id !== player_id) return json({ error: "Only the host can approve" }, 403, req);
   if (round.year_correction_proposed === null) return json({ error: "No pending correction" }, 400, req);
 
+  const wantRefund = round.issue_request_type === "year_refund";
   if (approve) {
     await applyYearCorrection(env, round, round.year_correction_proposed);
-    // Persist the correction so every future game inherits it (migration
-    // 013). Latest-wins — overwrites any prior correction for this track.
-    // Audit identifies the original PROPOSER (not the approving host) so
-    // a player who repeatedly proposes nonsense is easy to spot even
-    // after the host approves; the host approval is itself implicit.
     await upsertSongCorrection(
       env,
       round.track.id,
@@ -425,14 +422,18 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
       round.year_correction_proposed_by ?? undefined,
       round.year_correction_proposed_name ?? undefined,
     );
+    if (wantRefund) {
+      await refundTokenForRound(env, round.team_id, round.id);
+    }
   }
   // Clear the proposal either way
   await updateRound(env, round_id, {
     year_correction_proposed:      null,
     year_correction_proposed_by:   null,
     year_correction_proposed_name: null,
+    issue_request_type:            null,
   } as Partial<TlRound>);
-  return json({ ok: true, approved: approve }, 200, req);
+  return json({ ok: true, approved: approve, refunded: approve && wantRefund }, 200, req);
 }
 
 // Update the round's corrected_year and propagate the new year to every place
@@ -506,8 +507,11 @@ async function applyYearCorrection(env: Env, round: TlRound, year: number) {
 // ── Bad-YouTube-version flow (player proposes; host approves; redo) ─────────
 
 async function handleReportVideo(req: Request, roomId: string, env: Env) {
-  const body = await req.json() as { round_id: number; player_id: string; reason?: string };
+  const body = await req.json() as {
+    round_id: number; player_id: string; reason?: string; request_redo?: boolean;
+  };
   const { round_id, player_id } = body;
+  const requestRedo = !!body.request_redo;
   // Trim + cap the reason so the column doesn't grow unbounded if some
   // future UI lets players free-type their own. Empty / unset → null.
   const reason = typeof body.reason === "string"
@@ -526,8 +530,9 @@ async function handleReportVideo(req: Request, roomId: string, env: Env) {
     video_report_proposed_by:   player_id,
     video_report_proposed_name: me.name,
     issue_report_reason:        reason,
+    issue_request_type:         requestRedo ? "video_redo" : "video",
   } as Partial<TlRound>);
-  return json({ ok: true, proposed: true, reason }, 200, req);
+  return json({ ok: true, proposed: true, reason, redo: requestRedo }, 200, req);
 }
 
 async function handleApproveVideoReport(req: Request, roomId: string, env: Env) {
@@ -539,14 +544,21 @@ async function handleApproveVideoReport(req: Request, roomId: string, env: Env) 
   if (room.host_id !== player_id) return json({ error: "Only the host can approve" }, 403, req);
   if (!round.video_report_proposed) return json({ error: "No pending report" }, 400, req);
 
+  const wantRedo = round.issue_request_type === "video_redo";
   const update: Partial<TlRound> = {
     video_report_proposed:      false,
     video_report_proposed_by:   null,
     video_report_proposed_name: null,
+    issue_request_type:         null,
   };
-  if (approve) update.video_report_approved = true;
+  if (approve) {
+    update.video_report_approved = true;
+    if (wantRedo) {
+      update.redo_requested_at = new Date().toISOString();
+    }
+  }
   await updateRound(env, round_id, update as never);
-  return json({ ok: true, approved: approve }, 200, req);
+  return json({ ok: true, approved: approve, redo: approve && wantRedo }, 200, req);
 }
 
 async function handleRedoRound(req: Request, roomId: string, env: Env) {
@@ -875,6 +887,27 @@ async function findAndUseToken(
 }
 
 export { findAndUseToken };
+
+// Un-burn a token that the team used during the given round.
+// Used by the "Correct year and refund token" issue-resolution branch:
+// when the host approves a year correction proposed alongside a refund
+// request, the token they spent (and presumably wasted because the year
+// was wrong) is returned to them by clearing used_at + used_round.
+async function refundTokenForRound(
+  env: Env, teamId: number, roundId: number,
+): Promise<void> {
+  const url = `${env.SUPABASE_URL}/rest/v1/tl_team_tokens?team_id=eq.${teamId}&used_round=eq.${roundId}`;
+  await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type":  "application/json",
+      "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Prefer":        "return=minimal",
+    },
+    body: JSON.stringify({ used_at: null, used_round: null }),
+  });
+}
 
 // ── Turn action (stop | next) ────────────────────────────────────────────────
 

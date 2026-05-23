@@ -322,6 +322,12 @@ export interface TlRound {
   // host's approval banner can show "Player X reports: <reason>" instead of
   // a generic "wrong video" label. Reuses the same propose/approve flags.
   issue_report_reason:            string | null;
+  // Migration 022 — which flavour of "Correct an issue?" was proposed.
+  //   "year"        → plain year correction
+  //   "year_refund" → year correction + un-burn the team's used token
+  //   "video"       → wrong-video report
+  //   "video_redo"  → video report + trigger redo on approval
+  issue_request_type:             string | null;
   // Shop-mode idempotency guards (migration 018). When tokenEconomy ===
   // "shop", flipping artist_correct/songname_correct to true credits +1
   // point to the team; the flag below stops re-credits if the field
