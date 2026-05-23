@@ -178,7 +178,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
 export type CreateRoomRole = "player" | "dj" | "spectator" | "gamemaster";
 
 export interface TlRoom {
-  id:               string;       // 6-char code
+  id:               string;       // 4-char code (rooms created before 2026-05-23 are 6 chars)
   host_id:          string;
   /** SESSIONS KV id of the host (set on Start). Used by the curation engine
    *  to load the host's Spotify creds during background top-ups triggered

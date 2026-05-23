@@ -281,7 +281,7 @@ function HeroJoinForm() {
       <input
         value={code}
         onChange={(e) => setCode(e.target.value.toUpperCase())}
-        placeholder="ABC123"
+        placeholder="ABCD"
         maxLength={12}
         aria-label="Room code"
         className="flex-1 rounded-md px-4 py-3 text-center font-bold outline-none transition-all"

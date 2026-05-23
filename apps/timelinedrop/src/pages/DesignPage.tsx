@@ -248,7 +248,7 @@ function Typography() {
           Mono · JetBrains Mono 600 (codes, years)
         </p>
         <p style={{ fontFamily: "JetBrains Mono, ui-monospace, monospace", fontWeight: 600, fontSize: 28, letterSpacing: "0.05em", color: C.accent, margin: 0 }}>
-          ABC123 · 1991
+          ABCD · 1991
         </p>
       </div>
     </div>
