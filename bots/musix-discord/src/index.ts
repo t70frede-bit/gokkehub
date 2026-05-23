@@ -793,26 +793,16 @@ async function fetchGameSnapshot(roomId: string, currentTeamId: number | null): 
   return { teams, currentTeamId, currentTeamName: currentTeam?.name ?? null, currentTeam };
 }
 
-function buildGameModeButtons(session: Session): ActionRowBuilder<ButtonBuilder>[] {
-  if (!session.currentVideoId) return [];
-  // "Wrong song / bad version" used to live here as a Discord button, but
-  // moved to the musix in-game UI (mirrors the year-correction propose/
-  // approve/redo flow). Bot now reacts to tl_rounds updates from that
-  // flow — see handleVideoReportApprovedTransition + handleRedoRequestedTransition.
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId("musix-game-restart")
-        .setLabel("Restart")
-        .setEmoji("⏮")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId("musix-game-skip30")
-        .setLabel("+30s")
-        .setEmoji("⏩")
-        .setStyle(ButtonStyle.Secondary),
-    ),
-  ];
+function buildGameModeButtons(_session: Session): ActionRowBuilder<ButtonBuilder>[] {
+  // Restart / +30s scrub buttons used to live here, but per playtest
+  // feedback the captain should drive seek/restart from the browser
+  // (musix.gokkehub.com) — not from a Discord button anyone in the
+  // voice channel could press. The audio side still supports
+  // ?seek=N via the bot proxy; just no Discord-side UI for it.
+  // "Wrong song / bad version" also lived here once; it moved to the
+  // in-game UI (handleVideoReportApprovedTransition reacts to the
+  // host-approved tl_rounds flag).
+  return [];
 }
 
 function renderScoreboard(session: Session, snapshot: GameSnapshot, opts: { showDelta: boolean }): string {
@@ -919,44 +909,6 @@ function buildFinalizedTurnMessage(
 
   // Controls stripped on finalize — old message becomes archival.
   return { content: lines.join("\n"), components: [] };
-}
-
-// Re-streams the current round's song from a given offset. Used by the
-// Restart (seek=0) and +30s buttons. yt-dlp does the actual seek via its
-// --download-sections flag; the bot just patches its timing state so the
-// progress bar shows the new position and re-arms the Song Limiter.
-async function seekGameRound(session: Session, seekSec: number): Promise<void> {
-  if (!session.currentVideoId) return;
-  const total = session.currentRoundDurationSec;
-  // Clamp to a sensible range.
-  if (total > 0) seekSec = Math.min(Math.max(seekSec, 0), Math.max(0, total - 2));
-  else           seekSec = Math.max(seekSec, 0);
-
-  try {
-    const resource = await createStreamResource(session.currentVideoId, { seekSec });
-    session.player.play(resource);
-    session.playStartedAt       = Date.now() - seekSec * 1000;
-    session.pauseStartedAt      = null;
-    session.pausedAccumulatedMs = 0;
-    console.log(`[round] ⏯ seek to ${seekSec}s for round ${session.currentRoundId}`);
-  } catch (err) {
-    console.warn(`[round] seek to ${seekSec}s failed:`, err);
-    return;
-  }
-  if (session.roomId) {
-    try {
-      await supabase
-        .from("tl_rooms")
-        .update({ playing_since: session.playStartedAt, paused_at_ms: null })
-        .eq("id", session.roomId);
-    } catch (err) {
-      console.warn(`[round] couldn't update DB on seek:`, err);
-    }
-  }
-  // Re-arm the Song Limiter based on the new elapsed time. If the seek
-  // landed past the limit, fireSongLimitPause runs immediately.
-  maybeScheduleSongLimit(session, session.currentSongLimitSeconds);
-  void tickGameNowPlaying(session);
 }
 
 // Refresh the game-mode Now-Playing message in place. Called by the 10s
@@ -1771,13 +1723,13 @@ async function handleButton(ix: ButtonInteraction) {
       await ix.reply({ content: "No round is currently playing.", flags: MessageFlags.Ephemeral });
       return;
     }
-    await ix.deferUpdate();
-    if (ix.customId === "musix-game-restart") {
-      await seekGameRound(session, 0);
-    } else if (ix.customId === "musix-game-skip30") {
-      const currentElapsedSec = Math.floor(computeElapsedMs(session) / 1000);
-      await seekGameRound(session, currentElapsedSec + 30);
-    }
+    // Restart / +30s scrub buttons were removed (per playtest feedback —
+    // seek belongs in the browser captain UI). Any stale older messages
+    // that still have these buttons fall through to the default branch.
+    await ix.reply({
+      content: "Scrubbing now lives in the browser game (captain only). Restart/+30s removed from Discord.",
+      flags:   MessageFlags.Ephemeral,
+    });
     return;
   }
 
