@@ -109,7 +109,9 @@ export type TokenEconomy = "standard" | "bonus" | "shop";
 
 // Per-token-type cost in shop mode. Keys MUST match TOKEN_CATALOG types
 // in tokens.ts. Tunable; tiers roughly map to the Tier 1/2/3 grouping.
-// Only includes tokens currently flagged implemented:true.
+// Only includes tokens currently flagged implemented:true. Genre Picker /
+// Opponent Genre Picker are intentionally absent — they require per-track
+// genre data we don't ingest and have been retired from the shippable set.
 export const SHOP_TOKEN_COSTS: Record<string, number> = {
   cover_reveal_before: 2,
   cover_reveal:        2,
@@ -117,8 +119,12 @@ export const SHOP_TOKEN_COSTS: Record<string, number> = {
   year_span_5:         3,
   more_or_less:        3,
   reference_point:     3,
+  artist_picker:       4,   // picks one of 3 upcoming artists; blocks bonus
   recovery:            4,
   card_remover:        4,
+  pass_along:          5,
+  token_counter:       5,
+  steal_by_year:       5,
   force_lock:          6,
   song_limiter:        6,
 };

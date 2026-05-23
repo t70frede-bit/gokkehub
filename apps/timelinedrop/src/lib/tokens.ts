@@ -152,9 +152,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "before_pass",
     name: "Pass Along",
     short: "Pass",
-    description: "Hear three song snippets and pick which one your opponents get next.",
+    description: "Pick the next song your opponents play. You only see the year — no titles or artists.",
     icon: "🔀",
-    implemented: false,
+    implemented: true,
   },
   opponent_genre_picker: {
     type: "opponent_genre_picker",

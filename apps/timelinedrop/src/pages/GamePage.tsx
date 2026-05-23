@@ -2651,6 +2651,10 @@ export default function GamePage() {
   // artist options (null = closed), then the modal POSTs the chosen one.
   const [artistPickerOptions, setArtistPickerOptions] = useState<string[] | null>(null);
   const [artistPickerBusy, setArtistPickerBusy] = useState(false);
+  // Pass Along — three blind options (year only). The captain picks one to
+  // bump into the next round's slot.
+  const [passAlongOptions, setPassAlongOptions] = useState<Array<{ id: string; releaseYear: number }> | null>(null);
+  const [passAlongBusy, setPassAlongBusy] = useState(false);
   // Cover-reveal floating thumbnail: click to enlarge.
   const [coverEnlarged, setCoverEnlarged] = useState(false);
 
@@ -3160,10 +3164,50 @@ export default function GamePage() {
     }
   }
 
+  async function openPassAlong() {
+    if (!round) return;
+    setTokenTrayOpen(false);
+    setPassAlongBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/pass-along`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, action: "options" }),
+      });
+      const data = await res.json().catch(() => ({})) as { options?: Array<{ id: string; releaseYear: number }>; error?: string };
+      if (!res.ok) { showActionError(`Pass Along: ${data.error ?? res.status}`); return; }
+      setPassAlongOptions(data.options ?? []);
+    } catch (err) {
+      showActionError(`Pass Along: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPassAlongBusy(false);
+    }
+  }
+  async function pickPassAlong(choiceId: string) {
+    if (!round) return;
+    setPassAlongBusy(true);
+    try {
+      const res = await fetch(`/room/${roomId}/pass-along`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, action: "pick", choice_id: choiceId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        showActionError(`Pass Along: ${data.error ?? res.status}`);
+        return;
+      }
+      setPassAlongOptions(null);
+    } catch (err) {
+      showActionError(`Pass Along: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPassAlongBusy(false);
+    }
+  }
+
   async function useTypedToken(type: TokenType, payload?: Record<string, unknown>) {
     if (!round) return;
     if (type === "song_skipper") return useSongSkipperToken();
     if (type === "artist_picker") { void openArtistPicker(); return; }
+    if (type === "pass_along") { void openPassAlong(); return; }
     if (type === "more_or_less") {
       // Two-phase: first click opens the "pick a card" mode, the actual POST
       // happens when the captain clicks a timeline card.
@@ -4785,6 +4829,54 @@ export default function GamePage() {
           <button
             onClick={() => setArtistPickerOptions(null)}
             disabled={artistPickerBusy}
+            className="mt-4 text-xs underline disabled:opacity-50"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Cancel
+          </button>
+        </Modal>
+      )}
+
+      {/* ── Pass Along picker (year-only blind tiles) ──────────────────── */}
+      {passAlongOptions !== null && (
+        <Modal open onClose={() => setPassAlongOptions(null)} maxWidth="420px">
+          <h2
+            className="font-extrabold mb-1"
+            style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
+          >
+            🔀 Pass Along
+          </h2>
+          <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+            Pick the next song your opponents play. You only see the year —
+            no titles, no artists. Bias toward a decade their timeline can't
+            easily slot.
+          </p>
+          {passAlongOptions.length === 0 ? (
+            <p className="text-sm opacity-70">No upcoming songs left to pass along.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {passAlongOptions.map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => pickPassAlong(opt.id)}
+                  disabled={passAlongBusy}
+                  className="rounded-lg p-4 text-center font-bold transition-all border disabled:opacity-50"
+                  style={{
+                    borderColor: "rgba(var(--color-secondary-rgb),0.5)",
+                    background:  "rgba(var(--color-secondary-rgb),0.10)",
+                    color:       "rgb(var(--color-secondary-rgb))",
+                    fontFamily:  "var(--font-mono)",
+                    fontSize:    "var(--text-lg)",
+                  }}
+                >
+                  {opt.releaseYear}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => setPassAlongOptions(null)}
+            disabled={passAlongBusy}
             className="mt-4 text-xs underline disabled:opacity-50"
             style={{ color: "rgb(var(--text-muted-rgb))" }}
           >
