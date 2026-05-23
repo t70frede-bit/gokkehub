@@ -248,10 +248,16 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
       }
     }
   } else {
-    // Wrong: clear pending; captain advances turn explicitly via ?action=turn
-    const teams = await getTeams(env, roomId);
-    const activeTeam = teams.find(t => t.id === room.active_team_id);
-    if (activeTeam) await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+    // Wrong: clear pending UNLESS the captain pre-armed Recovery — that
+    // token's whole point is to pick one pending card to save after a
+    // wrong placement (handled by /round?action=recovery-pick, which
+    // empties the pile itself once a card is chosen). Clearing here
+    // would leave the picker with nothing to pick from.
+    if (!round.recovery_armed) {
+      const teams = await getTeams(env, roomId);
+      const activeTeam = teams.find(t => t.id === room.active_team_id);
+      if (activeTeam) await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+    }
   }
 
   return json({ outcome, actual_year: actualYear }, 200, req);
@@ -1006,10 +1012,20 @@ async function handleTurnActionInner(req: Request, roomId: string, env: Env, wai
     return json({ ok: true, round_id: round.id }, 200, req);
   }
 
-  // stop — lock pending into the timeline, end turn, advance
-  await lockPendingTracks(env, activeTeam.id,
-    (activeTeam.pending_tracks ?? []) as Array<{ id: string; releaseYear: number; [k: string]: unknown }>);
-  await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+  // stop — end turn, advance.
+  // Pending cards lock into the timeline ONLY when the closing round was
+  // correct (or skipped via Song Skipper, which is handled by its own
+  // endpoint). On an incorrect round the pending pile is the captain's
+  // accumulated almost-wins from previous turns — they're forfeit. The
+  // Recovery token saves ONE via /round?action=recovery-pick before this
+  // point; if the captain skipped recovery, the whole pile is lost.
+  if (currentRound?.outcome === "incorrect") {
+    await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+  } else {
+    await lockPendingTracks(env, activeTeam.id,
+      (activeTeam.pending_tracks ?? []) as Array<{ id: string; releaseYear: number; [k: string]: unknown }>);
+    await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+  }
 
   // ── Win evaluation ──────────────────────────────────────────────────────
   // winMode === "first"      → game ends the moment the active team crosses

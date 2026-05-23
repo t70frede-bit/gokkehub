@@ -1407,6 +1407,10 @@ interface RevealProps {
   isJudgeEligible:      boolean;
   isHost:               boolean;
   isDiscordBot:         boolean;
+  /** True when the round's audio is YouTube-backed (discord-bot OR
+   *  all-clients-stream). Surfaces the "Report YouTube version" branches
+   *  in IssueDropdown regardless of which YouTube source is wired. */
+  videoReportable:      boolean;
   myPlayerId:           string;
   totalEligibleVoters:  number;
   pendingCount:         number;
@@ -1424,13 +1428,13 @@ interface RevealProps {
   onProposeYear:        (year: number, refundToken?: boolean) => Promise<void>;
   onApproveYear:        (approve: boolean) => Promise<void>;
   onRecoveryPick:       (trackId: string) => Promise<void>;
-  onReportVideo:        (requestRedo?: boolean) => Promise<void>;
+  onReportVideo:        (requestRedo?: boolean, reason?: string) => Promise<void>;
   onApproveVideoReport: (approve: boolean) => Promise<void>;
   onRedoRound:          () => Promise<void>;
 }
 
 function RevealOverlay({
-  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost, isDiscordBot,
+  round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost, isDiscordBot, videoReportable,
   myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
   onJudge, onJudgeKind, shopEnabled, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
   onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound,
@@ -1508,7 +1512,7 @@ function RevealOverlay({
 
           <IssueDropdown
             round={round}
-            isDiscordBot={isDiscordBot}
+            videoReportable={videoReportable}
             onProposeYear={onProposeYear}
             onReportVideo={onReportVideo}
           />
@@ -1562,7 +1566,7 @@ function RevealOverlay({
 
           <IssueDropdown
             round={round}
-            isDiscordBot={isDiscordBot}
+            videoReportable={videoReportable}
             onProposeYear={onProposeYear}
             onReportVideo={onReportVideo}
           />
@@ -1576,12 +1580,22 @@ function RevealOverlay({
             </p>
           </div>
 
+          {isCaptain ? (
+            <Button onClick={onStop} className="w-full">
+              {round.recovery_armed && pendingTracks.length > 0 ? "Skip recovery — end turn" : "Continue → next team"}
+            </Button>
+          ) : (
+            <p className="text-xs opacity-50">Waiting for captain to continue…</p>
+          )}
+
           {/* Recovery picker — only when token is armed, captain, and there's
-              something to save. Picking burns the recovery and saves only the
-              chosen card into the timeline. */}
+              something to save. Sits BELOW the Continue button so the captain
+              sees their two choices in vertical order: end the turn, or save
+              one card from the lost pile. Picking burns the recovery and
+              saves only the chosen card into the timeline. */}
           {isCaptain && round.recovery_armed && pendingTracks.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs uppercase tracking-wider opacity-60">🛟 Pick a card to save</p>
+            <div className="space-y-2 pt-2">
+              <p className="text-xs uppercase tracking-wider opacity-60">🛟 Or save a pending card</p>
               <div className="flex flex-col gap-2">
                 {pendingTracks.map(t => (
                   <button
@@ -1609,14 +1623,6 @@ function RevealOverlay({
                 ))}
               </div>
             </div>
-          )}
-
-          {isCaptain ? (
-            <Button onClick={onStop} className="w-full">
-              {round.recovery_armed && pendingTracks.length > 0 ? "Skip recovery — end turn" : "Continue → next team"}
-            </Button>
-          ) : (
-            <p className="text-xs opacity-50">Waiting for captain to continue…</p>
           )}
         </div>
       </Backdrop>
@@ -1654,7 +1660,7 @@ function RevealOverlay({
 
         <IssueDropdown
           round={round}
-          isDiscordBot={isDiscordBot}
+          videoReportable={videoReportable}
           onProposeYear={onProposeYear}
           onReportVideo={onReportVideo}
         />
@@ -2146,17 +2152,20 @@ function VideoReportWidget({
 // Hidden once anything is already proposed/approved — the existing widgets
 // take over for those states.
 function IssueDropdown({
-  round, isDiscordBot, onProposeYear, onReportVideo,
+  round, videoReportable, onProposeYear, onReportVideo,
 }: {
-  round:          TlRound;
-  isDiscordBot:   boolean;
-  onProposeYear:  (year: number, refundToken: boolean) => Promise<void>;
-  onReportVideo:  (requestRedo: boolean) => Promise<void>;
+  round:           TlRound;
+  /** Audio mode is YouTube-backed (discord-bot OR all-clients-stream).
+   *  When true the dropdown surfaces "report YouTube version" branches. */
+  videoReportable: boolean;
+  onProposeYear:   (year: number, refundToken: boolean) => Promise<void>;
+  onReportVideo:   (requestRedo: boolean, reason?: string) => Promise<void>;
 }) {
   type Branch = null | "year" | "year_refund" | "video" | "video_redo";
-  const [open, setOpen]   = useState(false);
+  const [open, setOpen]     = useState(false);
   const [branch, setBranch] = useState<Branch>(null);
   const [draft, setDraft]   = useState<string>(String(round.corrected_year ?? round.track.releaseYear));
+  const [videoReason, setVideoReason] = useState<string>("");
   const [busy, setBusy]     = useState(false);
 
   // Already proposed / corrected → don't show the trigger; the year/video
@@ -2167,12 +2176,14 @@ function IssueDropdown({
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="text-xs opacity-60 hover:opacity-100 underline"
-      >
-        ❓ Correct an issue?
-      </button>
+      <div className="flex justify-center">
+        <button
+          onClick={() => setOpen(true)}
+          className="text-xs opacity-60 hover:opacity-100 underline"
+        >
+          ❓ Correct an issue?
+        </button>
+      </div>
     );
   }
 
@@ -2189,17 +2200,30 @@ function IssueDropdown({
   }
 
   async function submitVideo(redo: boolean) {
+    if (!videoReason) return;
     setBusy(true);
     try {
-      await onReportVideo(redo);
+      await onReportVideo(redo, videoReason);
       setOpen(false);
       setBranch(null);
+      setVideoReason("");
     } finally { setBusy(false); }
   }
 
+  const VIDEO_REASONS = [
+    "Wrong song",
+    "Bad music video version",
+    "Bad audio / glitching",
+    "Long intro / hard to recognise",
+    "Other",
+  ];
+
   return (
-    <div className="rounded-lg p-3 text-sm space-y-2"
-      style={{ background: "rgba(var(--surface-raised-rgb),0.55)", border: "1px solid rgba(255,255,255,0.1)" }}>
+    <div className="rounded-lg p-3 text-sm space-y-2 mx-auto" style={{
+      maxWidth:   480,
+      background: "rgba(var(--surface-raised-rgb),0.55)",
+      border:     "1px solid rgba(255,255,255,0.1)",
+    }}>
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wider opacity-60">Correct an issue</span>
         <button onClick={() => { setOpen(false); setBranch(null); }} className="text-xs opacity-50">Cancel</button>
@@ -2221,7 +2245,7 @@ function IssueDropdown({
           >
             📅 Correct the year <em>and refund my used token</em>
           </button>
-          {isDiscordBot && round.bot_video_id && (
+          {videoReportable && (
             <>
               <button
                 onClick={() => setBranch("video")}
@@ -2249,7 +2273,7 @@ function IssueDropdown({
               ? "Propose a correct year. If the host approves, your used token from this round will be refunded."
               : "Propose a correct year for this song."}
           </p>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 justify-center flex-wrap">
             <span className="text-xs opacity-60">Year:</span>
             <input
               type="number" min={1900} max={2100} value={draft}
@@ -2282,12 +2306,30 @@ function IssueDropdown({
               ? "Flag this YouTube pick AND ask the host to redo the round with a different one."
               : "Flag this YouTube pick so the bot tries a different version next time."}
           </p>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap gap-1.5 justify-center">
+            {VIDEO_REASONS.map(r => (
+              <button
+                key={r}
+                onClick={() => setVideoReason(r)}
+                className="text-xs px-2.5 py-1 rounded"
+                style={{
+                  background: videoReason === r ? "rgba(220,160,0,0.28)" : "rgba(220,160,0,0.08)",
+                  border:     `1px solid rgba(220,160,0,${videoReason === r ? 0.55 : 0.25})`,
+                  color:      "rgb(220,160,0)",
+                  fontWeight: videoReason === r ? 700 : 500,
+                }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 justify-center flex-wrap">
             <button
               onClick={() => submitVideo(branch === "video_redo")}
-              disabled={busy}
-              className="text-xs font-bold px-3 py-1 rounded"
+              disabled={busy || !videoReason}
+              className="text-xs font-bold px-3 py-1 rounded disabled:opacity-50"
               style={{ background: "rgba(220,160,0,0.2)", color: "rgb(220,160,0)", border: "1px solid rgba(220,160,0,0.4)" }}
+              title={!videoReason ? "Pick a reason first" : undefined}
             >
               Submit
             </button>
@@ -2781,11 +2823,11 @@ export default function GamePage() {
   // click Redo to replay the round with a different YouTube video. The
   // musix-discord bot watches tl_rounds for video_report_approved +
   // redo_requested_at and reacts (reportVideo + re-resolve + re-play).
-  async function reportVideo(requestRedo = false) {
+  async function reportVideo(requestRedo = false, reason?: string) {
     if (!round) return;
     await fetch(`/room/${roomId}/round?action=report-video`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, request_redo: requestRedo }),
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, request_redo: requestRedo, reason }),
     });
   }
 
@@ -3379,26 +3421,26 @@ export default function GamePage() {
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
-                    onClick={isMyTeam && iAmCaptain && isMyTurn && !tokenUsedThisRound ? () => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); } : undefined}
+                    onClick={() => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); }}
                   />
-                  {/* Shop coin chip — visible to ALL when shopEnabled so
+                  {/* Shop button — visible to ALL when shopEnabled so
                       opponents and teammates can see the team's purse and
-                      browse what's buyable. Captain sees Buy buttons in
-                      the modal; everyone else sees a read-only catalog. */}
+                      browse what's buyable. Active captain sees Buy
+                      buttons in the modal; everyone else read-only. */}
                   {room.settings?.tokenEconomy === "shop" && (
                     <button
                       onClick={() => setShopViewTeamId(team.id)}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold transition-all flex-shrink-0"
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold transition-all flex-shrink-0"
                       style={{
                         background: "rgba(var(--color-primary-rgb), 0.10)",
                         border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
                         color:      "rgb(var(--color-primary-rgb))",
-                        fontFamily: "var(--font-mono)",
                       }}
                       title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"} — tap to browse the shop`}
                     >
+                      <span>Shop</span>
                       <span aria-hidden="true">🪙</span>
-                      <span>{team.points ?? 0}</span>
+                      <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
                     </button>
                   )}
                 </div>
@@ -3514,30 +3556,29 @@ export default function GamePage() {
                     can click to open the tray for opponent-turn tokens like
                     Force Lock. The tray filters by category vs phase. */}
                 <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
-                  {/* Shop coin chip mirrors the spotlight one so non-captains
-                      and opposing teammates can browse the team's shop from
-                      the compact row. */}
+                  {/* Shop button mirrors the spotlight one — visible to all
+                      so non-captains and opposing teammates can browse. */}
                   {room.settings?.tokenEconomy === "shop" && (
                     <button
                       onClick={() => setShopViewTeamId(team.id)}
-                      className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-bold transition-all flex-shrink-0"
+                      className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold transition-all flex-shrink-0"
                       style={{
                         background: "rgba(var(--color-primary-rgb), 0.10)",
                         border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
                         color:      "rgb(var(--color-primary-rgb))",
-                        fontFamily: "var(--font-mono)",
                       }}
                       title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"} — tap to browse the shop`}
                     >
+                      <span>Shop</span>
                       <span aria-hidden="true">🪙</span>
-                      <span>{team.points ?? 0}</span>
+                      <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
                     </button>
                   )}
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
                     compact
-                    onClick={isMyTeam && iAmCaptain && !!round && !round.force_locked ? () => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); } : undefined}
+                    onClick={() => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); }}
                   />
                 </div>
               </div>
@@ -3822,6 +3863,7 @@ export default function GamePage() {
             isJudgeEligible={isJudgeEligible}
             isHost={isHost}
             isDiscordBot={settings.audioMode === "discord-bot"}
+            videoReportable={settings.audioMode === "discord-bot" || settings.audioMode === "all-clients-stream"}
             myPlayerId={myPlayerId ?? ""}
             totalEligibleVoters={totalEligibleVoters}
             pendingCount={activeTeam?.pending_tracks?.length ?? 0}
@@ -3850,7 +3892,6 @@ export default function GamePage() {
         const trayTeamId = tokenTrayTeamId;
         const phase: "active" | "opponent" =
           trayTeamId === room.active_team_id ? "active" : "opponent";
-        const settings = { ...DEFAULT_TL_SETTINGS, ...(room.settings ?? {}) };
         const trayTeam = teams.find(t => t.id === trayTeamId);
         return (
           <TokenTray
@@ -3858,9 +3899,8 @@ export default function GamePage() {
             phase={phase}
             forceLocked={!!round?.force_locked}
             songNotStarted={room.playing_since === null}
-            shopEnabled={settings.tokenEconomy === "shop"}
-            points={trayTeam?.points ?? 0}
-            onBuy={buyToken}
+            canUse={iAmCaptain && trayTeamId === myPlayer?.team_id && !tokenUsedThisRound && (phase === "active" ? isMyTurn : !isMyTurn)}
+            teamName={trayTeam?.name ?? "Team"}
             onClose={() => setTokenTrayOpen(false)}
             onUse={(t) => useTypedToken(t.type as TokenType)}
           />
@@ -4388,8 +4428,7 @@ export default function GamePage() {
 // forceLocked is hint from the current round so we can disable duplicate
 // Force Lock attempts (only opponent_turn token in Tier 1).
 function TokenTray({
-  tokens, onClose, onUse, phase, forceLocked, songNotStarted,
-  shopEnabled, points, onBuy,
+  tokens, onClose, onUse, phase, forceLocked, songNotStarted, canUse, teamName,
 }: {
   tokens:         TlTeamToken[];
   onClose:        () => void;
@@ -4397,11 +4436,13 @@ function TokenTray({
   phase:          "active" | "opponent";
   forceLocked:    boolean;
   songNotStarted: boolean;  // gates before_song tokens — once audio rolls they're locked out
-  shopEnabled:    boolean;  // tokenEconomy === "shop"
-  points:         number;
-  onBuy:          (tokenType: string) => Promise<void>;
+  /** Only the captain of THIS team — and only on the right turn — can
+   *  actually spend tokens. Everyone else sees the same modal in read-only
+   *  mode (name, icon, description) so teammates / opponents can browse. */
+  canUse:         boolean;
+  /** Used in the header when viewing someone else's tray. */
+  teamName:       string;
 }) {
-  const [buying, setBuying] = useState<string | null>(null);
   // Group by category for a clearer layout.
   const groups: Record<string, TlTeamToken[]> = {};
   for (const t of tokens) {
@@ -4417,17 +4458,18 @@ function TokenTray({
         className="font-extrabold mb-1"
         style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}
       >
-        Your tokens
+        🎟 {teamName} · Tokens
       </h2>
       <p
         className="mb-4"
         style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
       >
-        Tokens are earned by getting both song name + artist right. Pick one to spend.
+        Tokens are earned by getting both song name + artist right.
+        {canUse ? " Pick one to spend." : " Only the active captain on this team can spend them."}
       </p>
       {tokens.length === 0 ? (
         <p style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
-          No tokens to spend yet.
+          No tokens yet.
         </p>
       ) : (
         <div className="flex flex-col gap-3">
@@ -4452,35 +4494,30 @@ function TokenTray({
                   {list.map(t => {
                     const spec = TOKEN_CATALOG[t.type as TokenType];
                     if (!spec) return null;
-                    // Phase gate: during_listen + before_pass only enabled
-                    // when MY team is the active one; opponent_turn only when
-                    // we're off-spot; anytime always; before_song requires
-                    // active team AND the song hasn't started yet.
                     const phaseOk =
                       spec.category === "anytime"      ? true :
                       spec.category === "during_listen" || spec.category === "before_pass" ? phase === "active" :
                       spec.category === "opponent_turn" ? phase === "opponent" :
                       spec.category === "before_song"   ? phase === "active" && songNotStarted :
                       false;
-                    // Force Lock is the only opponent_turn token; once
-                    // round.force_locked is set, no team can play another.
                     const alreadyForceLocked = spec.type === "force_lock" && forceLocked;
-                    const canUse = spec.implemented && phaseOk && !alreadyForceLocked;
+                    const useable = canUse && spec.implemented && phaseOk && !alreadyForceLocked;
                     const reason = !spec.implemented      ? "soon" :
+                                   !canUse                ? null  :
                                    !phaseOk               ? (spec.category === "before_song" ? "too late" : "wrong phase") :
                                    alreadyForceLocked     ? "used"  :
                                    null;
                     return (
                       <button
                         key={t.id}
-                        onClick={() => canUse && onUse(t)}
-                        disabled={!canUse}
+                        onClick={() => useable && onUse(t)}
+                        disabled={!useable}
                         className="text-left rounded-md p-3 transition-all disabled:cursor-not-allowed"
-                        title={reason === "wrong phase" ? "Only playable in a different turn phase" : undefined}
+                        title={!canUse ? spec.description : reason === "wrong phase" ? "Only playable in a different turn phase" : undefined}
                         style={{
-                          background: canUse ? "rgb(var(--surface-raised-rgb))" : "transparent",
-                          border:     `1px solid rgba(var(--color-primary-rgb), ${canUse ? 0.4 : 0.15})`,
-                          opacity:    canUse ? 1 : 0.55,
+                          background: useable ? "rgb(var(--surface-raised-rgb))" : "transparent",
+                          border:     `1px solid rgba(var(--color-primary-rgb), ${useable ? 0.4 : 0.15})`,
+                          opacity:    useable ? 1 : (canUse ? 0.55 : 0.85),
                         }}
                       >
                         <p className="font-bold flex items-center gap-2" style={{ fontSize: "var(--text-base)" }}>
@@ -4504,69 +4541,6 @@ function TokenTray({
               </div>
             )];
           })}
-        </div>
-      )}
-      {/* ── Shop (visible in shop tokenEconomy) ─────────────────────
-          Captain spends points to buy specific tokens. Only the active
-          captain in shop mode can buy; opponent-phase or non-active
-          shows a disabled view so others can preview what's available. */}
-      {shopEnabled && (
-        <div className="mt-5 pt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-          <div className="flex items-baseline justify-between mb-2">
-            <h3 className="font-bold" style={{ fontSize: "var(--text-base)" }}>🏪 Shop</h3>
-            <span style={{
-              fontSize:   "var(--text-sm)",
-              fontFamily: "var(--font-mono)",
-              color:      "rgb(var(--color-primary-rgb))",
-            }}>
-              {points} {points === 1 ? "point" : "points"}
-            </span>
-          </div>
-          <p className="mb-3" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
-            Earn +1 point per correct artist or song name. Spend them here.
-          </p>
-          <div className="flex flex-col gap-1.5">
-            {Object.entries(SHOP_TOKEN_COSTS)
-              .sort((a, b) => a[1] - b[1])
-              .map(([type, cost]) => {
-                const spec = TOKEN_CATALOG[type as TokenType];
-                if (!spec) return null;
-                const affordable = points >= cost;
-                const canBuy     = phase === "active" && affordable && !buying;
-                return (
-                  <button
-                    key={type}
-                    onClick={async () => {
-                      if (!canBuy) return;
-                      setBuying(type);
-                      try { await onBuy(type); } finally { setBuying(null); }
-                    }}
-                    disabled={!canBuy}
-                    className="text-left rounded-md p-2 transition-all disabled:cursor-not-allowed flex items-center gap-2"
-                    style={{
-                      background: canBuy ? "rgba(var(--color-primary-rgb),0.10)" : "transparent",
-                      border:     `1px solid rgba(var(--color-primary-rgb), ${canBuy ? 0.35 : 0.12})`,
-                      opacity:    canBuy ? 1 : 0.55,
-                    }}
-                    title={
-                      phase !== "active" ? "Only the active team's captain can buy"
-                      : !affordable      ? `Need ${cost - points} more point${(cost - points) === 1 ? "" : "s"}`
-                      : undefined
-                    }
-                  >
-                    <span style={{ fontSize: "var(--text-base)" }}>{spec.icon}</span>
-                    <span className="flex-1 truncate" style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>{spec.name}</span>
-                    <span style={{
-                      fontSize:   "var(--text-xs)",
-                      fontFamily: "var(--font-mono)",
-                      color:      affordable ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))",
-                    }}>
-                      {cost} pt{cost === 1 ? "" : "s"}
-                    </span>
-                  </button>
-                );
-              })}
-          </div>
         </div>
       )}
       <button
