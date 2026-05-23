@@ -1440,13 +1440,25 @@ interface RevealProps {
   onReportVideo:        (requestRedo?: boolean, reason?: string) => Promise<void>;
   onApproveVideoReport: (approve: boolean) => Promise<void>;
   onRedoRound:          () => Promise<void>;
+  /** Steal-by-Year context. canTry = opposing captain with token who
+   *  hasn't yet attempted on this round; iAmStealer = my team initiated
+   *  the steal; pendingTeamName lights up the masked-year banner for
+   *  everyone else while outcome is null. */
+  stealCtx: {
+    canTry:          boolean;
+    iAmStealer:      boolean;
+    pendingTeamName: string | null;
+    outcome:         "success" | "fail" | null;
+    tolerance:       number;
+    onTry:           (year: number) => Promise<void>;
+  };
 }
 
 function RevealOverlay({
   round, judgeMode, voteTimerSeconds, isCaptain, isJudgeEligible, isHost, isDiscordBot, videoReportable,
   myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
   onJudge, onJudgeKind, shopEnabled, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
-  onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound,
+  onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound, stealCtx,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
@@ -1467,6 +1479,10 @@ function RevealOverlay({
   const bonusEligible  = hasGuess && combinedVerdict === true;
   // Show whichever year is currently authoritative
   const displayYear    = round.corrected_year ?? round.track.releaseYear;
+  // Mask year while a steal-by-year attempt is pending (so non-stealing
+  // viewers can't read it off the screen for hint purposes).
+  const stealPending   = round.steal_team_id !== null && round.steal_outcome === null;
+  const maskYear       = stealPending && !stealCtx.iAmStealer;
 
   // Vote timer (vote-all mode only): client-side countdown driven by judging_started_at.
   const startedAtMs = round.judging_started_at ? Date.parse(round.judging_started_at) : 0;
@@ -1550,7 +1566,17 @@ function RevealOverlay({
         <div className="w-full max-w-sm text-center space-y-4">
           <img src={round.track.coverUrl} alt="" className="w-20 h-20 rounded-xl object-cover mx-auto" style={{ opacity: 0.6 }} />
 
-          <YearStamp year={displayYear} variant="wrong" />
+          {maskYear ? (
+            <div className="rounded-xl p-3 text-center"
+              style={{ background: "rgba(var(--color-secondary-rgb),0.10)", border: "1px solid rgba(var(--color-secondary-rgb),0.4)" }}>
+              <p className="text-2xl font-extrabold tracking-widest" style={{ fontFamily: "var(--font-mono)" }}>????</p>
+              <p className="text-xs opacity-70 mt-1">
+                🥷 {stealCtx.pendingTeamName ?? "Someone"} is trying to steal — year hidden
+              </p>
+            </div>
+          ) : (
+            <YearStamp year={displayYear} variant="wrong" />
+          )}
 
           <div>
             <p className="font-bold text-lg">{round.track.name}</p>
@@ -1578,6 +1604,11 @@ function RevealOverlay({
             videoReportable={videoReportable}
             onProposeYear={onProposeYear}
             onReportVideo={onReportVideo}
+          />
+
+          <StealByYearWidget
+            round={round}
+            stealCtx={stealCtx}
           />
 
           <div className="rounded-xl p-3"
@@ -2149,6 +2180,132 @@ function VideoReportWidget({
   }
 
   return null;
+}
+
+// ── Steal-by-Year widget ─────────────────────────────────────────────────────
+// Renders below IssueDropdown on a wrong placement. Three states:
+//   • canTry          — opposing captain with a steal_by_year token; shows
+//                       the year input + Submit.
+//   • pending (other) — steal armed by someone else; year is masked above
+//                       and we render a "Team X is guessing…" line here.
+//   • outcome (any)   — steal resolved → success / fail banner.
+function StealByYearWidget({
+  round, stealCtx,
+}: {
+  round:    TlRound;
+  stealCtx: {
+    canTry:          boolean;
+    iAmStealer:      boolean;
+    pendingTeamName: string | null;
+    outcome:         "success" | "fail" | null;
+    tolerance:       number;
+    onTry:           (year: number) => Promise<void>;
+  };
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+
+  const pending = round.steal_team_id !== null && round.steal_outcome === null;
+
+  // Resolved banner — show once, then fade.
+  if (stealCtx.outcome === "success") {
+    return (
+      <div className="rounded-lg p-3 text-sm text-center"
+        style={{ background: "rgba(40,180,60,0.12)", border: "1px solid rgba(40,180,60,0.4)" }}>
+        <p style={{ color: "rgb(40,180,60)" }}>
+          🥷 <strong>{stealCtx.pendingTeamName ?? "A team"}</strong> stole the card! Guess was within ±{stealCtx.tolerance}.
+        </p>
+      </div>
+    );
+  }
+  if (stealCtx.outcome === "fail") {
+    return (
+      <div className="rounded-lg p-3 text-sm text-center"
+        style={{ background: "rgba(220,60,60,0.10)", border: "1px solid rgba(220,60,60,0.35)" }}>
+        <p className="text-red-400">
+          🥷 <strong>{stealCtx.pendingTeamName ?? "A team"}</strong> tried to steal — guess was off.
+        </p>
+      </div>
+    );
+  }
+
+  // Pending — non-stealer view (the mask above shows "????").
+  if (pending && !stealCtx.iAmStealer) {
+    return (
+      <p className="text-xs text-center opacity-70" style={{ color: "rgb(var(--color-secondary-rgb))" }}>
+        🥷 {stealCtx.pendingTeamName ?? "Someone"} is locking in a year guess…
+      </p>
+    );
+  }
+
+  // Active try — opposing captain with a token, year not yet revealed.
+  if (!stealCtx.canTry) return null;
+
+  if (!open) {
+    return (
+      <div className="flex justify-center">
+        <button
+          onClick={() => setOpen(true)}
+          className="text-xs font-bold px-3 py-1.5 rounded transition-transform active:scale-95"
+          style={{
+            background: "rgba(var(--color-secondary-rgb),0.14)",
+            color:      "rgb(var(--color-secondary-rgb))",
+            border:     "1px solid rgba(var(--color-secondary-rgb),0.45)",
+          }}
+          title={`Burns Steal by Year. Guess within ±${stealCtx.tolerance} of the actual year to take the card.`}
+        >
+          🥷 Try to steal (±{stealCtx.tolerance})
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg p-3 text-sm space-y-2 mx-auto" style={{
+      maxWidth:   360,
+      background: "rgba(var(--surface-raised-rgb),0.55)",
+      border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
+    }}>
+      <p className="text-xs uppercase tracking-wider opacity-70 text-center">Steal by Year</p>
+      <p className="text-xs opacity-70 text-center">
+        Guess the exact year within ±{stealCtx.tolerance} to take this card.
+      </p>
+      <div className="flex items-center gap-2 justify-center flex-wrap">
+        <span className="text-xs opacity-60">Year:</span>
+        <input
+          type="number" min={1900} max={2100} value={draft}
+          onChange={e => setDraft(e.target.value)}
+          autoFocus
+          className="w-24 rounded px-2 py-1 text-sm font-mono outline-none"
+          style={{
+            background: "rgba(var(--surface-raised-rgb),0.5)",
+            border:     "1px solid rgba(255,255,255,0.15)",
+            color:      "inherit",
+          }}
+        />
+        <button
+          onClick={async () => {
+            const y = parseInt(draft, 10);
+            if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
+            setBusy(true);
+            try { await stealCtx.onTry(y); setOpen(false); }
+            finally { setBusy(false); }
+          }}
+          disabled={busy}
+          className="text-xs font-bold px-3 py-1 rounded disabled:opacity-50"
+          style={{
+            background: "rgba(var(--color-secondary-rgb),0.2)",
+            color:      "rgb(var(--color-secondary-rgb))",
+            border:     "1px solid rgba(var(--color-secondary-rgb),0.5)",
+          }}
+        >
+          Steal
+        </button>
+        <button onClick={() => setOpen(false)} className="text-xs opacity-50">cancel</button>
+      </div>
+    </div>
+  );
 }
 
 // ── Unified "❓ Correct an issue?" dropdown ───────────────────────────────────
@@ -2887,6 +3044,19 @@ export default function GamePage() {
       body: JSON.stringify({ player_id: myPlayerId, token_type: tokenType }),
     });
     // realtime tl_team_tokens INSERT + tl_teams UPDATE handle the UI refresh
+  }
+
+  async function stealYear(yearGuess: number) {
+    if (!round || !myPlayerId) return;
+    const res = await fetch(`/room/${roomId}/steal-year`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ player_id: myPlayerId, round_id: round.id, year_guess: yearGuess }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      console.warn("[steal-year] failed:", res.status, t.slice(0, 200));
+    }
+    // Realtime round update flows through useRoom; UI redraws on steal_outcome.
   }
 
   async function counterToken(targetTokenId: number) {
@@ -3936,6 +4106,32 @@ export default function GamePage() {
             onReportVideo={reportVideo}
             onApproveVideoReport={approveVideoReport}
             onRedoRound={redoRound}
+            stealCtx={(() => {
+              const myTeamForSteal = myPlayer?.team_id ?? null;
+              const haveToken = !!(myTeamForSteal && (state.tokens?.[myTeamForSteal] ?? []).some(
+                t => !t.pending && t.type === "steal_by_year",
+              ));
+              const canTry = !!(
+                round
+                && round.outcome === "incorrect"
+                && round.steal_outcome === null
+                && round.steal_team_id === null
+                && iAmCaptain
+                && myTeamForSteal !== null
+                && myTeamForSteal !== round.team_id
+                && haveToken
+              );
+              const stealerTeamId = round?.steal_team_id ?? null;
+              const stealerTeam   = stealerTeamId !== null ? teams.find(t => t.id === stealerTeamId) : undefined;
+              return {
+                canTry,
+                iAmStealer:      stealerTeamId !== null && stealerTeamId === myTeamForSteal,
+                pendingTeamName: stealerTeam?.name ?? null,
+                outcome:         (round?.steal_outcome ?? null) as "success" | "fail" | null,
+                tolerance:       2,
+                onTry:           stealYear,
+              };
+            })()}
           />
         );
       })()}

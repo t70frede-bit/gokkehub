@@ -341,6 +341,13 @@ export interface TlRound {
   //   "video"       → wrong-video report
   //   "video_redo"  → video report + trigger redo on approval
   issue_request_type:             string | null;
+  // Migration 025 — Steal by Year. After an opposing team's wrong
+  // placement, the opposing captain can spend steal_by_year to guess
+  // the exact year (±tolerance). Year stays hidden in the reveal UI
+  // while steal_outcome is null and steal_team_id is non-null.
+  steal_team_id:                  number | null;
+  steal_year_guess:               number | null;
+  steal_outcome:                  string | null;   // "success" | "fail" | null
   // Shop-mode idempotency guards (migration 018). When tokenEconomy ===
   // "shop", flipping artist_correct/songname_correct to true credits +1
   // point to the team; the flag below stops re-credits if the field

@@ -172,9 +172,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "opponent_turn",
     name: "Steal by Year",
     short: "Steal",
-    description: "If the opponent gets the year wrong, the year stays hidden and your team can guess the exact year to take the card.",
+    description: "If the opponent gets the year wrong, you can guess the year (±2) to take the card. Surfaces in the reveal overlay.",
     icon: "🥷",
-    implemented: false,
+    implemented: true,
   },
   force_lock: {
     type: "force_lock",
