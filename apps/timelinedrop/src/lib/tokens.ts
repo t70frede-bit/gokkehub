@@ -201,9 +201,9 @@ export const TOKEN_CATALOG: Record<TokenType, TokenSpec> = {
     category: "anytime",
     name: "Token Counter",
     short: "Counter",
-    description: "Cancel a token your opponent just played. Pops up after they use one.",
+    description: "Cancel a token your opponent just played. Pops up after they use one. Burns both tokens.",
     icon: "🛡️",
-    implemented: false,
+    implemented: true,
   },
 };
 

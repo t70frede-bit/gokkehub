@@ -2889,6 +2889,21 @@ export default function GamePage() {
     // realtime tl_team_tokens INSERT + tl_teams UPDATE handle the UI refresh
   }
 
+  async function counterToken(targetTokenId: number) {
+    if (!round || !myPlayerId) return;
+    const res = await fetch(`/room/${roomId}/counter`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ player_id: myPlayerId, round_id: round.id, target_token_id: targetTokenId }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      console.warn("[counter] failed:", res.status, t.slice(0, 200));
+    }
+    // Realtime tl_team_tokens.used_at + the rolled-back round column will
+    // refresh the UI; the overlay dismisses itself on the next render.
+    clearTokenActivation();
+  }
+
   async function pingShopToken(teamId: number, tokenType: string) {
     if (!myPlayerId) return;
     await fetch(`/room/${roomId}/shop-ping`, {
@@ -4698,9 +4713,10 @@ export default function GamePage() {
             activation={act}
             teamName={actTeam.name}
             teamColor={actColor}
-            hasCounter={myCounter && actTeam.id !== myTeam}
+            hasCounter={myCounter && actTeam.id !== myTeam && iAmCaptain}
             counterAvailable={someoneCanCounter}
             revealMedia={revealMedia}
+            onCounter={() => counterToken(act.tokenId)}
             onDismiss={clearTokenActivation}
           />
         );
