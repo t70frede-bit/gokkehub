@@ -28,11 +28,20 @@ function tokenSpec(type: string): TokenSpec {
   };
 }
 
-// Team colour mapping by sort_order — matches LobbyPage.
+// Team colour mapping. Explicit team.color (migration 023) takes priority;
+// legacy rooms with color === null fall back to the positional palette.
 type TeamColor = "red" | "blue" | "green" | "yellow";
 const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
-function getTeamColor(sortOrder: number): TeamColor {
-  return TEAM_PALETTE[sortOrder % TEAM_PALETTE.length];
+function isTeamColor(v: unknown): v is TeamColor {
+  return v === "red" || v === "blue" || v === "green" || v === "yellow";
+}
+function getTeamColor(teamOrSortOrder: { sort_order: number; color?: string | null } | number): TeamColor {
+  if (typeof teamOrSortOrder === "number") {
+    return TEAM_PALETTE[teamOrSortOrder % TEAM_PALETTE.length];
+  }
+  const explicit = teamOrSortOrder.color;
+  if (isTeamColor(explicit)) return explicit;
+  return TEAM_PALETTE[teamOrSortOrder.sort_order % TEAM_PALETTE.length];
 }
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
@@ -3272,7 +3281,7 @@ export default function GamePage() {
           const pending      = team.pending_tracks ?? [];
           const showDragCard = isActive && round && round.outcome === null;
           const isMyTeam     = team.id === myTeamId;
-          const color        = getTeamColor(team.sort_order);
+          const color        = getTeamColor(team);
 
           return (
             <Panel
@@ -3485,7 +3494,7 @@ export default function GamePage() {
           const tl       = timelines[team.id] ?? [];
           const pending  = team.pending_tracks ?? [];
           const isMyTeam = team.id === myTeamId;
-          const color    = getTeamColor(team.sort_order);
+          const color    = getTeamColor(team);
           const teamPlayers = state.players.filter(p => p.team_id === team.id && !p.is_spectator);
 
           // Opponents only show a summary — tokens, name, score, avatars in
@@ -4314,7 +4323,7 @@ export default function GamePage() {
             {teams
               .filter(t => t.id !== room.active_team_id)
               .map(t => {
-                const c = getTeamColor(t.sort_order);
+                const c = getTeamColor(t);
                 const cards = timelines[t.id] ?? [];
                 return (
                   <div key={t.id}>
@@ -4389,7 +4398,7 @@ export default function GamePage() {
         const act        = state.tokenActivation;
         const actTeam    = state.teams.find(t => t.id === act.teamId);
         if (!actTeam) return null;
-        const actColor   = getTeamColor(actTeam.sort_order);
+        const actColor   = getTeamColor(actTeam);
         const myTeam     = myPlayer?.team_id ?? null;
         const myCounter  = !!(myTeam && (state.tokens?.[myTeam] ?? [])
           .some(t => !t.pending && t.type === "token_counter"));

@@ -16,11 +16,21 @@ import { DEFAULT_TL_SETTINGS } from "../lib/types";
 const DISCORD_BOT_INVITE_URL =
   "https://discord.com/oauth2/authorize?client_id=1495063496587481249&permissions=36700160&integration_type=0&scope=bot+applications.commands";
 
-// Map a team's sort_order (0-3) to a colour token from the design system.
+// Map a team to its colour. Explicit team.color (migration 023) wins;
+// otherwise fall back to the positional palette by sort_order so legacy
+// rooms (color === null) keep their old look.
 type TeamColor = "red" | "blue" | "green" | "yellow";
 const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
-function getTeamColor(sortOrder: number): TeamColor {
-  return TEAM_PALETTE[sortOrder % TEAM_PALETTE.length];
+function isTeamColor(v: unknown): v is TeamColor {
+  return v === "red" || v === "blue" || v === "green" || v === "yellow";
+}
+function getTeamColor(teamOrSortOrder: { sort_order: number; color?: string | null } | number): TeamColor {
+  if (typeof teamOrSortOrder === "number") {
+    return TEAM_PALETTE[teamOrSortOrder % TEAM_PALETTE.length];
+  }
+  const explicit = teamOrSortOrder.color;
+  if (isTeamColor(explicit)) return explicit;
+  return TEAM_PALETTE[teamOrSortOrder.sort_order % TEAM_PALETTE.length];
 }
 function getInitial(name: string): string {
   return (name.trim()[0] ?? "?").toUpperCase();
@@ -168,6 +178,19 @@ export default function LobbyPage() {
       headers:     { "Content-Type": "application/json" },
       credentials: "include",
       body:        JSON.stringify({ player_id: myPlayerId, team_id: teamId, name }),
+    });
+  }
+
+  async function cycleTeamColor(team: TlTeam) {
+    if (!myPlayerId) return;
+    const current = getTeamColor(team);
+    const idx     = TEAM_PALETTE.indexOf(current);
+    const next    = TEAM_PALETTE[(idx + 1) % TEAM_PALETTE.length];
+    await fetch(`/room/${roomId}/team-color`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, team_id: team.id, color: next }),
     });
   }
 
@@ -930,13 +953,14 @@ export default function LobbyPage() {
                 <TeamPanel
                   key={team.id}
                   team={team}
-                  color={getTeamColor(team.sort_order)}
+                  color={getTeamColor(team)}
                   players={teamPlayers}
                   myPlayerId={myPlayerId}
                   isHost={isHost}
                   onTileClick={(p) => setSelectedPlayer(p)}
                   onRename={isHost ? (name) => renameTeam(team.id, name) : undefined}
                   onAddMember={isHost && gamemastering ? (name) => addPlaceholderMember(team.id, name) : undefined}
+                  onCycleColor={isHost ? () => cycleTeamColor(team) : undefined}
                 />
               );
             })}
@@ -1030,9 +1054,12 @@ interface TeamPanelProps {
    *  actual teammates' names even though only the gamemaster's device
    *  is connected). */
   onAddMember?: (name: string) => Promise<void>;
+  /** Host-only colour cycle. Clicking the swatch advances through the
+   *  4-colour palette and persists via /room/:id/team-color. */
+  onCycleColor?: () => Promise<void>;
 }
 
-function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick, onRename, onAddMember }: TeamPanelProps) {
+function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick, onRename, onAddMember, onCycleColor }: TeamPanelProps) {
   const isEmpty = players.length === 0;
   const captain = players.find(p => p.is_captain);
 
@@ -1080,10 +1107,24 @@ function TeamPanel({ team, color, players, myPlayerId, isHost, onTileClick, onRe
       }}
     >
       <div className="flex items-center gap-2 mb-3">
-        <span
-          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-          style={{ background: `rgb(var(--team-${color}-rgb))` }}
-        />
+        {onCycleColor ? (
+          <button
+            type="button"
+            onClick={() => { void onCycleColor(); }}
+            className="w-4 h-4 rounded-full flex-shrink-0 transition-transform active:scale-90"
+            style={{
+              background: `rgb(var(--team-${color}-rgb))`,
+              boxShadow:  "0 0 0 1px rgba(255,255,255,0.18)",
+            }}
+            title="Click to cycle through team colours"
+            aria-label="Cycle team colour"
+          />
+        ) : (
+          <span
+            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+            style={{ background: `rgb(var(--team-${color}-rgb))` }}
+          />
+        )}
         {editingName && onRename ? (
           <input
             autoFocus
@@ -1388,7 +1429,7 @@ function PlayerActionSheet({
             </p>
             <div className="flex flex-wrap gap-2">
               {otherTeams.map(t => {
-                const c = getTeamColor(t.sort_order);
+                const c = getTeamColor(t);
                 return (
                   <button
                     key={t.id}
@@ -1417,7 +1458,7 @@ function PlayerActionSheet({
             </p>
             <div className="flex flex-wrap gap-2">
               {teams.map(t => {
-                const c = getTeamColor(t.sort_order);
+                const c = getTeamColor(t);
                 return (
                   <button
                     key={t.id}

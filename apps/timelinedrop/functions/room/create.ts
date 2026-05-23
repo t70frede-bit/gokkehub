@@ -73,11 +73,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       name,
       win_target = 10,
       team_names = ["Team Red", "Team Blue"],
+      team_colors = [],
       host_team,
       is_spectator = false,
       role,
       settings,
     } = body;
+    const ALLOWED_COLORS = new Set(["red", "blue", "green", "yellow"]);
 
     if (!name?.trim()) return json({ error: "Name required" }, 400, req);
 
@@ -121,12 +123,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
 
     const teams = [];
     for (let i = 0; i < team_names.length; i++) {
+      const requested = team_colors[i];
+      const color     = typeof requested === "string" && ALLOWED_COLORS.has(requested) ? requested : null;
       const t = await createTeam(env, {
         room_id:        roomId,
         name:           team_names[i],
         tokens:         0,
         pending_tracks: [],
         sort_order:     i,
+        color,
       });
       teams.push(t);
     }

@@ -5,10 +5,16 @@ import { supabase } from "../lib/supabase";
 import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
 import type { TlTeam, TlRoom, TlRoomSettings } from "../lib/types";
 
-// Team slot → colour token, matching LobbyPage/GamePage.
+// Team → colour token. Explicit team.color (migration 023) wins; legacy
+// rooms fall back to positional palette by sort_order. Matches the
+// resolver in LobbyPage/GamePage.
 const TEAM_PALETTE = ["red", "blue", "green", "yellow"] as const;
-function teamColor(sortOrder: number): string {
-  return TEAM_PALETTE[sortOrder % TEAM_PALETTE.length];
+function isTeamColor(v: unknown): v is typeof TEAM_PALETTE[number] {
+  return v === "red" || v === "blue" || v === "green" || v === "yellow";
+}
+function teamColor(team: { sort_order: number; color?: string | null }): string {
+  if (isTeamColor(team.color)) return team.color;
+  return TEAM_PALETTE[team.sort_order % TEAM_PALETTE.length];
 }
 
 const MEDALS = ["🥇", "🥈", "🥉"] as const;
@@ -166,7 +172,7 @@ export default function EndPage() {
   // Confetti tinted with the winner's colour + amber accents. Built once.
   const confetti = useMemo(() => {
     if (!winner) return [];
-    const c = teamColor(winner.sort_order);
+    const c = teamColor(winner);
     return makeConfetti([
       `rgb(var(--team-${c}-rgb))`,
       "rgb(var(--color-primary-rgb))",
@@ -215,7 +221,7 @@ export default function EndPage() {
         {podium.length > 0 && (
           <div className="flex items-end justify-center gap-2 sm:gap-3 pt-2">
             {podium.map(({ rank, team }, idx) => {
-              const c = teamColor(team.sort_order);
+              const c = teamColor(team);
               return (
                 <div key={team.id} className="flex flex-col items-center flex-1 max-w-[120px]">
                   <div className="text-2xl mb-1">{MEDALS[rank]}</div>

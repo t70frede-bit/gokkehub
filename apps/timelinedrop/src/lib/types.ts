@@ -229,6 +229,9 @@ export interface TlTeam {
   pending_tracks: SpotifyTrack[];    // cards earned this turn, not yet locked
   sort_order:     number;
   points:         number;            // shop currency; ignored in "standard" / "bonus" modes
+  // Migration 023 — explicit colour override. Null falls back to the
+  // sort_order-based palette ("red" | "blue" | "green" | "yellow").
+  color:          string | null;
 }
 
 export interface TlPlayer {
@@ -442,6 +445,7 @@ export interface CreateRoomRequest {
   name:          string; // host's display name if not logged in
   win_target:    number;
   team_names:    string[];
+  team_colors?:  string[]; // parallel to team_names; "red"|"blue"|"green"|"yellow"
   host_team?:    number | null; // 0-based index into team_names; null/undefined → spectator/DJ/gamemaster
   is_spectator?: boolean;       // host joins as DJ-only spectator
   /** Lobby role chosen on Create Room. Server uses this to set `settings.gamemasterMode`

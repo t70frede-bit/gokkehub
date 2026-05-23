@@ -5,10 +5,22 @@ import { useSession } from "../hooks/useSession";
 import type { CreateRoomRequest, CreateRoomResponse, CreateRoomRole, TlRoomSettings } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
-// Coloured emoji per team slot, matching the design system's team palette
-// (red, blue, green, yellow). Shown next to the team name input so the host
-// can tell at a glance which colour each team is.
-const TEAM_COLOR_EMOJI = ["🔴", "🔵", "🟢", "🟡"] as const;
+// Per-slot palette + matching emoji. The host clicks a swatch to cycle
+// through the four palette colours; the picked colour is persisted on
+// tl_teams.color (migration 023). Defaults are positional so the legacy
+// "slot 0 = red, slot 1 = blue" feel is preserved out of the box.
+type TeamColor = "red" | "blue" | "green" | "yellow";
+const TEAM_PALETTE: TeamColor[] = ["red", "blue", "green", "yellow"];
+const TEAM_COLOR_EMOJI: Record<TeamColor, string> = {
+  red:    "🔴",
+  blue:   "🔵",
+  green:  "🟢",
+  yellow: "🟡",
+};
+// Hard cap on teams in Create Room. Lobby Settings will gain a separate
+// "add team" path later if multi-team rooms come back; for now the
+// playtested 2-team flow is the only supported shape.
+const MAX_TEAMS = 2;
 function defaultTeamName(i: number): string {
   return ["Team Red", "Team Blue", "Team Green", "Team Yellow"][i] ?? `Team ${i + 1}`;
 }
@@ -28,6 +40,7 @@ export default function HomePage() {
   const [name,         setName]         = useState(session?.displayName ?? "");
   const [role,         setRole]         = useState<CreateRoomRole>("player");
   const [teams,        setTeams]        = useState<string[]>([defaultTeamName(0), defaultTeamName(1)]);
+  const [teamColors,   setTeamColors]   = useState<TeamColor[]>([TEAM_PALETTE[0], TEAM_PALETTE[1]]);
   const [hostTeam,     setHostTeam]     = useState<number>(0);
   // Streamer mode lives on Create Room (not Lobby Settings) because it
   // affects what the host sees from the moment the room exists — once
@@ -63,6 +76,7 @@ export default function HomePage() {
         name:         name.trim(),
         win_target:   10, // baked default; host can change in Lobby → Settings tab
         team_names:   teams.map((t, i) => (t.trim() || defaultTeamName(i))),
+        team_colors:  teamColors,
         // host_team only matters for the "player" role; server ignores it
         // for spectator/dj/gamemaster.
         host_team:    role === "player" ? hostTeam : null,
@@ -242,41 +256,47 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Teams editor — each row prefixed with the coloured emoji that
-              matches the team's slot palette so the host knows which colour
-              each team will be in the lobby/in-game UI. */}
+          {/* Teams editor — each row has a clickable coloured swatch beside
+              the name input. Click cycles through red → blue → green →
+              yellow → red. Capped at 2 teams (MAX_TEAMS) since that's the
+              playtested shape; multi-team will come back via Lobby Settings
+              when needed. */}
           <div>
             <p className="text-sm font-medium mb-2">Teams</p>
             <div className="space-y-2">
-              {teams.map((t, i) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <span className="text-lg flex-shrink-0 w-6 text-center" aria-hidden="true">
-                    {TEAM_COLOR_EMOJI[i] ?? "⚪"}
-                  </span>
-                  <Input
-                    value={t}
-                    onChange={e => setTeams(ts => ts.map((x, j) => j === i ? e.target.value : x))}
-                    placeholder={defaultTeamName(i)}
-                    className="flex-1"
-                  />
-                  {teams.length > 2 && (
+              {teams.map((t, i) => {
+                const color = teamColors[i] ?? TEAM_PALETTE[i % TEAM_PALETTE.length];
+                return (
+                  <div key={i} className="flex gap-2 items-center">
                     <button
-                      onClick={() => {
-                        setTeams(ts => ts.filter((_, j) => j !== i));
-                        // If we removed the team the host was on, fall back to slot 0.
-                        if (hostTeam >= teams.length - 1) setHostTeam(0);
-                      }}
-                      className="text-sm px-2 opacity-60 hover:opacity-100"
-                      aria-label={`Remove team ${i + 1}`}
+                      type="button"
+                      onClick={() => setTeamColors(cs => {
+                        const next = [...cs];
+                        const idx  = TEAM_PALETTE.indexOf(color);
+                        next[i] = TEAM_PALETTE[(idx + 1) % TEAM_PALETTE.length];
+                        return next;
+                      })}
+                      className="text-lg flex-shrink-0 w-6 text-center rounded transition-transform active:scale-90"
+                      aria-label={`Cycle colour for team ${i + 1}`}
+                      title="Click to cycle colour"
                     >
-                      ✕
+                      {TEAM_COLOR_EMOJI[color]}
                     </button>
-                  )}
-                </div>
-              ))}
-              {teams.length < 4 && (
+                    <Input
+                      value={t}
+                      onChange={e => setTeams(ts => ts.map((x, j) => j === i ? e.target.value : x))}
+                      placeholder={defaultTeamName(i)}
+                      className="flex-1"
+                    />
+                  </div>
+                );
+              })}
+              {teams.length < MAX_TEAMS && (
                 <button
-                  onClick={() => setTeams(ts => [...ts, defaultTeamName(ts.length)])}
+                  onClick={() => {
+                    setTeams(ts => [...ts, defaultTeamName(ts.length)]);
+                    setTeamColors(cs => [...cs, TEAM_PALETTE[cs.length % TEAM_PALETTE.length]]);
+                  }}
                   className="text-sm font-medium"
                   style={{ color: "rgb(var(--color-primary-rgb))" }}
                 >
@@ -294,6 +314,7 @@ export default function HomePage() {
               <div className="flex gap-2 flex-wrap">
                 {teams.map((t, i) => {
                   const selected = hostTeam === i;
+                  const color    = teamColors[i] ?? TEAM_PALETTE[i % TEAM_PALETTE.length];
                   return (
                     <button
                       key={i}
@@ -304,7 +325,7 @@ export default function HomePage() {
                         background:  selected ? "rgba(var(--color-primary-rgb),0.18)" : "transparent",
                       }}
                     >
-                      <span aria-hidden="true">{TEAM_COLOR_EMOJI[i] ?? "⚪"}</span>
+                      <span aria-hidden="true">{TEAM_COLOR_EMOJI[color]}</span>
                       <span>{t || defaultTeamName(i)}</span>
                     </button>
                   );
