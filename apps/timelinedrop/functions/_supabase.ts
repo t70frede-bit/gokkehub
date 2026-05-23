@@ -400,6 +400,68 @@ export async function recordPlayedTracks(
   }
 }
 
+/**
+ * Phase 2 song stats (migration 026). Increment per-track aggregate
+ * counters on every placement attempt. Idempotency: handlePlace
+ * already rejects re-calls on a resolved round (outcome != null), so
+ * a single call per (round_id, track_id) is enforced upstream.
+ *
+ * Postgres upsert via PostgREST: POST with on_conflict=track_id +
+ * Prefer: resolution=merge-duplicates merges on the PK. We send a
+ * row containing the deltas plus a static last_played_at; the
+ * defaults handle a brand-new row.
+ *
+ * Read path: SELECT plays, correct_placements, incorrect_placements
+ * by track_id list (Phase 3 curator, not yet built).
+ */
+export async function recordSongStat(
+  env: Env,
+  trackId: string,
+  outcome: "correct" | "incorrect",
+): Promise<void> {
+  if (!trackId) return;
+  // PostgREST doesn't support arithmetic increment via JSON; we
+  // fetch-then-upsert in one round-trip. Errors are swallowed so a
+  // transient DB hiccup never blocks a placement from settling.
+  try {
+    const lookup = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/tl_song_stats?track_id=eq.${encodeURIComponent(trackId)}&select=plays,correct_placements,incorrect_placements&limit=1`,
+      { headers: {
+        apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      } },
+    );
+    let plays = 0, correct = 0, incorrect = 0;
+    if (lookup.ok) {
+      const rows = await lookup.json() as Array<{ plays: number; correct_placements: number; incorrect_placements: number }>;
+      if (rows[0]) {
+        plays     = rows[0].plays;
+        correct   = rows[0].correct_placements;
+        incorrect = rows[0].incorrect_placements;
+      }
+    }
+    const next = {
+      track_id:              trackId,
+      plays:                 plays + 1,
+      correct_placements:    correct + (outcome === "correct" ? 1 : 0),
+      incorrect_placements:  incorrect + (outcome === "incorrect" ? 1 : 0),
+      last_played_at:        new Date().toISOString(),
+    };
+    await fetch(`${env.SUPABASE_URL}/rest/v1/tl_song_stats?on_conflict=track_id`, {
+      method:  "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "apikey":        env.SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Prefer":        "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(next),
+    });
+  } catch (e) {
+    console.error("[musix] recordSongStat failed:", e);
+  }
+}
+
 export async function getRound(env: Env, roundId: number): Promise<TlRound | null> {
   const rows = await req<TlRound>(env, "GET", "tl_rounds", `id=eq.${roundId}&select=*`);
   return rows[0] ?? null;

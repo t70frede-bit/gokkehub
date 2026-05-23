@@ -6,6 +6,7 @@ import {
   createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
   batchLookupCorrections, lookupCorrectedYear, upsertSongCorrection,
   lookupAcceptedAnswers, recordAcceptedAnswer, autoJudgeGuess,
+  recordSongStat,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -230,6 +231,12 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
   }
 
   await updateRound(env, round_id, update);
+
+  // Phase 2 song stats — accumulate per-track placement counters
+  // across rooms so Phase 3 curation can later read real
+  // correctness rates instead of Spotify top-tracks rank. Fire-and-
+  // forget; failures swallowed inside recordSongStat itself.
+  void recordSongStat(env, round.track.id, outcome);
 
   if (correct) {
     const teams = await getTeams(env, roomId);
