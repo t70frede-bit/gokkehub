@@ -60,7 +60,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   const roomId = params.id as string;
 
   try {
-    const body = await req.json() as UpdateSettingsRequest;
+    const body = await req.json() as UpdateSettingsRequest & { win_target?: number };
     if (!body.player_id) return json({ error: "player_id required" }, 400, req);
 
     const room = await getRoom(env, roomId);
@@ -68,8 +68,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (room.host_id !== body.player_id) return json({ error: "Only the host can change settings" }, 403, req);
 
     const merged: TlRoomSettings = { ...(room.settings ?? {}), ...sanitize(body.settings) };
-    await updateRoom(env, roomId, { settings: merged });
-    return json({ ok: true, settings: merged }, 200, req);
+    // win_target is a top-level column (not inside the settings jsonb) — the
+    // Lobby cards-to-win pills go through here so RLS doesn't silently deny
+    // a client-side supabase update. Validate range so we don't accept junk.
+    const patch: Record<string, unknown> = { settings: merged };
+    if (typeof body.win_target === "number" && body.win_target >= 3 && body.win_target <= 25) {
+      patch.win_target = Math.round(body.win_target);
+    }
+    await updateRoom(env, roomId, patch);
+    return json({ ok: true, settings: merged, win_target: patch.win_target }, 200, req);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return json({ error: msg }, 500, req);

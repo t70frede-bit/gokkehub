@@ -137,6 +137,16 @@ export interface TlRoomSettings {
   tokenEconomy?:       TokenEconomy;  // standard (default) | bonus | shop
   /** @deprecated — sync mode dropped, all-clients-stream is always independent. */
   streamSyncMode?:     StreamSyncMode;
+  /** Per-playlist import records so the host can remove an entire playlist
+   *  later, not just individual songs. Populated by /room/:id/playlist on
+   *  every successful import; consumed by /room/:id/remove-playlist. */
+  playlistImports?: Array<{
+    id:        string;   // uuid generated at import time
+    name:      string;   // playlist's display name
+    source:    "spotify" | "youtube";
+    added_at:  string;   // ISO timestamp
+    track_ids: string[]; // Spotify track IDs that came from this playlist (now sitting in track_pool)
+  }>;
 }
 
 // Defaults baked in so a brand-new room hits sensible values without the host
@@ -160,6 +170,7 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerSeconds:      120,
   tokenEconomy:      "standard",       // one Song Skipper per correct round, classic Hitster
   streamSyncMode:    "independent",
+  playlistImports:   [],
 };
 
 // Host's chosen lobby role on the Create Room modal. Maps to server-side

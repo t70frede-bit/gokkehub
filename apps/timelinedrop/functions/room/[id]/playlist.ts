@@ -4,7 +4,7 @@ import { parseSessionId } from "@gokkehub/auth/cookie";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import { getRoom, updateRoom, fetchPlaylistTracks, refreshSpotifyToken } from "../../_supabase";
-import type { AddPlaylistResponse, SpotifyTrack } from "../../../src/lib/types";
+import type { AddPlaylistResponse, SpotifyTrack, TlRoomSettings } from "../../../src/lib/types";
 import { STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../../../src/lib/types";
 
 // Feature flag — YouTube-playlist import is disabled while we sort out
@@ -190,7 +190,21 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       [merged[i], merged[j]] = [merged[j], merged[i]];
     }
 
-    await updateRoom(env, roomId, { track_pool: merged });
+    // Record the import so the Lobby host UI can remove an ENTIRE playlist
+    // later (not just individual songs). track_ids covers only the rows we
+    // actually appended (already-in-pool dups are skipped above).
+    const importRecord = {
+      id:        crypto.randomUUID(),
+      name:      listName,
+      source:    parsed.kind as "spotify" | "youtube",
+      added_at:  new Date().toISOString(),
+      track_ids: unique.map(t => t.id),
+    };
+    const mergedSettings: TlRoomSettings = {
+      ...(room.settings ?? {}),
+      playlistImports: [...((room.settings?.playlistImports) ?? []), importRecord],
+    };
+    await updateRoom(env, roomId, { track_pool: merged, settings: mergedSettings });
 
     return json({ added: unique.length, total: merged.length, name: listName } as AddPlaylistResponse, 200, req);
   } catch (err: unknown) {

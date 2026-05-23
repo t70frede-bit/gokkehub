@@ -165,7 +165,8 @@ export default function HomePage() {
               value={code}
               onChange={e => setCode(e.target.value.toUpperCase())}
               onKeyDown={e => e.key === "Enter" && goToJoin()}
-              placeholder="ABC123"
+              placeholder="ABCD"
+              // maxLength stays 6 so legacy rooms (pre-4-char codes) can still be joined
               maxLength={6}
               className="w-full rounded-xl px-4 py-3 text-center text-2xl font-bold tracking-widest outline-none"
               style={{

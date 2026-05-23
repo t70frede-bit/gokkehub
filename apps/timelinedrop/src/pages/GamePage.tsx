@@ -2948,10 +2948,13 @@ export default function GamePage() {
             </button>
           )}
 
-          {/* Error? button — any player can flag a problem with the current
-              round (no song playing, wrong song, etc.). Host approves via
-              the top-level banner that appears mid-round. */}
-          {round && (
+          {/* Error? button — the ACTIVE TEAM'S CAPTAIN can flag a problem
+              with the current round (no song playing, wrong song, etc.).
+              Host then approves via the top-level banner. The broader
+              captain-only Manage relocation + card editing is queued in
+              the playtest feedback batch in plan_timelinedrop_roadmap.md;
+              this is the interim gating only. */}
+          {round && iAmCaptain && isMyTurn && (
             <button
               onClick={() => setErrorMenuOpen(true)}
               className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"

@@ -5,7 +5,11 @@ import { json, handlePreflight } from "../_cors";
 import { createRoom, createTeam, createPlayer } from "../_supabase";
 import type { CreateRoomRequest, CreateRoomResponse, TlRoomSettings } from "../../src/lib/types";
 
-function randomId(len = 6): string {
+// Room codes are 4 alphanumeric chars (36^4 ≈ 1.7M combos, plenty for
+// concurrent rooms at this scale and shorter to read out loud). Older
+// rooms with 6-char codes keep working — the join lookup matches by
+// exact id regardless of length.
+function randomId(len = 4): string {
   return Math.random().toString(36).slice(2, 2 + len).toUpperCase();
 }
 
@@ -78,7 +82,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     if (!name?.trim()) return json({ error: "Name required" }, 400, req);
 
     const session  = await getSession(env.SESSIONS, req);
-    const roomId   = randomId(6);
+    const roomId   = randomId();
     const playerId = crypto.randomUUID();
     const sanitized = sanitizeSettings(settings);
 

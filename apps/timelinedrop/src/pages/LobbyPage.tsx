@@ -176,6 +176,16 @@ export default function LobbyPage() {
     });
   }
 
+  async function removePlaylist(playlistId: string) {
+    if (!myPlayerId) return;
+    await fetch(`/room/${roomId}/remove-playlist`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, playlist_id: playlistId }),
+    });
+  }
+
   async function saveSettings(patch: TlRoomSettings) {
     if (!myPlayerId) return;
     await fetch(`/room/${roomId}/settings`, {
@@ -342,7 +352,18 @@ export default function LobbyPage() {
                         <button
                           key={n}
                           onClick={async () => {
-                            await supabase.from("tl_rooms").update({ win_target: n }).eq("id", roomId);
+                            // Route through the host-only settings endpoint —
+                            // a direct supabase update on tl_rooms gets
+                            // silently denied by RLS so only the default 10
+                            // ever stuck. See plan_lobby_overhaul / playtest
+                            // feedback batch 2026-05-23.
+                            if (!myPlayerId) return;
+                            await fetch(`/room/${roomId}/settings`, {
+                              method:      "POST",
+                              headers:     { "Content-Type": "application/json" },
+                              credentials: "include",
+                              body:        JSON.stringify({ player_id: myPlayerId, settings: {}, win_target: n }),
+                            });
                           }}
                           className="px-4 py-1.5 rounded-md text-sm font-bold transition-all border"
                           style={{
@@ -721,6 +742,40 @@ export default function LobbyPage() {
                       song{trackCount === 1 ? "" : "s"} loaded. Add more playlists to mix them in.
                     </span>
                   </p>
+
+                  {/* Loaded playlists — host can ✕ a whole imported playlist
+                      (removes every track that came from it). Only meaningful
+                      before the game starts. Empty when no imports recorded
+                      yet (e.g. older rooms before playlistImports landed). */}
+                  {(settings.playlistImports?.length ?? 0) > 0 && room.status === "lobby" && (
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-xs uppercase tracking-wider opacity-60">Loaded playlists</p>
+                      {(settings.playlistImports ?? []).map(p => (
+                        <div key={p.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-md"
+                          style={{
+                            background: "rgba(255,255,255,0.03)",
+                            border:     "1px solid rgba(255,255,255,0.08)",
+                          }}>
+                          <span className="flex-1 truncate font-semibold" title={p.name}>{p.name}</span>
+                          <span className="opacity-50 font-mono flex-shrink-0">
+                            {p.track_ids.length} song{p.track_ids.length === 1 ? "" : "s"}
+                          </span>
+                          <button
+                            onClick={() => removePlaylist(p.id)}
+                            className="px-2 py-0.5 rounded text-[11px] flex-shrink-0 opacity-70 hover:opacity-100"
+                            style={{
+                              background: "rgba(220,60,60,0.15)",
+                              border:     "1px solid rgba(220,60,60,0.35)",
+                              color:      "rgb(220,140,140)",
+                            }}
+                            title="Remove this whole playlist from the room"
+                          >
+                            ✕ Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </Panel>
