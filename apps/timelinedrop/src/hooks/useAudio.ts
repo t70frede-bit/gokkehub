@@ -64,6 +64,15 @@ export function useDJAudio(
   const [volume,     setVolume_]    = useState(0.8);
   const [deviceId,   setDeviceId]   = useState<string | null>(null);
 
+  // True until the next player_state_changed after a seek() fires. The
+  // SDK can emit a brief paused: true → paused: false transition during a
+  // seek; without this gate, useDJAudio's transition handler relays the
+  // new position to onDJStateChange, which writes a NEW playing_since
+  // (= Date.now() - newPositionMs) — making the turn timer jump forward
+  // by however much the captain seeked. Discarding the first transition
+  // after a seek keeps playing_since anchored to the real play start.
+  const seekSuppressRef = useRef(false);
+
   // Load SDK + get token
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +129,12 @@ export function useDJAudio(
         // not on every position tick — prevents the timer from constantly resetting.
         if (prevPausedRef.current !== state.paused) {
           prevPausedRef.current = state.paused;
-          onStateChange(!state.paused, state.position);
+          if (seekSuppressRef.current) {
+            // Drop the post-seek paused/play blip so the timer doesn't jump.
+            seekSuppressRef.current = false;
+          } else {
+            onStateChange(!state.paused, state.position);
+          }
         }
       });
 
@@ -176,6 +190,10 @@ export function useDJAudio(
   }, []);
 
   const seek = useCallback(async (ms: number) => {
+    // Arm the suppression BEFORE the seek so the post-seek state-change
+    // (if it arrives as a transition) gets dropped instead of writing a
+    // new playing_since that would shift the turn timer.
+    seekSuppressRef.current = true;
     await playerRef.current?.seek(ms);
   }, []);
 

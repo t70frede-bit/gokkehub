@@ -62,15 +62,20 @@ type WaitUntil = ((p: Promise<unknown>) => void) | undefined;
 
 // If the pool is running low, kick off a refill in the background. handleGenerate
 // authenticates via room.host_session_id (migration 011) so it doesn't need
-// the triggering player to be the host.
+// the triggering player to be the host. Skips refill in playlist mode — the
+// host curated the pool themselves and re-running group-taste curation
+// would silently append songs they didn't pick (and that wouldn't carry
+// the playlistImports record, so removal can't reach them).
 function maybeTopUpPool(
   env: Env,
   req: Request,
   roomId: string,
   poolLength: number,
   newCursor: number,
+  songSource: "group-taste" | "playlist" | undefined,
   waitUntil: WaitUntil,
 ) {
+  if (songSource === "playlist") return;
   const remaining = poolLength - newCursor;
   if (remaining > POOL_TOPUP_WATERMARK) return;
   if (poolLength >= POOL_CAP)            return;
@@ -964,7 +969,7 @@ async function handleTurnActionInner(req: Request, roomId: string, env: Env, wai
       playing_since:    autoStart ? Date.now() : null,
       paused_at_ms:     null,
     });
-    maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, waitUntil);
+    maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, room.settings?.songSource, waitUntil);
     return json({ ok: true, round_id: round.id }, 200, req);
   }
 
@@ -1234,5 +1239,5 @@ async function advanceTurn(
 
   // Background pool top-up — see maybeTopUpPool for the trigger condition.
   // Skipped if we have no request handle (e.g. internal callers).
-  if (req) maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, waitUntil);
+  if (req) maybeTopUpPool(env, req, roomId, room.track_pool.length, newCursor, room.settings?.songSource, waitUntil);
 }

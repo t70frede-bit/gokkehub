@@ -915,10 +915,13 @@ interface AudioPlayerProps {
 // play() calls), and locally the experience is fine since everyone's
 // looking at the same shared timeline UI either way.
 function AllClientsAudio({
-  track, coverRevealed,
+  track, coverRevealed, canScrub,
 }: {
   track:                SpotifyTrack;
   coverRevealed:        boolean;
+  /** Restart + click-to-seek are gated to the active team's captain so
+   *  random viewers can't jump the song while a guess is being placed. */
+  canScrub:             boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastTrackRef = useRef<string | null>(null);
@@ -1084,10 +1087,12 @@ function AllClientsAudio({
   }
 
   function handleRestart() {
+    if (!canScrub) return;
     loadAt(0, { autoplay: true });
   }
 
   function handleSeekClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!canScrub) return;
     if (totalDurationMs === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const fraction  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -1149,13 +1154,16 @@ function AllClientsAudio({
           </div>
         </div>
 
-        {/* Restart — re-requests the stream from byte 0. */}
-        <button onClick={handleRestart}
-          className="w-7 h-7 rounded flex items-center justify-center text-xs flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
-          title="Restart from beginning"
-          style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-          ⏮
-        </button>
+        {/* Restart — re-requests the stream from byte 0. Captain-only
+            (canScrub) so random viewers can't jump the song. */}
+        {canScrub && (
+          <button onClick={handleRestart}
+            className="w-7 h-7 rounded flex items-center justify-center text-xs flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+            title="Restart from beginning"
+            style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+            ⏮
+          </button>
+        )}
 
         {/* Local play/pause — each client controls their own audio. */}
         <button onClick={handleMainClick}
@@ -1169,13 +1177,13 @@ function AllClientsAudio({
           {playing ? "⏸" : "▶"}
         </button>
 
-        {/* Progress bar — click anywhere to seek. Seeking re-requests the
-            stream with ?seek=N because yt-dlp pipes don't support
-            HTTP Range — el.currentTime alone would silently no-op past
-            the already-buffered window. */}
-        <div className="flex-1 min-w-0 relative h-1.5 rounded-full overflow-hidden cursor-pointer"
+        {/* Progress bar — captain (canScrub) clicks to seek; for non-
+            captains it just renders as a progress indicator (no cursor
+            pointer, no click handler). Seeking re-requests the stream
+            with ?seek=N because yt-dlp pipes don't support HTTP Range. */}
+        <div className={`flex-1 min-w-0 relative h-1.5 rounded-full overflow-hidden${canScrub ? " cursor-pointer" : ""}`}
           style={{ background: "rgba(255,255,255,0.08)" }}
-          onClick={handleSeekClick}>
+          onClick={canScrub ? handleSeekClick : undefined}>
           <div className="absolute left-0 top-0 h-full rounded-full transition-[width] duration-200"
             style={{ width: `${pct}%`, background: "rgb(var(--color-primary-rgb))" }} />
         </div>
@@ -3619,6 +3627,9 @@ export default function GamePage() {
         <AllClientsAudio
           track={round.track}
           coverRevealed={!!round.cover_revealed}
+          // Only the active team's captain can scrub / restart the song —
+          // viewers still hear the audio + can play/pause locally.
+          canScrub={iAmCaptain && isMyTurn}
         />
       )}
 
