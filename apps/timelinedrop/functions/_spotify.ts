@@ -1,6 +1,15 @@
 import type { Env } from "./_env";
 import type { SpotifyTrack } from "../src/lib/types";
 
+// Album-name markers that flag a Spotify entry as a re-release rather
+// than the canonical original — these albums carry the RE-RELEASE date,
+// not the song's actual release year, so they break the year-placement
+// game. We drop tracks whose oldest matching album still trips this
+// pattern. False positives (an album literally named "Anniversary") are
+// rare and the candidate just gets skipped — curation has plenty more.
+const ALBUM_REMASTER_MARKER =
+  /\b(remaster(ed)?|anniversary( edition)?|deluxe( edition)?|re-?recorded|expanded edition|special edition)\b/i;
+
 // ── Spotify search by name + artist → SpotifyTrack ──────────────────────────
 // Uses the host's OAuth access token (passed in). Returns null if no match.
 
@@ -58,6 +67,15 @@ export async function searchTrackUri(
   // release_date is "YYYY" or "YYYY-MM-DD"; lexical compare puts older first.
   pool.sort((a, b) => a.album.release_date.localeCompare(b.album.release_date));
   const item = pool[0];
+
+  // Skip if even the OLDEST match is a re-release — the year would be
+  // wrong by potentially decades. With ~16k candidate tracks in a
+  // typical curation pool, dropping one is cheaper than serving a wrong
+  // year. (Tracks where a non-remaster version exists already won —
+  // the localeCompare sort surfaces it ahead of any "2011 Remaster".)
+  if (item.album.name && ALBUM_REMASTER_MARKER.test(item.album.name)) {
+    return null;
+  }
 
   const releaseYear = parseInt(item.album.release_date.slice(0, 4), 10);
   if (!Number.isFinite(releaseYear)) return null;
