@@ -383,6 +383,34 @@ export default function LobbyPage() {
                       );
                     })}
                   </div>
+                  {/* How a winner is decided when a team first hits the
+                      target. "First to X" ends the game immediately;
+                      "Tiebreaker" lets every other team take one more
+                      turn — if there's a strict leader after that
+                      cycle they win, otherwise another cycle. */}
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {([
+                      { value: "first",      label: "🏁 First to target",  hint: "Game ends the moment a team reaches the card count" },
+                      { value: "tiebreaker", label: "⚖️ Tiebreaker rounds", hint: "After someone hits target, every other team plays one more turn" },
+                    ] as const).map(({ value, label, hint }) => {
+                      const active = (settings.winMode ?? "first") === value;
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => saveSettings({ winMode: value })}
+                          title={hint}
+                          className="text-left rounded-lg p-3 transition-all border"
+                          style={{
+                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                            background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                          }}
+                        >
+                          <p className="text-sm font-semibold">{label}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Judging mode — vote-all and next-team-captain are pruned

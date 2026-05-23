@@ -978,11 +978,73 @@ async function handleTurnActionInner(req: Request, roomId: string, env: Env, wai
     (activeTeam.pending_tracks ?? []) as Array<{ id: string; releaseYear: number; [k: string]: unknown }>);
   await updateTeam(env, activeTeam.id, { pending_tracks: [] });
 
-  // Win condition
-  const timeline = await getTimeline(env, activeTeam.id);
-  if (timeline.length >= room.win_target) {
-    await updateRoom(env, roomId, { status: "finished" });
-    return json({ ok: true, winner: activeTeam.id }, 200, req);
+  // ── Win evaluation ──────────────────────────────────────────────────────
+  // winMode === "first"      → game ends the moment the active team crosses
+  //                            win_target (original behaviour).
+  // winMode === "tiebreaker" → crossing win_target arms a tiebreaker cycle;
+  //                            every OTHER team gets one more turn, then we
+  //                            evaluate the leader. Tied → another cycle.
+  const winMode: "first" | "tiebreaker" =
+    (room.settings?.winMode === "tiebreaker") ? "tiebreaker" : "first";
+
+  // Score (locked timeline count) for every team — we need all of them for
+  // the tiebreaker comparison and we need the active team's anyway.
+  const teamScores = new Map<number, number>();
+  for (const t of teams) {
+    const tl = await getTimeline(env, t.id);
+    teamScores.set(t.id, tl.length);
+  }
+  const activeScore = teamScores.get(activeTeam.id) ?? 0;
+
+  if (winMode === "first") {
+    if (activeScore >= room.win_target) {
+      await updateRoom(env, roomId, { status: "finished" });
+      return json({ ok: true, winner: activeTeam.id }, 200, req);
+    }
+  } else {
+    // Tiebreaker. Pull (or default) the cycle state from settings.
+    const tb = room.settings?.tiebreaker ?? { active: false, played_team_ids: [] };
+    let nextActive   = tb.active;
+    let nextPlayedIds = [...tb.played_team_ids];
+
+    // Threshold first crossed → arm the cycle. The active team's turn
+    // just ended at the trigger, so they count as one of the cycle's
+    // played teams from the start.
+    if (!tb.active && activeScore >= room.win_target) {
+      nextActive    = true;
+      nextPlayedIds = [activeTeam.id];
+    } else if (tb.active) {
+      if (!nextPlayedIds.includes(activeTeam.id)) {
+        nextPlayedIds.push(activeTeam.id);
+      }
+    }
+
+    // If we're in a cycle AND every team has now had a post-trigger turn,
+    // pick a strict leader. Tied → reset the cycle and continue.
+    if (nextActive && teams.every(t => nextPlayedIds.includes(t.id))) {
+      const maxScore = Math.max(...teams.map(t => teamScores.get(t.id) ?? 0));
+      const leaders  = teams.filter(t => (teamScores.get(t.id) ?? 0) === maxScore && maxScore >= room.win_target);
+      if (leaders.length === 1) {
+        await updateRoom(env, roomId, {
+          status: "finished",
+          settings: { ...(room.settings ?? {}), tiebreaker: { active: false, played_team_ids: [] } },
+        });
+        return json({ ok: true, winner: leaders[0].id }, 200, req);
+      }
+      // Tie (or nobody's actually at target — defensive). Reset and keep playing.
+      nextPlayedIds = [];
+    }
+
+    // Persist the updated tiebreaker state if it changed.
+    if (nextActive !== tb.active || nextPlayedIds.length !== tb.played_team_ids.length
+        || nextPlayedIds.some((id, i) => tb.played_team_ids[i] !== id)) {
+      await updateRoom(env, roomId, {
+        settings: {
+          ...(room.settings ?? {}),
+          tiebreaker: { active: nextActive, played_team_ids: nextPlayedIds },
+        },
+      });
+    }
   }
 
   await advanceTurn(env, roomId, room, teams, req, waitUntil);

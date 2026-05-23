@@ -48,6 +48,9 @@ function sanitize(input: unknown): TlRoomSettings {
   if (s.tokenEconomy === "standard" || s.tokenEconomy === "bonus" || s.tokenEconomy === "shop") {
     out.tokenEconomy = s.tokenEconomy;
   }
+  if (s.winMode === "first" || s.winMode === "tiebreaker") {
+    out.winMode = s.winMode;
+  }
   return out;
 }
 

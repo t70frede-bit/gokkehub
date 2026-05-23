@@ -87,6 +87,16 @@ export const STREAM_PROXY_TOKEN = "R7I4v_bGI1NH359tHg11UgPIv-nv1Jb2evfe7-S6Z_c";
 export type TimerMode = "song-length" | "fixed" | "none";
 export const TIMER_DEFAULT_FALLBACK_SECONDS = 90;
 
+// When does the game end?
+//   "first"      — game ends the moment any team's locked-card count
+//                   reaches win_target (original behaviour).
+//   "tiebreaker" — once any team crosses win_target, every OTHER team
+//                   gets one more turn to respond. If a strict leader
+//                   emerges after the cycle, they win; if still tied,
+//                   another full cycle until someone's strictly ahead.
+//                   Tracking state lives in TlRoomSettings.tiebreaker.
+export type WinMode = "first" | "tiebreaker";
+
 // How teams acquire tokens.
 //  - "standard" — placement + both guesses correct → grant ONE Song
 //    Skipper token. Simple, classic, no randomness.
@@ -137,6 +147,18 @@ export interface TlRoomSettings {
   tokenEconomy?:       TokenEconomy;  // standard (default) | bonus | shop
   /** @deprecated — sync mode dropped, all-clients-stream is always independent. */
   streamSyncMode?:     StreamSyncMode;
+  /** Game-end behaviour — first to target vs. tiebreaker cycle. */
+  winMode?:            WinMode;
+  /** Internal tiebreaker state — set by the server's handleTurnAction
+   *  "stop" path once any team crosses win_target in tiebreaker mode.
+   *  active=true means we're in a post-trigger cycle; played_team_ids
+   *  records which teams have already had their post-trigger turn so
+   *  we know when to evaluate the leader. Reset to {active:true, []}
+   *  when the cycle ends in a tie (and another cycle starts). */
+  tiebreaker?: {
+    active:          boolean;
+    played_team_ids: number[];
+  };
   /** Per-playlist import records so the host can remove an entire playlist
    *  later, not just individual songs. Populated by /room/:id/playlist on
    *  every successful import; consumed by /room/:id/remove-playlist. */
@@ -170,6 +192,8 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerSeconds:      120,
   tokenEconomy:      "standard",       // one Song Skipper per correct round, classic Hitster
   streamSyncMode:    "independent",
+  winMode:           "first",
+  tiebreaker:        { active: false, played_team_ids: [] },
   playlistImports:   [],
 };
 
