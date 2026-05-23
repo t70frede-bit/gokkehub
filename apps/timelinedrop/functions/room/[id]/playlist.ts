@@ -184,11 +184,20 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
     const existingIds = new Set((room.track_pool ?? []).map(t => t.id));
     const unique      = imported.filter(t => !existingIds.has(t.id));
-    const merged      = [...(room.track_pool ?? []), ...unique];
-    for (let i = merged.length - 1; i > 0; i--) {
+    // Shuffle ONLY the unplayed tail of the pool together with the newly
+    // imported tracks. Anything before track_cursor is already-served
+    // history; shuffling those back into the tail let already-played
+    // tracks re-appear later in the game (the "wrong-guessed songs come
+    // back" complaint from the 2026-05-23 playtest).
+    const existing     = room.track_pool ?? [];
+    const cursor       = Math.min(room.track_cursor ?? 0, existing.length);
+    const played       = existing.slice(0, cursor);
+    const tail         = [...existing.slice(cursor), ...unique];
+    for (let i = tail.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [merged[i], merged[j]] = [merged[j], merged[i]];
+      [tail[i], tail[j]] = [tail[j], tail[i]];
     }
+    const merged = [...played, ...tail];
 
     // Record the import so the Lobby host UI can remove an ENTIRE playlist
     // later (not just individual songs). track_ids covers only the rows we
