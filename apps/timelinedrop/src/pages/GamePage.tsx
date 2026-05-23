@@ -2270,6 +2270,10 @@ export default function GamePage() {
 
   // Token tray: open the menu of the captain's available tokens.
   const [tokenTrayOpen, setTokenTrayOpen] = useState(false);
+  // Per-team Shop view — opens a read-mostly modal so NON-captains can
+  // see the team's points, available tokens, costs and descriptions.
+  // Captain of an active team viewing their own team gets Buy buttons.
+  const [shopViewTeamId, setShopViewTeamId] = useState<number | null>(null);
   // Which team's tray is open. Active team's captain opens for during_listen
   // tokens; non-active team's captain opens for opponent_turn tokens (Force
   // Lock). The tray gates token buttons by category vs current phase.
@@ -3246,6 +3250,26 @@ export default function GamePage() {
                     color={color}
                     onClick={isMyTeam && iAmCaptain && isMyTurn && !tokenUsedThisRound ? () => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); } : undefined}
                   />
+                  {/* Shop coin chip — visible to ALL when shopEnabled so
+                      opponents and teammates can see the team's purse and
+                      browse what's buyable. Captain sees Buy buttons in
+                      the modal; everyone else sees a read-only catalog. */}
+                  {room.settings?.tokenEconomy === "shop" && (
+                    <button
+                      onClick={() => setShopViewTeamId(team.id)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold transition-all flex-shrink-0"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb), 0.10)",
+                        border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
+                        color:      "rgb(var(--color-primary-rgb))",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                      title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"} — tap to browse the shop`}
+                    >
+                      <span aria-hidden="true">🪙</span>
+                      <span>{team.points ?? 0}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -3358,7 +3382,26 @@ export default function GamePage() {
                 {/* Right: tokens. Captain of THIS team (when it's not active)
                     can click to open the tray for opponent-turn tokens like
                     Force Lock. The tray filters by category vs phase. */}
-                <div className="flex-1 flex items-center justify-end min-w-0">
+                <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
+                  {/* Shop coin chip mirrors the spotlight one so non-captains
+                      and opposing teammates can browse the team's shop from
+                      the compact row. */}
+                  {room.settings?.tokenEconomy === "shop" && (
+                    <button
+                      onClick={() => setShopViewTeamId(team.id)}
+                      className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-bold transition-all flex-shrink-0"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb), 0.10)",
+                        border:     "1px solid rgba(var(--color-primary-rgb), 0.35)",
+                        color:      "rgb(var(--color-primary-rgb))",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                      title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"} — tap to browse the shop`}
+                    >
+                      <span aria-hidden="true">🪙</span>
+                      <span>{team.points ?? 0}</span>
+                    </button>
+                  )}
                   <TokenStrip
                     tokens={state.tokens?.[team.id] ?? []}
                     color={color}
@@ -3804,6 +3847,112 @@ export default function GamePage() {
           </button>
         </div>
       )}
+
+      {/* ── Shop view — read-mostly browser of a team's shop. Anyone can
+          open it from a team's 🪙 chip. The active captain on the matching
+          team sees Buy buttons; others see costs + descriptions only. ── */}
+      {shopViewTeamId !== null && (() => {
+        const viewTeam = teams.find(t => t.id === shopViewTeamId);
+        if (!viewTeam) return null;
+        const isMyTeamShop = viewTeam.id === myPlayer?.team_id
+          || (singleScreen && isHost && viewTeam.id === room.active_team_id);
+        const canBuy = !!round && viewTeam.id === room.active_team_id && iAmCaptain && isMyTeamShop;
+        const pts = viewTeam.points ?? 0;
+        // Group buyable tokens by their phase category for a tidy grid.
+        const byCategory: Record<string, Array<[string, number]>> = {};
+        for (const [type, cost] of Object.entries(SHOP_TOKEN_COSTS)) {
+          const spec = TOKEN_CATALOG[type as TokenType];
+          if (!spec) continue;
+          (byCategory[spec.category] ?? (byCategory[spec.category] = [])).push([type, cost]);
+        }
+        const catOrder: TokenCategory[] = ["before_song", "during_listen", "before_pass", "opponent_turn", "anytime"];
+        return (
+          <Modal open onClose={() => setShopViewTeamId(null)} maxWidth="500px">
+            <div className="flex items-baseline justify-between mb-1">
+              <h2 className="font-extrabold"
+                style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
+                🏪 {viewTeam.name} · Shop
+              </h2>
+              <span style={{
+                fontSize:   "var(--text-base)",
+                fontFamily: "var(--font-mono)",
+                color:      "rgb(var(--color-primary-rgb))",
+              }}>
+                🪙 {pts} {pts === 1 ? "pt" : "pts"}
+              </span>
+            </div>
+            <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+              Each correct artist or song name on a placed round earns +1 point.
+              {canBuy ? " Spend yours below." : isMyTeamShop ? " Only the active captain on your team can buy." : " You're viewing another team's shop."}
+            </p>
+            <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-1">
+              {catOrder.map(cat => {
+                const items = byCategory[cat];
+                if (!items || items.length === 0) return null;
+                items.sort((a, b) => a[1] - b[1]);
+                return (
+                  <div key={cat}>
+                    <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1.5 flex items-center gap-1">
+                      <span>{CATEGORY_META[cat].icon}</span>
+                      <span>{CATEGORY_META[cat].label}</span>
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {items.map(([type, cost]) => {
+                        const spec = TOKEN_CATALOG[type as TokenType];
+                        const affordable = pts >= cost;
+                        const buyable    = canBuy && affordable;
+                        return (
+                          <button
+                            key={type}
+                            onClick={async () => {
+                              if (!buyable) return;
+                              await buyToken(type);
+                            }}
+                            disabled={!buyable}
+                            className="text-left rounded-md p-2 flex items-start gap-2 transition-all disabled:cursor-not-allowed"
+                            style={{
+                              background: buyable ? "rgba(var(--color-primary-rgb),0.10)" : "transparent",
+                              border:     `1px solid rgba(var(--color-primary-rgb), ${buyable ? 0.35 : 0.12})`,
+                              opacity:    buyable ? 1 : (canBuy ? 0.5 : 0.85),
+                            }}
+                            title={
+                              !canBuy           ? spec.description :
+                              !affordable       ? `${spec.description} · Need ${cost - pts} more pt${cost - pts === 1 ? "" : "s"}`
+                                                : `${spec.description} · Tap to buy`
+                            }
+                          >
+                            <span className="flex-shrink-0" style={{ fontSize: "var(--text-base)", lineHeight: 1 }}>{spec.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2">
+                                <span className="font-semibold truncate" style={{ fontSize: "var(--text-sm)" }}>{spec.name}</span>
+                                <span className="ml-auto flex-shrink-0" style={{
+                                  fontSize:   "var(--text-xs)",
+                                  fontFamily: "var(--font-mono)",
+                                  color:       affordable ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-muted-rgb))",
+                                }}>
+                                  {cost} pt{cost === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                              <p className="text-[11px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{spec.description}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setShopViewTeamId(null)}
+              className="mt-4 w-full text-center"
+              style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
+            >
+              Close
+            </button>
+          </Modal>
+        );
+      })()}
 
       {/* ── Error? reasons modal ───────────────────────────────────────── */}
       {errorMenuOpen && round && (
