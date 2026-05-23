@@ -449,7 +449,15 @@ export interface KickPlayerRequest {
 }
 
 export interface ChangeTeamRequest {
-  player_id: string; // caller (and target — players move themselves)
+  /** Caller — used by the server for AUTH (am I the host? am I moving
+   *  myself with teamSwap enabled?). */
+  player_id: string;
+  /** Player being moved. Optional; falls back to player_id for self-swaps
+   *  (preserves the old single-id call shape). The host needs target_id
+   *  set explicitly to move someone else — without it the server treats
+   *  the call as the caller moving themselves and rejects the host's
+   *  attempt because target.is_host is false. */
+  target_id?: string;
   team_id:   number | null; // null → spectator
 }
 

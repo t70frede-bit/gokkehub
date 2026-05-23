@@ -23,18 +23,31 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     ]);
     if (!room) return json({ error: "Room not found" }, 404, req);
 
-    const me = players.find(p => p.id === body.player_id);
+    // Caller (auth) vs target (action). Old clients omit target_id —
+    // treat them as self-swaps. Host moving someone else passes both.
+    const me     = players.find(p => p.id === body.player_id);
     if (!me) return json({ error: "Player not in this room" }, 403, req);
+    const target = body.target_id
+      ? players.find(p => p.id === body.target_id)
+      : me;
+    if (!target) return json({ error: "Target player not in this room" }, 404, req);
 
-    const isHost = me.is_host;
+    const isHost   = me.is_host;
     const teamSwap = room.settings?.teamSwapEnabled ?? false;
+    const isSelf   = target.id === me.id;
 
-    // Self-team-swap is only allowed in lobby (don't let people jump teams mid-game)
+    // Self-swaps allowed only in lobby unless caller is host.
     if (room.status !== "lobby" && !isHost) {
       return json({ error: "Cannot change teams once the game has started" }, 409, req);
     }
-    if (!isHost && !teamSwap) {
-      return json({ error: "The host has disabled team swapping" }, 403, req);
+    // Non-host can only swap themselves, and only when teamSwap is on.
+    if (!isHost) {
+      if (!isSelf) {
+        return json({ error: "Only the host can move other players" }, 403, req);
+      }
+      if (!teamSwap) {
+        return json({ error: "The host has disabled team swapping" }, 403, req);
+      }
     }
 
     let nextTeamId: number | null = null;
@@ -45,12 +58,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     }
 
     // Moving to a new team also drops captain status (captain re-elected per team)
-    await updatePlayer(env, body.player_id, {
+    await updatePlayer(env, target.id, {
       team_id:    nextTeamId,
       is_captain: false,
     });
 
-    return json({ ok: true, team_id: nextTeamId }, 200, req);
+    return json({ ok: true, team_id: nextTeamId, target_id: target.id }, 200, req);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return json({ error: msg }, 500, req);

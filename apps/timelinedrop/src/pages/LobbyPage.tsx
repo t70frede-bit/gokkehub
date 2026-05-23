@@ -138,11 +138,16 @@ export default function LobbyPage() {
   }
 
   async function changeTeam(targetId: string, teamId: number | null) {
+    if (!myPlayerId) return;
+    // player_id = caller (auth: am I host? am I moving myself?);
+    // target_id = who's being moved. Pre-fix this endpoint used a single
+    // field for both, which silently rejected host-driven swaps because
+    // the target's is_host flag failed the gate.
     await fetch(`/room/${roomId}/team`, {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },
       credentials: "include",
-      body:        JSON.stringify({ player_id: targetId, team_id: teamId }),
+      body:        JSON.stringify({ player_id: myPlayerId, target_id: targetId, team_id: teamId }),
     });
   }
 
