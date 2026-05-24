@@ -103,6 +103,23 @@
 /* Hide internal scrollbars cosmetically — sections still scroll if barely overflowing */
 .scrollbar-hidden { scrollbar-width: none; -ms-overflow-style: none; }
 .scrollbar-hidden::-webkit-scrollbar { display: none; }
+
+/* Themed scrollbar — slim amber-tinted thumb on a transparent track,
+   for scrollable modal bodies that clash with the browser default. */
+.scrollbar-themed { scrollbar-width: thin; scrollbar-color: rgba(var(--color-primary-rgb), 0.35) transparent; }
+.scrollbar-themed::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-themed::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-themed::-webkit-scrollbar-thumb {
+  background: rgba(var(--color-primary-rgb), 0.30);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scrollbar-themed::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--color-primary-rgb), 0.55);
+  background-clip: content-box;
+}
+
 .track-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-card, 0 8px 24px rgba(0,0,0,0.4));

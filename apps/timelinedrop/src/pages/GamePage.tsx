@@ -820,8 +820,22 @@ function TrackCard({ year, track, width = 88 }: { year: number; track: SpotifyTr
         {year}
       </p>
       <div className="track-card">
-        <img src={track.coverUrl} alt="" draggable={false}
-          className="w-full aspect-square object-cover pointer-events-none" />
+        {track.coverUrl ? (
+          <img src={track.coverUrl} alt="" draggable={false}
+            className="w-full aspect-square object-cover pointer-events-none" />
+        ) : (
+          <div
+            className="w-full aspect-square pointer-events-none flex items-center justify-center"
+            style={{
+              background: "rgba(var(--text-muted-rgb), 0.18)",
+              color:      "rgb(var(--text-muted-rgb))",
+              fontSize:   "1.5rem",
+            }}
+            aria-hidden="true"
+          >
+            🎵
+          </div>
+        )}
       </div>
       <div className="mt-1 w-full text-center">
         <p className="text-xs font-semibold truncate" title={track.name}>{track.name}</p>
@@ -853,9 +867,24 @@ function PendingCard({ year, track, width = 88 }: { year: number; track: Spotify
           borderColor: "rgba(var(--color-secondary-rgb), 0.5)",
           opacity: 0.85,
         }}>
-        <img src={track.coverUrl} alt="" draggable={false}
-          className="w-full aspect-square object-cover pointer-events-none"
-          style={{ opacity: 0.6 }} />
+        {track.coverUrl ? (
+          <img src={track.coverUrl} alt="" draggable={false}
+            className="w-full aspect-square object-cover pointer-events-none"
+            style={{ opacity: 0.6 }} />
+        ) : (
+          <div
+            className="w-full aspect-square pointer-events-none flex items-center justify-center"
+            style={{
+              background: "rgba(var(--text-muted-rgb), 0.15)",
+              color:      "rgb(var(--text-muted-rgb))",
+              fontSize:   "1.5rem",
+              opacity:    0.6,
+            }}
+            aria-hidden="true"
+          >
+            🎵
+          </div>
+        )}
       </div>
       <div className="mt-1 w-full text-center">
         <p className="text-xs font-semibold truncate opacity-80" title={track.name}>{track.name}</p>
@@ -3263,6 +3292,16 @@ export default function GamePage() {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      // Surface the server's reason as a toast — the most common one is
+      // the per-song one-token-per-team limit, which a player can only
+      // discover by trying. The console log stayed silent before; now
+      // they see "Your team already used a token this song" up-front.
+      let message = `Token (${type}) failed (${res.status})`;
+      try {
+        const data = JSON.parse(text) as { error?: string };
+        if (data.error) message = data.error;
+      } catch { /* not JSON */ }
+      showActionError(message);
       console.error("[musix] token use failed:", res.status, text.slice(0, 200));
     }
     setTokenTrayOpen(false);
@@ -4202,9 +4241,13 @@ export default function GamePage() {
         <AllClientsAudio
           track={round.track}
           coverRevealed={!!round.cover_revealed}
-          // Only the active team's captain can scrub / restart the song —
-          // viewers still hear the audio + can play/pause locally.
-          canScrub={iAmCaptain && isMyTurn}
+          // All-clients-stream: every player has their own independent
+          // <audio> element pointed at the bot's HTTP proxy. Scrubbing
+          // is a LOCAL action — it doesn't move room.playing_since or
+          // anyone else's playhead — so every viewer can fast-forward
+          // their own stream. The seek/restart UI was gated on captain
+          // by mistake; removed now per 2026-05-24 feedback.
+          canScrub={true}
         />
       )}
 
@@ -4503,7 +4546,7 @@ export default function GamePage() {
               Each correct artist or song name on a placed round earns +1 point.
               {canBuy ? " Spend yours below." : isMyTeamShop ? " Only the active captain on your team can buy." : " You're viewing another team's shop."}
             </p>
-            <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-1">
+            <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-1 scrollbar-themed">
               {catOrder.map(cat => {
                 const items = byCategory[cat];
                 if (!items || items.length === 0) return null;
