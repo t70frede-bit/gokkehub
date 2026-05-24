@@ -2527,11 +2527,9 @@ export default function GamePage() {
 
   // Host-only management menu.
   const [hostMenuOpen, setHostMenuOpen] = useState(false);
-  // Captain Manage menu — active team's captain only. Houses the
-  // "❗ Report an issue" reasons modal (formerly a top-level button) and
-  // the captain card-fix tools (add / remove / adjust year / lock-pending
-  // swap) that call /room/:id/captain-fix.
-  const [captainMenuOpen, setCaptainMenuOpen] = useState(false);
+  // Top-level "🛠 Fix cards" host button. Opens a small team-picker;
+  // clicking a team sets hostFixTeamId and launches the host-fix modal.
+  const [fixCardsMenuOpen, setFixCardsMenuOpen] = useState(false);
   // Host card-fix modal — same 4 tools as the captain's, but the host
   // can target ANY team. team_id is passed through to /captain-fix and
   // the server allows host-on-any OR captain-of-that-team.
@@ -3419,23 +3417,71 @@ export default function GamePage() {
             </button>
           )}
 
-          {/* Captain Manage menu — active team's captain only. Houses the
-              issue-report flow and card-fix tools (formerly a top-level
-              "❗ Error?" button). Calls /room/:id/captain-fix on the
-              server (auth: actsAsCaptain). */}
+          {/* Mid-round issue report — active captain only. Captain card-
+              fix tools were removed; players now PROPOSE issues here and
+              the host approves via the top banner. Card editing is a
+              host-only "🛠 Fix cards" button (below). */}
           {round && iAmCaptain && isMyTurn && (
             <button
-              onClick={() => setCaptainMenuOpen(true)}
+              onClick={() => setErrorMenuOpen(true)}
               className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
               style={{
-                background: round.video_report_proposed ? "rgba(220,160,0,0.22)" : "rgba(var(--color-primary-rgb),0.10)",
-                border:     `1px solid ${round.video_report_proposed ? "rgba(220,160,0,0.55)" : "rgba(var(--color-primary-rgb),0.35)"}`,
-                color:      round.video_report_proposed ? "rgb(220,160,0)" : "rgb(var(--color-primary-rgb))",
+                background: round.video_report_proposed ? "rgba(220,160,0,0.22)" : "rgba(220,60,60,0.12)",
+                border:     `1px solid ${round.video_report_proposed ? "rgba(220,160,0,0.55)" : "rgba(220,60,60,0.35)"}`,
+                color:      round.video_report_proposed ? "rgb(220,160,0)" : "rgb(220,140,140)",
               }}
-              title="Captain controls — report an issue or fix a card"
+              title="Report a problem with this round"
             >
-              🛠 Captain
+              ❗ Report
             </button>
+          )}
+
+          {/* Top-level "🛠 Fix cards" button — host only. Opens a small
+              team-picker dropdown; clicking a team launches the host-
+              fix modal targeted at that team. Was previously nested
+              under Manage → per-team Fix cards; lifted out per the
+              2026-05-24 feedback batch so it's a one-tap reach. */}
+          {isHost && (
+            <div className="relative">
+              <button
+                onClick={() => setFixCardsMenuOpen(v => !v)}
+                className="text-sm px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                style={{
+                  background: fixCardsMenuOpen
+                    ? "rgba(var(--color-secondary-rgb),0.2)"
+                    : "rgba(var(--surface-raised-rgb),0.5)",
+                  border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
+                  color:      "rgb(var(--color-secondary-rgb))",
+                }}
+                title="Fix a card on any team"
+              >
+                🛠 Fix cards
+              </button>
+              {fixCardsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setFixCardsMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-40 rounded-md p-2 w-56"
+                    style={{
+                      background: "rgb(var(--surface-overlay-rgb))",
+                      border:     "1px solid rgb(var(--border-rgb))",
+                      boxShadow:  "var(--shadow-elevated)",
+                    }}>
+                    <p className="text-[10px] uppercase tracking-wider opacity-50 mb-1.5 px-1">Edit which team?</p>
+                    {teams.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setHostFixTeamId(t.id); setFixCardsMenuOpen(false); }}
+                        className="w-full text-left text-sm px-2 py-1.5 rounded transition-colors hover:bg-white/5 flex items-center gap-2"
+                      >
+                        <span className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ background: `rgb(var(--team-${getTeamColor(t)}-rgb))` }} />
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* Host management menu */}
@@ -3472,21 +3518,7 @@ export default function GamePage() {
                         const otherTeams = teams.filter(t => t.id !== team.id);
                         return (
                           <div key={team.id}>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <p className="text-xs font-semibold opacity-70">{team.name}</p>
-                              <button
-                                onClick={() => { setHostFixTeamId(team.id); setHostMenuOpen(false); }}
-                                className="text-[10px] px-2 py-0.5 rounded font-bold"
-                                style={{
-                                  background: "rgba(var(--color-secondary-rgb),0.12)",
-                                  border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
-                                  color:      "rgb(var(--color-secondary-rgb))",
-                                }}
-                                title="Edit cards on this team (add / remove / adjust year / swap pending↔locked)"
-                              >
-                                🛠 Fix cards
-                              </button>
-                            </div>
+                            <p className="text-xs font-semibold opacity-70 mb-1.5">{team.name}</p>
                             {teammates.length === 0 ? (
                               <p className="text-xs italic opacity-40 pl-2">No players</p>
                             ) : (
@@ -4551,208 +4583,6 @@ export default function GamePage() {
         );
       })()}
 
-      {/* ── Captain Manage menu ────────────────────────────────────────── */}
-      {captainMenuOpen && round && iAmCaptain && (() => {
-        const activeTeam = teams.find(t => t.id === room.active_team_id);
-        const myTimeline = activeTeam ? (state.timelines?.[activeTeam.id] ?? []) : [];
-        const myPending  = (activeTeam?.pending_tracks ?? []) as SpotifyTrack[];
-        const closeMenu = () => { setCaptainMenuOpen(false); setFixMode(null); setFixYear(""); setFixName(""); setFixArtist(""); setFixTrackId(""); };
-        return (
-          <Modal open onClose={closeMenu} maxWidth="460px">
-            <h2 className="font-extrabold mb-1"
-              style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
-              🛠 Captain controls
-            </h2>
-            <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
-              Fix things when a round went sideways. Affects your team only.
-            </p>
-
-            {fixMode === null && (
-              <>
-                <div className="space-y-2 mb-4">
-                  <p className="text-xs uppercase tracking-wider opacity-60">Report</p>
-                  <button
-                    onClick={() => { setCaptainMenuOpen(false); setErrorMenuOpen(true); }}
-                    className="w-full text-left rounded-lg px-3 py-2 font-semibold border"
-                    style={{ borderColor: "rgba(220,60,60,0.4)", background: "rgba(220,60,60,0.10)" }}
-                  >
-                    ❗ Report an issue with this round
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wider opacity-60">Fix a card</p>
-                  <button onClick={() => setFixMode("add")} className="w-full text-left rounded-lg px-3 py-2 border"
-                    style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
-                    ➕ Add a card to your timeline
-                  </button>
-                  <button onClick={() => setFixMode("remove")} className="w-full text-left rounded-lg px-3 py-2 border"
-                    style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
-                    🗑 Remove a card from your timeline
-                  </button>
-                  <button onClick={() => setFixMode("adjust")} className="w-full text-left rounded-lg px-3 py-2 border"
-                    style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
-                    📅 Adjust a card's year
-                  </button>
-                  <button onClick={() => setFixMode("swap")} className="w-full text-left rounded-lg px-3 py-2 border"
-                    style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
-                    ↔️ Move card between locked and pending
-                  </button>
-                </div>
-              </>
-            )}
-
-            {fixMode === "add" && (
-              <div className="space-y-3">
-                <p className="text-xs uppercase tracking-wider opacity-60">Add a card</p>
-                <input type="number" min={1900} max={2100} value={fixYear}
-                  onChange={e => setFixYear(e.target.value)} placeholder="Year (1900–2100)"
-                  className="w-full rounded px-3 py-2 outline-none"
-                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
-                <input value={fixName} onChange={e => setFixName(e.target.value)} placeholder="Song name (optional)"
-                  className="w-full rounded px-3 py-2 outline-none"
-                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
-                <input value={fixArtist} onChange={e => setFixArtist(e.target.value)} placeholder="Artist (optional)"
-                  className="w-full rounded px-3 py-2 outline-none"
-                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
-                <div className="flex gap-2">
-                  <button
-                    onClick={async () => {
-                      const y = parseInt(fixYear, 10);
-                      if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
-                      await captainFix("add-card", { year: y, name: fixName, artist: fixArtist });
-                      closeMenu();
-                    }}
-                    disabled={fixBusy}
-                    className="flex-1 rounded-lg px-3 py-2 font-bold disabled:opacity-50"
-                    style={{ background: "rgba(var(--color-primary-rgb),0.22)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.5)" }}
-                  >
-                    Add
-                  </button>
-                  <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
-                </div>
-              </div>
-            )}
-
-            {fixMode === "remove" && (
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-wider opacity-60">Pick a card to remove</p>
-                {myTimeline.length === 0 ? (
-                  <p className="text-xs opacity-50">No locked cards yet.</p>
-                ) : myTimeline.map(e => (
-                  <button key={e.track_id}
-                    onClick={async () => { await captainFix("remove-card", { track_id: e.track_id }); closeMenu(); }}
-                    disabled={fixBusy}
-                    className="w-full text-left rounded-md p-2 border disabled:opacity-50"
-                    style={{ borderColor: "rgba(220,60,60,0.4)", background: "rgba(220,60,60,0.08)" }}
-                  >
-                    <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
-                    <p className="text-xs opacity-60 truncate">{e.track.artist || "—"}</p>
-                  </button>
-                ))}
-                <button onClick={() => setFixMode(null)} className="text-sm opacity-60 mt-2">← back</button>
-              </div>
-            )}
-
-            {fixMode === "adjust" && (
-              <div className="space-y-3">
-                <p className="text-xs uppercase tracking-wider opacity-60">Pick a card</p>
-                {myTimeline.length === 0 ? (
-                  <p className="text-xs opacity-50">No locked cards yet.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {myTimeline.map(e => (
-                      <button key={e.track_id}
-                        onClick={() => { setFixTrackId(e.track_id); setFixYear(String(e.corrected_year ?? e.year)); }}
-                        className="w-full text-left rounded-md p-2 border"
-                        style={{
-                          borderColor: fixTrackId === e.track_id ? "rgba(var(--color-primary-rgb),0.6)" : "rgba(var(--color-primary-rgb),0.2)",
-                          background:  fixTrackId === e.track_id ? "rgba(var(--color-primary-rgb),0.12)" : "transparent",
-                        }}
-                      >
-                        <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
-                        <p className="text-xs opacity-60 truncate">{e.track.artist || "—"}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {fixTrackId && (
-                  <>
-                    <input type="number" min={1900} max={2100} value={fixYear}
-                      onChange={e => setFixYear(e.target.value)} placeholder="New year"
-                      className="w-full rounded px-3 py-2 outline-none"
-                      style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={async () => {
-                          const y = parseInt(fixYear, 10);
-                          if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
-                          await captainFix("adjust-year", { track_id: fixTrackId, year: y });
-                          closeMenu();
-                        }}
-                        disabled={fixBusy}
-                        className="flex-1 rounded-lg px-3 py-2 font-bold disabled:opacity-50"
-                        style={{ background: "rgba(var(--color-primary-rgb),0.22)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.5)" }}
-                      >
-                        Save year
-                      </button>
-                      <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
-                    </div>
-                  </>
-                )}
-                {!fixTrackId && (
-                  <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
-                )}
-              </div>
-            )}
-
-            {fixMode === "swap" && (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wider opacity-60 mb-1">Locked → move to pending</p>
-                  {myTimeline.length === 0 ? (
-                    <p className="text-xs opacity-50">No locked cards yet.</p>
-                  ) : myTimeline.map(e => (
-                    <button key={e.track_id}
-                      onClick={async () => { await captainFix("to-pending", { track_id: e.track_id }); closeMenu(); }}
-                      disabled={fixBusy}
-                      className="w-full text-left rounded-md p-2 border my-1 disabled:opacity-50"
-                      style={{ borderColor: "rgba(var(--color-secondary-rgb),0.4)", background: "rgba(var(--color-secondary-rgb),0.08)" }}
-                    >
-                      <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
-                      <p className="text-xs opacity-60 truncate">↓ becomes pending · {e.track.artist || "—"}</p>
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wider opacity-60 mb-1">Pending → lock into timeline</p>
-                  {myPending.length === 0 ? (
-                    <p className="text-xs opacity-50">No pending cards yet.</p>
-                  ) : myPending.map(t => (
-                    <button key={t.id}
-                      onClick={async () => { await captainFix("to-locked", { track_id: t.id }); closeMenu(); }}
-                      disabled={fixBusy}
-                      className="w-full text-left rounded-md p-2 border my-1 disabled:opacity-50"
-                      style={{ borderColor: "rgba(var(--color-primary-rgb),0.4)", background: "rgba(var(--color-primary-rgb),0.08)" }}
-                    >
-                      <p className="font-semibold text-sm truncate">{t.name || "Card"} <span className="opacity-50">· {t.releaseYear}</span></p>
-                      <p className="text-xs opacity-60 truncate">↑ locks into timeline · {t.artist || "—"}</p>
-                    </button>
-                  ))}
-                </div>
-                <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
-              </div>
-            )}
-
-            <button
-              onClick={closeMenu}
-              className="mt-4 w-full text-center"
-              style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
-            >
-              Close
-            </button>
-          </Modal>
-        );
-      })()}
 
       {/* ── Host card-fix modal ────────────────────────────────────────── */}
       {/* Mirrors the captain Manage card-fix tools but lets the host target
