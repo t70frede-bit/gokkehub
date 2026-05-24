@@ -272,8 +272,16 @@ export default function HomePage() {
                       type="button"
                       onClick={() => setTeamColors(cs => {
                         const next = [...cs];
-                        const idx  = TEAM_PALETTE.indexOf(color);
-                        next[i] = TEAM_PALETTE[(idx + 1) % TEAM_PALETTE.length];
+                        // Walk the palette forward until we find a colour not
+                        // used by any OTHER team. Guaranteed to terminate
+                        // since palette has 4 colours and MAX_TEAMS = 2.
+                        const taken = new Set(cs.filter((_, j) => j !== i));
+                        let idx = TEAM_PALETTE.indexOf(color);
+                        for (let step = 0; step < TEAM_PALETTE.length; step++) {
+                          idx = (idx + 1) % TEAM_PALETTE.length;
+                          if (!taken.has(TEAM_PALETTE[idx])) break;
+                        }
+                        next[i] = TEAM_PALETTE[idx];
                         return next;
                       })}
                       className="text-lg flex-shrink-0 w-6 text-center rounded transition-transform active:scale-90"
@@ -295,7 +303,11 @@ export default function HomePage() {
                 <button
                   onClick={() => {
                     setTeams(ts => [...ts, defaultTeamName(ts.length)]);
-                    setTeamColors(cs => [...cs, TEAM_PALETTE[cs.length % TEAM_PALETTE.length]]);
+                    setTeamColors(cs => {
+                      // Pick the first palette colour not already in use.
+                      const fresh = TEAM_PALETTE.find(c => !cs.includes(c)) ?? TEAM_PALETTE[cs.length % TEAM_PALETTE.length];
+                      return [...cs, fresh];
+                    });
                   }}
                   className="text-sm font-medium"
                   style={{ color: "rgb(var(--color-primary-rgb))" }}

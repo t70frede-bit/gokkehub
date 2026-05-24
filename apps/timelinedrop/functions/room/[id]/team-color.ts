@@ -1,7 +1,9 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, updateTeam } from "../../_supabase";
+import { getRoom, getTeams, updateTeam } from "../../_supabase";
+
+const PALETTE_ORDER = ["red", "blue", "green", "yellow"] as const;
 
 // POST /room/:id/team-color  { player_id, team_id, color }
 //
@@ -34,10 +36,26 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       return json({ error: "Invalid colour" }, 400, req);
     }
 
-    const room = await getRoom(env, roomId);
+    const [room, teams] = await Promise.all([
+      getRoom(env, roomId),
+      getTeams(env, roomId),
+    ]);
     if (!room) return json({ error: "Room not found" }, 404, req);
     if (room.host_id !== body.player_id) {
       return json({ error: "Only the host can change team colours" }, 403, req);
+    }
+
+    // Reject duplicate-colour assignments. `team.color` is null on
+    // legacy rooms, in which case the displayed colour falls back to
+    // sort_order; compare against that effective colour so we don't
+    // let a host pick the same hue another team already shows.
+    const target = teams.find(t => t.id === body.team_id);
+    if (!target) return json({ error: "Team not found in this room" }, 404, req);
+    const effective = (t: { color?: string | null; sort_order: number }): string =>
+      (t.color && ALLOWED_COLORS.has(t.color)) ? t.color : PALETTE_ORDER[t.sort_order % PALETTE_ORDER.length];
+    const conflict = teams.some(t => t.id !== body.team_id && effective(t) === body.color);
+    if (conflict) {
+      return json({ error: "Another team is already using that colour" }, 409, req);
     }
 
     await updateTeam(env, body.team_id, { color: body.color } as never);

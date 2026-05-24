@@ -184,8 +184,18 @@ export default function LobbyPage() {
   async function cycleTeamColor(team: TlTeam) {
     if (!myPlayerId) return;
     const current = getTeamColor(team);
-    const idx     = TEAM_PALETTE.indexOf(current);
-    const next    = TEAM_PALETTE[(idx + 1) % TEAM_PALETTE.length];
+    // Skip any colour another team is already using so two teams can't
+    // end up the same colour. Server enforces this too — this is the
+    // UX-level fast path so the swatch doesn't visibly land on a
+    // duplicate and then bounce back.
+    const taken = new Set(teams.filter(t => t.id !== team.id).map(t => getTeamColor(t)));
+    let idx = TEAM_PALETTE.indexOf(current);
+    let next: TeamColor = current;
+    for (let step = 0; step < TEAM_PALETTE.length; step++) {
+      idx = (idx + 1) % TEAM_PALETTE.length;
+      if (!taken.has(TEAM_PALETTE[idx])) { next = TEAM_PALETTE[idx]; break; }
+    }
+    if (next === current) return;  // every other slot is taken (only with 4 teams + 4 colours)
     await fetch(`/room/${roomId}/team-color`, {
       method:      "POST",
       headers:     { "Content-Type": "application/json" },

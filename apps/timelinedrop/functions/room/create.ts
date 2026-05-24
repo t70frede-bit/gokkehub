@@ -121,17 +121,32 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       settings:         sanitized,
     });
 
-    const teams = [];
+    // Resolve each team's colour. If two requested colours collide,
+    // bump the later one to the first unused palette slot — clients
+    // already skip duplicates when cycling, but a hand-crafted request
+    // could still slip a dup through, so this is defence-in-depth.
+    const PALETTE_ORDER = ["red", "blue", "green", "yellow"];
+    const usedColors = new Set<string>();
+    const resolvedColors: (string | null)[] = [];
     for (let i = 0; i < team_names.length; i++) {
       const requested = team_colors[i];
-      const color     = typeof requested === "string" && ALLOWED_COLORS.has(requested) ? requested : null;
+      let color: string | null = typeof requested === "string" && ALLOWED_COLORS.has(requested) ? requested : null;
+      if (color && usedColors.has(color)) {
+        color = PALETTE_ORDER.find(c => !usedColors.has(c)) ?? null;
+      }
+      if (color) usedColors.add(color);
+      resolvedColors.push(color);
+    }
+
+    const teams = [];
+    for (let i = 0; i < team_names.length; i++) {
       const t = await createTeam(env, {
         room_id:        roomId,
         name:           team_names[i],
         tokens:         0,
         pending_tracks: [],
         sort_order:     i,
-        color,
+        color:          resolvedColors[i],
       });
       teams.push(t);
     }
