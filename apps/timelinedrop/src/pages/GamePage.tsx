@@ -2532,6 +2532,10 @@ export default function GamePage() {
   // the captain card-fix tools (add / remove / adjust year / lock-pending
   // swap) that call /room/:id/captain-fix.
   const [captainMenuOpen, setCaptainMenuOpen] = useState(false);
+  // Host card-fix modal — same 4 tools as the captain's, but the host
+  // can target ANY team. team_id is passed through to /captain-fix and
+  // the server allows host-on-any OR captain-of-that-team.
+  const [hostFixTeamId, setHostFixTeamId] = useState<number | null>(null);
   const [errorMenuOpen, setErrorMenuOpen] = useState(false);
   const [errorBusy,     setErrorBusy]     = useState(false);
   // Card-fix sub-modal state. Mode picks which form is shown inside.
@@ -2808,6 +2812,24 @@ export default function GamePage() {
       credentials: "include",
       body:        JSON.stringify({ player_id: myPlayerId, target_id: targetId }),
     });
+  }
+
+  // Host moves a player between teams via /room/:id/team (which already
+  // accepts target_id + auths host). Used by the Manage menu's per-player
+  // "Move →" button — for 2-team rooms it just toggles to the other team;
+  // for 3+ teams the caller chooses from a small list.
+  async function hostMovePlayer(targetId: string, newTeamId: number) {
+    if (!myPlayerId) return;
+    const res = await fetch(`/room/${roomId}/team`, {
+      method:      "POST",
+      headers:     { "Content-Type": "application/json" },
+      credentials: "include",
+      body:        JSON.stringify({ player_id: myPlayerId, target_id: targetId, team_id: newTeamId }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      console.warn("[host-move] failed:", res.status, t.slice(0, 200));
+    }
   }
 
   async function makeCaptain(targetPlayer: { id: string; team_id: number | null; is_captain: boolean }) {
@@ -3447,9 +3469,24 @@ export default function GamePage() {
                     <div className="space-y-3">
                       {teams.map(team => {
                         const teammates = state.players.filter(p => p.team_id === team.id && !p.is_spectator);
+                        const otherTeams = teams.filter(t => t.id !== team.id);
                         return (
                           <div key={team.id}>
-                            <p className="text-xs font-semibold mb-1.5 opacity-70">{team.name}</p>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-xs font-semibold opacity-70">{team.name}</p>
+                              <button
+                                onClick={() => { setHostFixTeamId(team.id); setHostMenuOpen(false); }}
+                                className="text-[10px] px-2 py-0.5 rounded font-bold"
+                                style={{
+                                  background: "rgba(var(--color-secondary-rgb),0.12)",
+                                  border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
+                                  color:      "rgb(var(--color-secondary-rgb))",
+                                }}
+                                title="Edit cards on this team (add / remove / adjust year / swap pending↔locked)"
+                              >
+                                🛠 Fix cards
+                              </button>
+                            </div>
                             {teammates.length === 0 ? (
                               <p className="text-xs italic opacity-40 pl-2">No players</p>
                             ) : (
@@ -3461,7 +3498,7 @@ export default function GamePage() {
                                       {p.name}
                                       {p.is_host && <span className="text-[9px] opacity-50">(host)</span>}
                                     </span>
-                                    <div className="flex gap-1 flex-shrink-0">
+                                    <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
                                       <button
                                         onClick={() => makeCaptain(p)}
                                         className="text-[10px] px-2 py-0.5 rounded font-bold transition-colors"
@@ -3472,6 +3509,46 @@ export default function GamePage() {
                                         }}>
                                         {p.is_captain ? "Un-captain" : "Make captain"}
                                       </button>
+                                      {/* Move →: for 2-team rooms (the common case)
+                                          this is a single click to the other team.
+                                          For 3+ teams the dropdown surfaces each
+                                          destination so the host doesn't have to
+                                          click through. */}
+                                      {otherTeams.length === 1 ? (
+                                        <button
+                                          onClick={() => hostMovePlayer(p.id, otherTeams[0].id)}
+                                          className="text-[10px] px-2 py-0.5 rounded font-bold"
+                                          style={{
+                                            background: "rgba(var(--color-primary-rgb),0.10)",
+                                            border:     "1px solid rgba(var(--color-primary-rgb),0.35)",
+                                            color:      "rgb(var(--color-primary-rgb))",
+                                          }}
+                                          title={`Move to ${otherTeams[0].name}`}
+                                        >
+                                          → {otherTeams[0].name}
+                                        </button>
+                                      ) : otherTeams.length > 1 ? (
+                                        <select
+                                          value=""
+                                          onChange={e => {
+                                            const v = parseInt(e.target.value, 10);
+                                            if (Number.isInteger(v)) void hostMovePlayer(p.id, v);
+                                            e.currentTarget.value = "";
+                                          }}
+                                          className="text-[10px] px-1 py-0.5 rounded font-bold"
+                                          style={{
+                                            background: "rgba(var(--color-primary-rgb),0.10)",
+                                            border:     "1px solid rgba(var(--color-primary-rgb),0.35)",
+                                            color:      "rgb(var(--color-primary-rgb))",
+                                          }}
+                                          title="Move to another team"
+                                        >
+                                          <option value="">Move →</option>
+                                          {otherTeams.map(t => (
+                                            <option key={t.id} value={t.id}>{t.name}</option>
+                                          ))}
+                                        </select>
+                                      ) : null}
                                       {!p.is_host && (
                                         <button
                                           onClick={() => kickPlayer(p.id)}
@@ -4646,6 +4723,202 @@ export default function GamePage() {
                   ) : myPending.map(t => (
                     <button key={t.id}
                       onClick={async () => { await captainFix("to-locked", { track_id: t.id }); closeMenu(); }}
+                      disabled={fixBusy}
+                      className="w-full text-left rounded-md p-2 border my-1 disabled:opacity-50"
+                      style={{ borderColor: "rgba(var(--color-primary-rgb),0.4)", background: "rgba(var(--color-primary-rgb),0.08)" }}
+                    >
+                      <p className="font-semibold text-sm truncate">{t.name || "Card"} <span className="opacity-50">· {t.releaseYear}</span></p>
+                      <p className="text-xs opacity-60 truncate">↑ locks into timeline · {t.artist || "—"}</p>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
+              </div>
+            )}
+
+            <button
+              onClick={closeMenu}
+              className="mt-4 w-full text-center"
+              style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
+            >
+              Close
+            </button>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Host card-fix modal ────────────────────────────────────────── */}
+      {/* Mirrors the captain Manage card-fix tools but lets the host target
+          any team. Same /captain-fix endpoint, with team_id in the body —
+          server allows host-on-any-team auth. No "Report an issue" section
+          (host doesn't report; the captain does). */}
+      {hostFixTeamId !== null && isHost && (() => {
+        const target = teams.find(t => t.id === hostFixTeamId);
+        if (!target) return null;
+        const targetTimeline = state.timelines?.[target.id] ?? [];
+        const targetPending  = (target.pending_tracks ?? []) as SpotifyTrack[];
+        const closeMenu = () => { setHostFixTeamId(null); setFixMode(null); setFixYear(""); setFixName(""); setFixArtist(""); setFixTrackId(""); };
+        const teamId = target.id;
+        return (
+          <Modal open onClose={closeMenu} maxWidth="460px">
+            <h2 className="font-extrabold mb-1"
+              style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
+              🛠 Fix cards · {target.name}
+            </h2>
+            <p className="mb-4" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
+              Host controls — edit this team's timeline directly.
+            </p>
+
+            {fixMode === null && (
+              <div className="space-y-2">
+                <button onClick={() => setFixMode("add")} className="w-full text-left rounded-lg px-3 py-2 border"
+                  style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
+                  ➕ Add a card to {target.name}'s timeline
+                </button>
+                <button onClick={() => setFixMode("remove")} className="w-full text-left rounded-lg px-3 py-2 border"
+                  style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
+                  🗑 Remove a card
+                </button>
+                <button onClick={() => setFixMode("adjust")} className="w-full text-left rounded-lg px-3 py-2 border"
+                  style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
+                  📅 Adjust a card's year
+                </button>
+                <button onClick={() => setFixMode("swap")} className="w-full text-left rounded-lg px-3 py-2 border"
+                  style={{ borderColor: "rgba(var(--color-primary-rgb),0.35)" }}>
+                  ↔️ Move card between locked and pending
+                </button>
+              </div>
+            )}
+
+            {fixMode === "add" && (
+              <div className="space-y-3">
+                <p className="text-xs uppercase tracking-wider opacity-60">Add a card</p>
+                <input type="number" min={1900} max={2100} value={fixYear}
+                  onChange={e => setFixYear(e.target.value)} placeholder="Year (1900–2100)"
+                  className="w-full rounded px-3 py-2 outline-none"
+                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
+                <input value={fixName} onChange={e => setFixName(e.target.value)} placeholder="Song name (optional)"
+                  className="w-full rounded px-3 py-2 outline-none"
+                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
+                <input value={fixArtist} onChange={e => setFixArtist(e.target.value)} placeholder="Artist (optional)"
+                  className="w-full rounded px-3 py-2 outline-none"
+                  style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      const y = parseInt(fixYear, 10);
+                      if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
+                      await captainFix("add-card", { team_id: teamId, year: y, name: fixName, artist: fixArtist });
+                      closeMenu();
+                    }}
+                    disabled={fixBusy}
+                    className="flex-1 rounded-lg px-3 py-2 font-bold disabled:opacity-50"
+                    style={{ background: "rgba(var(--color-primary-rgb),0.22)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.5)" }}
+                  >
+                    Add
+                  </button>
+                  <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
+                </div>
+              </div>
+            )}
+
+            {fixMode === "remove" && (
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wider opacity-60">Pick a card to remove</p>
+                {targetTimeline.length === 0 ? (
+                  <p className="text-xs opacity-50">No locked cards yet.</p>
+                ) : targetTimeline.map(e => (
+                  <button key={e.track_id}
+                    onClick={async () => { await captainFix("remove-card", { team_id: teamId, track_id: e.track_id }); closeMenu(); }}
+                    disabled={fixBusy}
+                    className="w-full text-left rounded-md p-2 border disabled:opacity-50"
+                    style={{ borderColor: "rgba(220,60,60,0.4)", background: "rgba(220,60,60,0.08)" }}
+                  >
+                    <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
+                    <p className="text-xs opacity-60 truncate">{e.track.artist || "—"}</p>
+                  </button>
+                ))}
+                <button onClick={() => setFixMode(null)} className="text-sm opacity-60 mt-2">← back</button>
+              </div>
+            )}
+
+            {fixMode === "adjust" && (
+              <div className="space-y-3">
+                <p className="text-xs uppercase tracking-wider opacity-60">Pick a card</p>
+                {targetTimeline.length === 0 ? (
+                  <p className="text-xs opacity-50">No locked cards yet.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {targetTimeline.map(e => (
+                      <button key={e.track_id}
+                        onClick={() => { setFixTrackId(e.track_id); setFixYear(String(e.corrected_year ?? e.year)); }}
+                        className="w-full text-left rounded-md p-2 border"
+                        style={{
+                          borderColor: fixTrackId === e.track_id ? "rgba(var(--color-primary-rgb),0.6)" : "rgba(var(--color-primary-rgb),0.2)",
+                          background:  fixTrackId === e.track_id ? "rgba(var(--color-primary-rgb),0.12)" : "transparent",
+                        }}
+                      >
+                        <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
+                        <p className="text-xs opacity-60 truncate">{e.track.artist || "—"}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {fixTrackId && (
+                  <>
+                    <input type="number" min={1900} max={2100} value={fixYear}
+                      onChange={e => setFixYear(e.target.value)} placeholder="New year"
+                      className="w-full rounded px-3 py-2 outline-none"
+                      style={{ background: "rgba(var(--surface-raised-rgb),0.5)", border: "1px solid rgba(255,255,255,0.15)", color: "inherit" }} />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          const y = parseInt(fixYear, 10);
+                          if (!Number.isInteger(y) || y < 1900 || y > 2100) return;
+                          await captainFix("adjust-year", { team_id: teamId, track_id: fixTrackId, year: y });
+                          closeMenu();
+                        }}
+                        disabled={fixBusy}
+                        className="flex-1 rounded-lg px-3 py-2 font-bold disabled:opacity-50"
+                        style={{ background: "rgba(var(--color-primary-rgb),0.22)", color: "rgb(var(--color-primary-rgb))", border: "1px solid rgba(var(--color-primary-rgb),0.5)" }}
+                      >
+                        Save year
+                      </button>
+                      <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
+                    </div>
+                  </>
+                )}
+                {!fixTrackId && (
+                  <button onClick={() => setFixMode(null)} className="text-sm opacity-60">← back</button>
+                )}
+              </div>
+            )}
+
+            {fixMode === "swap" && (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs uppercase tracking-wider opacity-60 mb-1">Locked → move to pending</p>
+                  {targetTimeline.length === 0 ? (
+                    <p className="text-xs opacity-50">No locked cards yet.</p>
+                  ) : targetTimeline.map(e => (
+                    <button key={e.track_id}
+                      onClick={async () => { await captainFix("to-pending", { team_id: teamId, track_id: e.track_id }); closeMenu(); }}
+                      disabled={fixBusy}
+                      className="w-full text-left rounded-md p-2 border my-1 disabled:opacity-50"
+                      style={{ borderColor: "rgba(var(--color-secondary-rgb),0.4)", background: "rgba(var(--color-secondary-rgb),0.08)" }}
+                    >
+                      <p className="font-semibold text-sm truncate">{e.track.name || "Card"} <span className="opacity-50">· {e.corrected_year ?? e.year}</span></p>
+                      <p className="text-xs opacity-60 truncate">↓ becomes pending · {e.track.artist || "—"}</p>
+                    </button>
+                  ))}
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider opacity-60 mb-1">Pending → lock into timeline</p>
+                  {targetPending.length === 0 ? (
+                    <p className="text-xs opacity-50">No pending cards yet.</p>
+                  ) : targetPending.map(t => (
+                    <button key={t.id}
+                      onClick={async () => { await captainFix("to-locked", { team_id: teamId, track_id: t.id }); closeMenu(); }}
                       disabled={fixBusy}
                       className="w-full text-left rounded-md p-2 border my-1 disabled:opacity-50"
                       style={{ borderColor: "rgba(var(--color-primary-rgb),0.4)", background: "rgba(var(--color-primary-rgb),0.08)" }}

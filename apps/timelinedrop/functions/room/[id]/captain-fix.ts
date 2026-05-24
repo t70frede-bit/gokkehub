@@ -14,12 +14,20 @@ import type { SpotifyTrack, TlTimelineEntry } from "../../../src/lib/types";
 // its year, or flipping lock ↔ pending. Equivalent to /dev for the
 // captain, scoped to their own team.
 //
-// Auth model: the active team's captain (gamemaster host stands in).
-// We don't allow other teams' captains to edit other teams' cards
-// since that's an opening for sabotage.
+// Auth model:
+//   • If `team_id` is in the body, the caller must be either the room's
+//     host (any team) or the captain of that specific team.
+//   • If `team_id` is omitted, the active team's captain acts on their
+//     own team (gamemaster host stands in via actsAsCaptain).
+// Cross-team captain editing is intentionally blocked — opens a
+// sabotage path. The host gets through as a referee, not a captain.
 
 interface Body {
   player_id: string;
+  /** Target team. Optional — defaults to room.active_team_id (legacy
+   *  shape used by the active captain's own Manage menu). When set
+   *  explicitly, the caller must be the host OR captain of that team. */
+  team_id?:  number;
   action:    "add-card" | "remove-card" | "adjust-year" | "to-pending" | "to-locked";
   // add-card
   year?:     number;
@@ -82,15 +90,31 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     ]);
     if (!room) return json({ error: "Room not found" }, 404, req);
 
-    const activeTeam = teams.find(t => t.id === room.active_team_id);
-    if (!activeTeam) return json({ error: "No active team" }, 400, req);
-
-    const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
-    if (!actsAsCaptain(room, captain, body.player_id)) {
-      return json({ error: "Only the active team's captain can fix cards" }, 403, req);
+    // Resolve the target team. When body.team_id is set, the caller
+    // must be the host OR the captain of that exact team. When it's
+    // omitted, we fall back to the active team's captain (legacy
+    // "captain's own Manage menu" shape).
+    let targetTeam;
+    let isHostCaller = room.host_id === body.player_id;
+    if (typeof body.team_id === "number") {
+      targetTeam = teams.find(t => t.id === body.team_id);
+      if (!targetTeam) return json({ error: "Team not found in this room" }, 404, req);
+      const teamCaptain = players.find(p => p.team_id === targetTeam!.id && p.is_captain);
+      const isThatCaptain = !!(teamCaptain && teamCaptain.id === body.player_id);
+      if (!isHostCaller && !isThatCaptain) {
+        return json({ error: "Only the host or that team's captain can fix its cards" }, 403, req);
+      }
+    } else {
+      const activeTeam = teams.find(t => t.id === room.active_team_id);
+      if (!activeTeam) return json({ error: "No active team" }, 400, req);
+      const captain = players.find(p => p.team_id === activeTeam.id && p.is_captain);
+      if (!actsAsCaptain(room, captain, body.player_id)) {
+        return json({ error: "Only the active team's captain can fix cards" }, 403, req);
+      }
+      targetTeam = activeTeam;
     }
 
-    const teamId = activeTeam.id;
+    const teamId = targetTeam.id;
 
     if (body.action === "add-card") {
       const year = body.year;
@@ -176,7 +200,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         },
       });
       if (!delRes.ok) return json({ error: `Delete failed: ${delRes.status}` }, 500, req);
-      const pending = (activeTeam.pending_tracks ?? []) as SpotifyTrack[];
+      const pending = (targetTeam.pending_tracks ?? []) as SpotifyTrack[];
       // Update releaseYear to reflect any prior correction so the rail
       // doesn't snap back to the Spotify default.
       const track: SpotifyTrack = { ...entry.track, releaseYear: entry.corrected_year ?? entry.year };
@@ -189,7 +213,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (body.action === "to-locked") {
       const trackId = body.track_id;
       if (!trackId) return json({ error: "track_id required" }, 400, req);
-      const pending = (activeTeam.pending_tracks ?? []) as SpotifyTrack[];
+      const pending = (targetTeam.pending_tracks ?? []) as SpotifyTrack[];
       const track = pending.find(p => p.id === trackId);
       if (!track) return json({ error: "Card not pending" }, 404, req);
       // Remove from pending first, then insert into timeline. If insert
