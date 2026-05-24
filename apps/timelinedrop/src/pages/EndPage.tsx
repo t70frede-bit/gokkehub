@@ -80,6 +80,11 @@ export default function EndPage() {
   const [headerControls, setHeaderState] = useState<{ hideRoomCode: boolean; hideInvite: boolean } | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  // Non-host "Play again" is a request: we can't reset the room ourselves
+  // (server is host-only) so we set this flag, show "waiting for host",
+  // and let the realtime room.status subscription below auto-navigate
+  // once the host actually resets.
+  const [wantsReplay, setWantsReplay] = useState(false);
   // Auto-restart (host opt-in): when armed, counts down then fires playAgain.
   const [autoRestart, setAutoRestart] = useState(false);
   const [countdown,   setCountdown]   = useState(AUTO_RESTART_SECONDS);
@@ -126,8 +131,16 @@ export default function EndPage() {
     playVictoryChime();
   }, [loading]);
 
+  const isHostCaller = !!(myPlayerId && hostId && myPlayerId === hostId);
   async function playAgain() {
     if (!roomId || !myPlayerId) return;
+    // Non-host: arm "I want a replay" and wait for the host's reset.
+    // The realtime subscription below will navigate us to /lobby when
+    // room.status flips back to "lobby".
+    if (!isHostCaller) {
+      setWantsReplay(true);
+      return;
+    }
     setResetting(true);
     setResetError(null);
     try {
@@ -151,6 +164,44 @@ export default function EndPage() {
       setResetting(false);
     }
   }
+
+  // Auto-route on host reset. Subscribe to tl_rooms.status; when it
+  // flips back to "lobby" we navigate every client that pressed Play
+  // again. Players who haven't pressed it stay on EndPage until they
+  // do — clicking Play again after the reset has happened is the
+  // "join the new lobby" path (status is already lobby).
+  useEffect(() => {
+    if (!roomId) return;
+    const channel = supabase
+      .channel(`endpage:${roomId}`)
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "tl_rooms", filter: `id=eq.${roomId}` },
+        (payload) => {
+          const next = payload.new as { status?: string };
+          if (next.status === "lobby" && wantsReplay) {
+            navigate(`/lobby/${roomId}`);
+          }
+        })
+      .subscribe();
+    return () => { channel.unsubscribe(); };
+  }, [roomId, wantsReplay, navigate]);
+
+  // Late-joiner short-circuit: if the host has ALREADY reset by the
+  // time we click Play again, the wantsReplay flag would just sit
+  // there forever (no UPDATE to listen for). Poll once on flag-set
+  // and navigate if the room is already back in lobby.
+  useEffect(() => {
+    if (!wantsReplay || !roomId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("tl_rooms").select("status").eq("id", roomId).single();
+      if (cancelled) return;
+      if ((data as { status?: string } | null)?.status === "lobby") {
+        navigate(`/lobby/${roomId}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wantsReplay, roomId, navigate]);
 
   // Auto-restart countdown tick. Resets to full when disarmed.
   useEffect(() => {
@@ -267,14 +318,16 @@ export default function EndPage() {
           <Button onClick={() => navigate("/")} variant="ghost">New game</Button>
           <Button
             onClick={playAgain}
-            disabled={!isHost || resetting}
-            title={!isHost ? "Only the host can restart this room" : undefined}
+            disabled={resetting || (wantsReplay && !isHost)}
+            title={!isHost ? "Lets the host know you want another round; we'll route you back to the lobby when they reset." : undefined}
           >
             {resetting
               ? "Resetting…"
-              : autoRestart
-                ? `Play again (${countdown}s)`
-                : "Play again"}
+              : wantsReplay && !isHost
+                ? "Waiting for host…"
+                : autoRestart
+                  ? `Play again (${countdown}s)`
+                  : "Play again"}
           </Button>
         </div>
 
@@ -299,8 +352,13 @@ export default function EndPage() {
             {resetError}
           </p>
         )}
-        {!isHost && (
-          <p className="text-xs opacity-50">Waiting for the host to start a new game…</p>
+        {!isHost && wantsReplay && (
+          <p className="text-xs opacity-70" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+            Waiting for host to restart — you'll join the new lobby automatically.
+          </p>
+        )}
+        {!isHost && !wantsReplay && (
+          <p className="text-xs opacity-50">Click <strong>Play again</strong> to join the next round.</p>
         )}
       </div>
     </div>
