@@ -3100,11 +3100,17 @@ export default function GamePage() {
 
   async function pingShopToken(teamId: number, tokenType: string) {
     if (!myPlayerId) return;
+    // Toggle: if my id already has a ping on this (team, token), DELETE
+    // my pings instead of stacking another one. realtime INSERT/DELETE
+    // pushes the row to every client (incl. ours).
+    const minePinged = (state?.shopPings ?? []).some(p =>
+      p.team_id === teamId && p.token_type === tokenType && p.player_id === myPlayerId,
+    );
     await fetch(`/room/${roomId}/shop-ping`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-      body: JSON.stringify({ player_id: myPlayerId, team_id: teamId, token_type: tokenType }),
+      method:  minePinged ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" }, credentials: "include",
+      body:    JSON.stringify({ player_id: myPlayerId, team_id: teamId, token_type: tokenType }),
     });
-    // realtime INSERT pushes the row to every client (incl. ours).
   }
 
   async function dismissPing(pingId: number) {
@@ -3802,11 +3808,13 @@ export default function GamePage() {
                     color={color}
                     onClick={() => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); }}
                   />
-                  {/* Shop button — visible to ALL when shopEnabled so
-                      opponents and teammates can see the team's purse and
-                      browse what's buyable. Active captain sees Buy
-                      buttons in the modal; everyone else read-only. */}
-                  {room.settings?.tokenEconomy === "shop" && (
+                  {/* Shop chip — own team gets the full Shop button
+                      (clickable, opens the buy UI). Opponents see a
+                      read-only "🪙 N" indicator so they can track the
+                      other team's coin economy without being able to
+                      open their shop. Order matches the compact panel:
+                      TokenStrip first, Shop chip second. */}
+                  {room.settings?.tokenEconomy === "shop" && (isMyTeam ? (
                     <button
                       onClick={() => setShopViewTeamId(team.id)}
                       className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold transition-all flex-shrink-0"
@@ -3821,7 +3829,20 @@ export default function GamePage() {
                       <span aria-hidden="true">🪙</span>
                       <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
                     </button>
-                  )}
+                  ) : (
+                    <span
+                      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold flex-shrink-0"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb), 0.06)",
+                        border:     "1px solid rgba(var(--color-primary-rgb), 0.20)",
+                        color:      "rgb(var(--color-primary-rgb))",
+                      }}
+                      title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"}`}
+                    >
+                      <span aria-hidden="true">🪙</span>
+                      <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
+                    </span>
+                  ))}
                 </div>
               </div>
 
@@ -3931,13 +3952,17 @@ export default function GamePage() {
                   />
                 </div>
 
-                {/* Right: tokens. Captain of THIS team (when it's not active)
-                    can click to open the tray for opponent-turn tokens like
-                    Force Lock. The tray filters by category vs phase. */}
+                {/* Right: TokenStrip first, then Shop chip — matches the
+                    spotlight panel's order. Own team gets the clickable
+                    Shop button; opponents see a read-only "🪙 N". */}
                 <div className="flex-1 flex items-center justify-end gap-1.5 min-w-0">
-                  {/* Shop button mirrors the spotlight one — visible to all
-                      so non-captains and opposing teammates can browse. */}
-                  {room.settings?.tokenEconomy === "shop" && (
+                  <TokenStrip
+                    tokens={state.tokens?.[team.id] ?? []}
+                    color={color}
+                    compact
+                    onClick={() => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); }}
+                  />
+                  {room.settings?.tokenEconomy === "shop" && (isMyTeam ? (
                     <button
                       onClick={() => setShopViewTeamId(team.id)}
                       className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold transition-all flex-shrink-0"
@@ -3952,13 +3977,20 @@ export default function GamePage() {
                       <span aria-hidden="true">🪙</span>
                       <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
                     </button>
-                  )}
-                  <TokenStrip
-                    tokens={state.tokens?.[team.id] ?? []}
-                    color={color}
-                    compact
-                    onClick={() => { setTokenTrayTeamId(team.id); setTokenTrayOpen(true); }}
-                  />
+                  ) : (
+                    <span
+                      className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-bold flex-shrink-0"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb), 0.06)",
+                        border:     "1px solid rgba(var(--color-primary-rgb), 0.20)",
+                        color:      "rgb(var(--color-primary-rgb))",
+                      }}
+                      title={`${team.points ?? 0} shop point${(team.points ?? 0) === 1 ? "" : "s"}`}
+                    >
+                      <span aria-hidden="true">🪙</span>
+                      <span style={{ fontFamily: "var(--font-mono)" }}>{team.points ?? 0}</span>
+                    </span>
+                  ))}
                 </div>
               </div>
             </Panel>
@@ -4535,20 +4567,29 @@ export default function GamePage() {
                                     Buy
                                   </button>
                                 )}
-                                {!canBuy && (
-                                  <button
-                                    onClick={() => pingShopToken(viewTeam.id, type)}
-                                    className="text-[11px] px-2 py-0.5 rounded transition-transform active:scale-95"
-                                    style={{
-                                      background: "rgba(220,160,0,0.12)",
-                                      color:      "rgb(220,160,0)",
-                                      border:     "1px solid rgba(220,160,0,0.4)",
-                                    }}
-                                    title={isMyTeamShop ? "Nudge your captain to buy this" : "Suggest this to the other team"}
-                                  >
-                                    🔔 Ping
-                                  </button>
-                                )}
+                                {/* Pings are own-team only — you can't ping an
+                                    opponent's shop. Captain on the matching
+                                    team sees the badge (read-only) but no
+                                    button (no point pinging your own buy
+                                    queue). Clicking your existing ping
+                                    removes it (toggle). */}
+                                {!canBuy && isMyTeamShop && (() => {
+                                  const minePinged = tilePings.some(p => p.player_id === myPlayerId);
+                                  return (
+                                    <button
+                                      onClick={() => pingShopToken(viewTeam.id, type)}
+                                      className="text-[11px] px-2 py-0.5 rounded transition-transform active:scale-95"
+                                      style={{
+                                        background: minePinged ? "rgba(220,160,0,0.28)" : "rgba(220,160,0,0.12)",
+                                        color:      "rgb(220,160,0)",
+                                        border:     `1px solid rgba(220,160,0,${minePinged ? 0.6 : 0.4})`,
+                                      }}
+                                      title="Nudge your captain to buy this — click again to cancel"
+                                    >
+                                      {minePinged ? "🔔 Pinged · cancel" : "🔔 Ping"}
+                                    </button>
+                                  );
+                                })()}
                                 {tilePings.length > 0 && (
                                   <span
                                     className="text-[10px] font-bold px-1.5 py-0.5 rounded"

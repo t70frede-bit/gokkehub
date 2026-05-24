@@ -259,6 +259,14 @@ export function useRoom(roomId: string | undefined, myPlayerId: string | undefin
           if (s.shopPings.some(p => p.id === sp.id)) return s;
           return { ...s, shopPings: [...s.shopPings, sp] };
         }))
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "tl_shop_pings" },
+        (payload) => setState(s => {
+          if (!s) return s;
+          // REPLICA IDENTITY DEFAULT — payload.old carries the PK only.
+          const removedId = (payload.old as { id?: number }).id;
+          if (typeof removedId !== "number") return s;
+          return { ...s, shopPings: s.shopPings.filter(p => p.id !== removedId) };
+        }))
       .on("postgres_changes", { event: "*", schema: "public", table: "tl_team_tokens", filter: `room_id=eq.${roomId}` },
         (payload) => {
           // Detect activation: an UPDATE whose new.used_at is set. used_at is

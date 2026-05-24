@@ -652,26 +652,31 @@ async function handleBuyToken(req: Request, roomId: string, env: Env) {
   if (tokenEconomy !== "shop") {
     return json({ error: "Token shop is only available in shop mode" }, 400, req);
   }
-  // SHOP_TOKEN_COSTS lives in src/lib/types.ts so the lobby + game UI
-  // and this endpoint stay in lock-step. Server inlines the same table
-  // here to avoid a cross-import from server functions into client lib.
-  // Mirror of SHOP_TOKEN_COSTS in src/lib/types.ts — keep in sync. Token
-  // names match TOKEN_CATALOG types in src/lib/tokens.ts.
+  // Mirror of SHOP_TOKEN_COSTS in src/lib/types.ts — keep in sync.
+  // Out-of-sync was the 2026-05-24 bug where Counter / Steal by Year /
+  // Pass Along / Artist Picker couldn't be bought server-side even
+  // though the client shop offered them.
   const SHOP_COSTS: Record<string, number> = {
     cover_reveal_before: 2, cover_reveal: 2, song_skipper: 2,
-    year_span_5: 3, more_or_less: 3, reference_point: 3,
-    recovery: 4, card_remover: 4,
-    force_lock: 6, song_limiter: 6,
+    year_span_5:         3, more_or_less:   3, reference_point: 3,
+    artist_picker:       4, recovery:       4, card_remover:    4,
+    pass_along:          5, token_counter:  5, steal_by_year:   5,
+    force_lock:          6, song_limiter:   6,
   };
   const cost = SHOP_COSTS[token_type];
   if (!cost) return json({ error: `Token ${token_type} can't be purchased` }, 400, req);
 
-  const team = teams.find(t => t.id === room.active_team_id);
-  if (!team) return json({ error: "No active team" }, 400, req);
+  // Resolve the buying team from the caller's player row — was
+  // hard-coded to room.active_team_id which blocked opposing captains
+  // from stocking "anytime" / "opponent_turn" tokens out of turn.
+  const me = players.find(p => p.id === player_id);
+  if (!me || me.team_id === null) return json({ error: "Not on a team" }, 403, req);
+  const team = teams.find(t => t.id === me.team_id);
+  if (!team) return json({ error: "Team not found" }, 404, req);
 
   const captain = players.find(p => p.team_id === team.id && p.is_captain);
   if (!actsAsCaptain(room, captain, player_id)) {
-    return json({ error: "Only the team captain can buy tokens" }, 403, req);
+    return json({ error: "Only your team's captain can buy" }, 403, req);
   }
   if ((team.points ?? 0) < cost) {
     return json({ error: `Not enough points (need ${cost}, have ${team.points ?? 0})` }, 400, req);
@@ -689,6 +694,20 @@ async function handleBuyToken(req: Request, roomId: string, env: Env) {
     granted_round: room.current_round_id ?? undefined,
     pending: false,
   });
+  // Clear any in-flight shop pings on this (team, token) pair — the
+  // teammates who pinged got their wish, no need for the badge to
+  // linger.
+  void fetch(
+    `${env.SUPABASE_URL}/rest/v1/tl_shop_pings?room_id=eq.${roomId}&team_id=eq.${team.id}&token_type=eq.${encodeURIComponent(token_type)}`,
+    {
+      method:  "DELETE",
+      headers: {
+        apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        Prefer:        "return=minimal",
+      },
+    },
+  );
   console.log(`[shop] team ${team.id} bought ${token_type} for ${cost} (remaining ${remaining})`);
   return json({ ok: true, remaining }, 200, req);
 }
