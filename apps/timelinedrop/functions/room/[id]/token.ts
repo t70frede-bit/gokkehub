@@ -200,6 +200,19 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // Active team's turn ends after this song regardless of outcome.
       // handleTurnAction rejects action="next" while this flag is set.
       await updateRound(env, round.id, { force_locked: true });
+    } else if (type === "steal_by_year") {
+      // Arm a Steal by Year attempt. Token burned NOW (during the
+      // opponent's turn); the guess submission happens later via
+      // /room/:id/steal-year if the opponent gets it wrong. We refuse
+      // double-arm so two opposing teams can't both stake a claim on
+      // the same round.
+      if (round.steal_team_id !== null) {
+        return json({ error: "Another team has already armed a steal on this round" }, 409, req);
+      }
+      if (usingTeamId === round.team_id) {
+        return json({ error: "Can't steal your own team's round" }, 400, req);
+      }
+      await updateRound(env, round.id, { steal_team_id: usingTeamId });
     } else if (type === "song_limiter") {
       // Cut the active team's listening window. The host's audio player
       // watches this column and auto-pauses once playback crosses the

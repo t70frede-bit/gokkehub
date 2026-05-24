@@ -37,6 +37,7 @@ const COUNTERABLE = new Set<string>([
   "force_lock",
   "song_limiter",
   "reference_point",
+  "steal_by_year",
 ]);
 
 async function rollbackEffect(env: Env, roundId: number, tokenType: string): Promise<void> {
@@ -59,6 +60,13 @@ async function rollbackEffect(env: Env, roundId: number, tokenType: string): Pro
       return;
     case "song_limiter":
       await updateRound(env, roundId, { song_limit_seconds: null });
+      return;
+    case "steal_by_year":
+      // Un-arm the steal — the opposing team's chance evaporates and
+      // the year-mask in the reveal overlay lifts. steal_year_guess +
+      // steal_outcome were never set (guess hadn't happened yet), so
+      // only the team_id needs clearing.
+      await updateRound(env, roundId, { steal_team_id: null } as never);
       return;
     case "reference_point": {
       // Reference Point inserts a single tl_notes row (kind="reference",

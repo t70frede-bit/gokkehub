@@ -5,16 +5,17 @@ import {
   getRoom, getPlayers, getRound, getTeams,
   updateRound, insertTimelineEntry,
 } from "../../_supabase";
-import { findAndUseToken } from "./round";
 import type { TlRound, TlTimelineEntry } from "../../../src/lib/types";
 
 // POST /room/:id/steal-year   { player_id, round_id, year_guess }
 //
-// Steal by Year: after an opposing team's wrong placement, the opposing
-// captain spends a steal_by_year token + guesses the year. If guess is
-// within STEAL_TOLERANCE of the actual year, the card joins the
-// stealing team's timeline. Wrong guess → token still consumed, card
-// is lost (normal wrong-placement flow).
+// Steal by Year — GUESS submission only. The token itself is burned
+// when the opposing captain plays it DURING the original team's turn
+// (via /room/:id/token, type="steal_by_year"); that handler sets
+// `round.steal_team_id`. This endpoint is the follow-through: after
+// the original team's incorrect placement, the stealing captain guesses
+// the year (±2). Correct → card locks into stealing team's timeline.
+// Wrong → card is lost in the normal incorrect-outcome flow.
 
 const STEAL_TOLERANCE = 2;
 
@@ -54,41 +55,35 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (round.steal_outcome !== null) {
       return json({ error: "Steal already resolved on this round" }, 409, req);
     }
+    if (round.steal_team_id === null) {
+      return json({ error: "No steal has been armed on this round" }, 409, req);
+    }
 
     const me = players.find(p => p.id === body.player_id);
     if (!me) return json({ error: "Not in room" }, 403, req);
     if (!me.is_captain) return json({ error: "Only a captain can steal" }, 403, req);
-    if (me.team_id === null) return json({ error: "Not on a team" }, 403, req);
-    if (me.team_id === round.team_id) {
-      return json({ error: "Cannot steal from your own team's round" }, 403, req);
+    if (me.team_id !== round.steal_team_id) {
+      return json({ error: "Your team didn't arm the steal on this round" }, 403, req);
     }
 
     const myTeam = teams.find(t => t.id === me.team_id);
     if (!myTeam) return json({ error: "Team not found" }, 404, req);
 
-    // Burn the steal_by_year token. Returns null if none available.
-    const tokenId = await findAndUseToken(env, myTeam.id, "steal_by_year", round.id);
-    if (!tokenId) return json({ error: "No Steal by Year token available" }, 400, req);
-
     const actualYear = round.corrected_year ?? round.track.releaseYear;
     const success    = Math.abs(body.year_guess - actualYear) <= STEAL_TOLERANCE;
 
     const patch: Partial<TlRound> = {
-      steal_team_id:    myTeam.id,
       steal_year_guess: body.year_guess,
       steal_outcome:    success ? "success" : "fail",
     };
     await updateRound(env, body.round_id, patch);
 
     if (success) {
-      // Lock the stolen card into the stealing team's timeline using
-      // the canonical year (corrected_year if any). Reuses
-      // insertTimelineEntry so positions are recomputed.
       const entry: TlTimelineEntry = {
         team_id:        myTeam.id,
         track_id:       round.track.id,
         year:           actualYear,
-        position:       0,    // recomputed
+        position:       0,    // recomputed by insertTimelineEntry
         track:          { ...round.track, releaseYear: actualYear },
         corrected_year: round.corrected_year,
       };

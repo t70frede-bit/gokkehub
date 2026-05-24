@@ -1469,6 +1469,11 @@ interface RevealProps {
   onReportVideo:        (requestRedo?: boolean, reason?: string) => Promise<void>;
   onApproveVideoReport: (approve: boolean) => Promise<void>;
   onRedoRound:          () => Promise<void>;
+  /** Active team holds a pass_along token — surfaces the "🔀 Pass Along
+   *  & end turn" button under the Stop/Next decision. Click fires the
+   *  pick modal; on submit, the turn auto-stops (lock pending). */
+  canPassAlong:         boolean;
+  onPassAlong:          () => void;
   /** Steal-by-Year context. canTry = opposing captain with token who
    *  hasn't yet attempted on this round; iAmStealer = my team initiated
    *  the steal; pendingTeamName lights up the masked-year banner for
@@ -1488,6 +1493,7 @@ function RevealOverlay({
   myPlayerId, totalEligibleVoters, pendingCount, pendingTracks,
   onJudge, onJudgeKind, shopEnabled, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
   onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound, stealCtx,
+  canPassAlong, onPassAlong,
 }: RevealProps) {
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
@@ -1839,6 +1845,24 @@ function RevealOverlay({
                 <p className="text-xs opacity-40 text-center">
                   Next: risk losing all {pendingCount} card{pendingCount !== 1 ? "s" : ""} if you place wrong
                 </p>
+                {/* Before-pass tokens — Pass Along surfaces here (not in
+                    the regular token tray) because it's specifically a
+                    pass-time action. Click fires the pick modal; on
+                    submit the turn auto-stops (lock pending). */}
+                {canPassAlong && (
+                  <button
+                    onClick={onPassAlong}
+                    className="w-full rounded-md px-3 py-2 text-sm font-bold transition-transform active:scale-95"
+                    style={{
+                      background: "rgba(var(--color-secondary-rgb),0.12)",
+                      border:     "1px solid rgba(var(--color-secondary-rgb),0.4)",
+                      color:      "rgb(var(--color-secondary-rgb))",
+                    }}
+                    title="Use Pass Along — pick the next team's song. Your turn ends."
+                  >
+                    🔀 Pass Along — pick opponents' next song <span className="opacity-60">(ends your turn)</span>
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -2282,9 +2306,9 @@ function StealByYearWidget({
             color:      "rgb(var(--color-secondary-rgb))",
             border:     "1px solid rgba(var(--color-secondary-rgb),0.45)",
           }}
-          title={`Burns Steal by Year. Guess within ±${stealCtx.tolerance} of the actual year to take the card.`}
+          title={`Guess within ±${stealCtx.tolerance} of the actual year to claim the card. Token was burned when you armed the steal.`}
         >
-          🥷 Try to steal (±{stealCtx.tolerance})
+          🥷 Guess the year (±{stealCtx.tolerance})
         </button>
       </div>
     );
@@ -3120,7 +3144,11 @@ export default function GamePage() {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
+      let message = `Counter failed (${res.status})`;
+      try { const d = JSON.parse(t) as { error?: string }; if (d.error) message = `Counter: ${d.error}`; } catch { /* not JSON */ }
+      showActionError(message);
       console.warn("[counter] failed:", res.status, t.slice(0, 200));
+      return;
     }
     // Realtime tl_team_tokens.used_at + the rolled-back round column will
     // refresh the UI; the overlay dismisses itself on the next render.
@@ -3251,12 +3279,23 @@ export default function GamePage() {
         return;
       }
       setPassAlongOptions(null);
+      // Pass Along is a pass-the-turn action — auto-stop right after
+      // picking. Equivalent to the captain pressing "Stop & lock"
+      // themselves. Server's handleTurnAction("stop") locks pending
+      // and advances to the next team (with our chosen track now
+      // queued at room.track_cursor).
+      void doTurnAction("stop");
     } catch (err) {
       showActionError(`Pass Along: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setPassAlongBusy(false);
     }
   }
+
+  // Convenience wrapper for the "🔀 Pass Along — ends your turn" button
+  // in the reveal overlay. Just opens the pick modal; the auto-stop
+  // happens after pickPassAlong succeeds.
+  function openPassAlongAndStop() { void openPassAlong(); }
 
   async function useTypedToken(type: TokenType, payload?: Record<string, unknown>) {
     if (!round) return;
@@ -4335,22 +4374,21 @@ export default function GamePage() {
             onApproveVideoReport={approveVideoReport}
             onRedoRound={redoRound}
             stealCtx={(() => {
+              // Steal is now ARMED during the opponent's turn (the
+              // token burn sets round.steal_team_id). At reveal time
+              // after a wrong placement, the stealing captain submits
+              // a year guess — no second token needed here.
               const myTeamForSteal = myPlayer?.team_id ?? null;
-              const haveToken = !!(myTeamForSteal && (state.tokens?.[myTeamForSteal] ?? []).some(
-                t => !t.pending && t.type === "steal_by_year",
-              ));
+              const stealerTeamId = round?.steal_team_id ?? null;
               const canTry = !!(
                 round
                 && round.outcome === "incorrect"
                 && round.steal_outcome === null
-                && round.steal_team_id === null
+                && stealerTeamId !== null
+                && stealerTeamId === myTeamForSteal
                 && iAmCaptain
-                && myTeamForSteal !== null
-                && myTeamForSteal !== round.team_id
-                && haveToken
               );
-              const stealerTeamId = round?.steal_team_id ?? null;
-              const stealerTeam   = stealerTeamId !== null ? teams.find(t => t.id === stealerTeamId) : undefined;
+              const stealerTeam = stealerTeamId !== null ? teams.find(t => t.id === stealerTeamId) : undefined;
               return {
                 canTry,
                 iAmStealer:      stealerTeamId !== null && stealerTeamId === myTeamForSteal,
@@ -4360,6 +4398,12 @@ export default function GamePage() {
                 onTry:           stealYear,
               };
             })()}
+            canPassAlong={(() => {
+              const myTeamForPA = myPlayer?.team_id ?? null;
+              if (!iAmCaptain || !isMyTurn || myTeamForPA === null) return false;
+              return (state.tokens?.[myTeamForPA] ?? []).some(t => !t.pending && t.type === "pass_along");
+            })()}
+            onPassAlong={openPassAlongAndStop}
           />
         );
       })()}
@@ -5286,8 +5330,16 @@ function TokenTray({
                       spec.category === "before_song"   ? phase === "active" && songNotStarted :
                       false;
                     const alreadyForceLocked = spec.type === "force_lock" && forceLocked;
-                    const useable = canUse && spec.implemented && phaseOk && !alreadyForceLocked;
+                    // Counter is reaction-only: fired from the activation
+                    // cinematic when an opponent plays a token, NEVER from
+                    // the tray. Pass Along has its own UI in the post-
+                    // correct-placement "Stop or Next?" decision area
+                    // (clicking it auto-stops); hide it here too.
+                    const trayDisabled = spec.type === "token_counter" || spec.type === "pass_along";
+                    const useable = canUse && spec.implemented && phaseOk && !alreadyForceLocked && !trayDisabled;
                     const reason = !spec.implemented      ? "soon" :
+                                   spec.type === "token_counter" ? "reaction" :
+                                   spec.type === "pass_along"    ? "on pass" :
                                    !canUse                ? null  :
                                    !phaseOk               ? (spec.category === "before_song" ? "too late" : "wrong phase") :
                                    alreadyForceLocked     ? "used"  :
