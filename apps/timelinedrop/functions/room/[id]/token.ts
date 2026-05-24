@@ -152,7 +152,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       if (targetTeamId === activeTeam.id) {
         return json({ error: "Pick an opponent's card, not your own team's" }, 400, req);
       }
-      const checkUrl = `${env.SUPABASE_URL}/rest/v1/tl_timeline?team_id=eq.${targetTeamId}&track_id=eq.${encodeURIComponent(targetTrackId)}&select=team_id&limit=1`;
+      // Pull the WHOLE target timeline so we can both confirm the card
+      // exists and refuse to act when removal would leave the opponent
+      // with zero cards (game-breaking — the timeline rail would be
+      // empty and ordering becomes ill-defined).
+      const checkUrl = `${env.SUPABASE_URL}/rest/v1/tl_timeline?team_id=eq.${targetTeamId}&select=track_id`;
       const checkRes = await fetch(checkUrl, {
         headers: {
           apikey:        env.SUPABASE_SERVICE_ROLE_KEY,
@@ -160,9 +164,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         },
       });
       if (!checkRes.ok) return json({ error: "Failed to verify target card" }, 500, req);
-      const checkRows = await checkRes.json() as Array<{ team_id: number }>;
-      if (checkRows.length === 0) {
+      const checkRows = await checkRes.json() as Array<{ track_id: string }>;
+      if (!checkRows.some(r => r.track_id === targetTrackId)) {
         return json({ error: "That card isn't on the target team's timeline anymore" }, 404, req);
+      }
+      if (checkRows.length <= 1) {
+        return json({ error: "Can't remove an opponent's last card — they'd have nothing to place against" }, 400, req);
       }
       cardRemoverTarget = { team_id: targetTeamId, track_id: targetTrackId };
     }

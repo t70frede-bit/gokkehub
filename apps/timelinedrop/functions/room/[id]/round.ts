@@ -242,9 +242,8 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
     const teams = await getTeams(env, roomId);
     const activeTeam = teams.find(t => t.id === room.active_team_id);
     if (activeTeam) {
-      await updateTeam(env, activeTeam.id, {
-        pending_tracks: [...(activeTeam.pending_tracks ?? []), round.track],
-      });
+      const newPending = [...(activeTeam.pending_tracks ?? []), round.track];
+      await updateTeam(env, activeTeam.id, { pending_tracks: newPending });
       // Shop-mode: credit points immediately for any fields the auto-judge
       // just flipped to true. Read the round back to pick up the
       // auto-judge updates we wrote a few lines above.
@@ -252,6 +251,21 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
       if (tokenEconomy === "shop") {
         const refreshedRound = await getRound(env, round_id);
         await maybeAwardShopPoints(env, refreshedRound, activeTeam, tokenEconomy);
+      }
+      // Win-on-placement: end the game right here if pending + locked
+      // hits win_target, so the captain doesn't have to press Continue
+      // just to claim a win that's already certain. Tiebreaker mode
+      // arms the cycle on first crosser and ends only when the LAST
+      // team in the cycle crosses.
+      const finished = await maybeFinishOnPlace(
+        env, roomId, room, teams, activeTeam, newPending,
+      );
+      if (finished.gameEnded) {
+        return json({
+          outcome,
+          actual_year: actualYear,
+          winner:      finished.winner,
+        }, 200, req);
       }
     }
   } else {
@@ -1268,6 +1282,72 @@ async function promotePendingTokens(env: Env, teamId: number) {
     },
     body: JSON.stringify({ pending: false }),
   });
+}
+
+// Placement-time win evaluation. Decides whether the active team has
+// won the game by hitting `win_target` cards via (locked + pending).
+// Returns { gameEnded, winner } — when gameEnded is true the caller
+// short-circuits and skips the rest of the round flow.
+//
+// First-mode: end immediately on cross.
+// Tiebreaker: first crosser arms the cycle; game continues. End only
+// when EVERY OTHER team has already had a post-arm turn (i.e. this
+// turn would close the cycle) AND the active team is at target.
+async function maybeFinishOnPlace(
+  env:        Env,
+  roomId:     string,
+  room:       TlRoom,
+  teams:      TlTeam[],
+  activeTeam: TlTeam,
+  pendingNow: Array<{ id: string; releaseYear: number; [k: string]: unknown }>,
+): Promise<{ gameEnded: boolean; winner: number | null }> {
+  const lockedNow = await getTimeline(env, activeTeam.id);
+  const effective = lockedNow.length + pendingNow.length;
+  if (effective < room.win_target) return { gameEnded: false, winner: null };
+
+  const winMode: "first" | "tiebreaker" =
+    (room.settings?.winMode === "tiebreaker") ? "tiebreaker" : "first";
+
+  if (winMode === "first") {
+    await lockPendingTracks(env, activeTeam.id, pendingNow);
+    await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+    await updateRoom(env, roomId, { status: "finished" });
+    return { gameEnded: true, winner: activeTeam.id };
+  }
+
+  // Tiebreaker
+  const tb = room.settings?.tiebreaker ?? { active: false, played_team_ids: [] };
+  if (!tb.active) {
+    // First crosser. Arm the cycle — other teams need their turn.
+    // played_team_ids stays empty; handleTurnAction will add this team
+    // when the captain hits Continue, kicking off the cycle.
+    await updateRoom(env, roomId, {
+      settings: {
+        ...(room.settings ?? {}),
+        tiebreaker: { active: true, played_team_ids: [] },
+      },
+    });
+    return { gameEnded: false, winner: null };
+  }
+  // Cycle active. If every OTHER team has already played in the cycle,
+  // this turn (the placement that just landed us at target) is the
+  // last one — end immediately.
+  const remaining = teams.filter(t =>
+    t.id !== activeTeam.id && !tb.played_team_ids.includes(t.id),
+  );
+  if (remaining.length > 0) return { gameEnded: false, winner: null };
+
+  // Active team is the last to play in the cycle AND at target → win.
+  await lockPendingTracks(env, activeTeam.id, pendingNow);
+  await updateTeam(env, activeTeam.id, { pending_tracks: [] });
+  await updateRoom(env, roomId, {
+    status:   "finished",
+    settings: {
+      ...(room.settings ?? {}),
+      tiebreaker: { active: false, played_team_ids: [] },
+    },
+  });
+  return { gameEnded: true, winner: activeTeam.id };
 }
 
 async function lockPendingTracks(

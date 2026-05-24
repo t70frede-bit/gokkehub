@@ -61,20 +61,40 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   await req(env, "DELETE", "tl_shop_pings",  `room_id=eq.${roomId}`);
   await req(env, "DELETE", "tl_rounds",      `room_id=eq.${roomId}`);
 
-  // Zero out every team's per-game state.
+  // Zero out every team's per-game state. Coins (points) reset too —
+  // shop balances shouldn't survive a restart.
   for (const team of teams) {
     await updateTeam(env, team.id, {
       tokens:         0,
       tokens_pending: 0,
       pending_tracks: [],
-    });
+      points:         0,
+    } as never);
   }
+
+  // Playlist-mode rooms preserve their imported tracks across restarts
+  // so the host doesn't have to re-paste the playlist URL. We drop the
+  // already-played head (pool.slice(0, cursor)) so the new game gets a
+  // fresh-feeling queue, and keep the unplayed tail. Group-taste rooms
+  // re-curate from scratch on Start, so we clear them entirely.
+  const songSource = room.settings?.songSource ?? "group-taste";
+  const preservePool = songSource === "playlist"
+    && Array.isArray(room.track_pool)
+    && room.track_pool.length > 0;
+  const newPool = preservePool
+    ? (room.track_pool ?? []).slice(room.track_cursor ?? 0)
+    : [];
+
+  // Clear this room's recently-heard rows so preserved tracks aren't
+  // dropped by the 14-day blacklist on the next Start. Other rooms'
+  // history stays intact.
+  await req(env, "DELETE", "tl_played_tracks", `room_id=eq.${roomId}`);
 
   await updateRoom(env, roomId, {
     status:           "lobby",
     current_round_id: null,
     active_team_id:   null,
-    track_pool:       [],
+    track_pool:       newPool,
     track_cursor:     0,
     playing_since:    null,
     paused_at_ms:     null,

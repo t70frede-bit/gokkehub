@@ -4403,7 +4403,14 @@ export default function GamePage() {
         if (!viewTeam) return null;
         const isMyTeamShop = viewTeam.id === myPlayer?.team_id
           || (singleScreen && isHost && viewTeam.id === room.active_team_id);
-        const canBuy = !!round && viewTeam.id === room.active_team_id && iAmCaptain && isMyTeamShop;
+        // Buying is allowed any time you're the captain of THIS team; the
+        // active-team restriction was wrong because it stopped opponent
+        // captains from stocking "anytime" / "opponent_turn" tokens
+        // (Counter, Steal by Year, Force Lock, etc.) — they could see them
+        // in the shop but the Buy button never lit up. USE-time phase
+        // gates are enforced separately when the captain actually fires
+        // the token, so loosening buy is safe.
+        const canBuy = !!round && iAmCaptain && isMyTeamShop;
         const pts = viewTeam.points ?? 0;
         // Group buyable tokens by their phase category for a tidy grid.
         const byCategory: Record<string, Array<[string, number]>> = {};
