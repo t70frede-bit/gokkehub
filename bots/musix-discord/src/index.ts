@@ -1204,8 +1204,8 @@ const musixCommand = new SlashCommandBuilder()
           .setName("room")
           .setDescription("The room code from musix.gokkehub.com (4 chars)")
           .setRequired(true)
-          .setMinLength(6)
-          .setMaxLength(6),
+          .setMinLength(4)
+          .setMaxLength(4),
       ),
   )
   .addSubcommand(sub =>
@@ -1465,9 +1465,8 @@ async function handleJoin(ix: ChatInputCommandInteraction) {
   }
 
   const roomCode = ix.options.getString("room", true).trim().toUpperCase();
-  // Accept both legacy 6-char and new 4-char codes so older rooms still work.
-  if (roomCode.length !== 4 && roomCode.length !== 6) {
-    await ix.reply({ content: "Room code is 4 characters (older rooms used 6).", flags: MessageFlags.Ephemeral });
+  if (roomCode.length !== 4) {
+    await ix.reply({ content: "Room code is 4 characters.", flags: MessageFlags.Ephemeral });
     return;
   }
   const room = await fetchRoom(roomCode);
