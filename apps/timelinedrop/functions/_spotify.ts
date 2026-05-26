@@ -135,7 +135,13 @@ export async function getMyTopArtists(
 ): Promise<SpotifyTopArtist[]> {
   const url = `https://api.spotify.com/v1/me/top/artists?time_range=${range}&limit=${Math.min(limit, 50)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    // Most common cause is missing the `user-top-read` OAuth scope —
+    // logged loudly so a "spotify-taste produces empty pool" report
+    // points at the scope grant rather than mysterious silence.
+    console.warn(`[spotify] /me/top/artists ${res.status} ${res.statusText} — likely missing user-top-read scope`);
+    return [];
+  }
   const data = await res.json().catch(() => null) as { items?: SpotifyTopArtist[] } | null;
   return data?.items ?? [];
 }
@@ -147,7 +153,10 @@ export async function getMyTopTracks(
 ): Promise<SpotifyTopTrack[]> {
   const url = `https://api.spotify.com/v1/me/top/tracks?time_range=${range}&limit=${Math.min(limit, 50)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.warn(`[spotify] /me/top/tracks ${res.status} ${res.statusText} — likely missing user-top-read scope`);
+    return [];
+  }
   const data = await res.json().catch(() => null) as { items?: SpotifyTopTrack[] } | null;
   return data?.items ?? [];
 }

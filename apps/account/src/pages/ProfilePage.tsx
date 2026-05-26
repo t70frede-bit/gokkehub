@@ -255,7 +255,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           description="Give GokkeHub access to your music taste"
           scopeWarning={(() => {
             if (!session.linked.spotify) return undefined;
-            const required = ["streaming", "playlist-read-private", "user-modify-playback-state"];
+            const required = ["streaming", "playlist-read-private", "user-modify-playback-state", "user-top-read"];
             const granted  = (session.spotifyScopes ?? "").split(" ");
             const missing  = required.filter(s => !granted.includes(s));
             return missing.length > 0 ? "Missing permissions — disconnect and reconnect to fix" : undefined;

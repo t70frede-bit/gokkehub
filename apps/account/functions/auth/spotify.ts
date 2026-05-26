@@ -21,7 +21,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     client_id: env.SPOTIFY_CLIENT_ID,
     redirect_uri: `https://account.gokkehub.com/auth/spotify/callback`,
     response_type: "code",
-    scope: "user-read-email user-read-private user-modify-playback-state user-read-playback-state streaming playlist-read-private playlist-read-collaborative",
+    // user-top-read enables /me/top/{artists,tracks} for the spotify-taste
+    // curation source. user-read-recently-played reserved for future use
+    // (not currently called). Without user-top-read the new spotify-taste
+    // mode silently produces an empty profile (Spotify 403s the request
+    // and our fetcher returns []).
+    scope: "user-read-email user-read-private user-modify-playback-state user-read-playback-state streaming playlist-read-private playlist-read-collaborative user-top-read user-read-recently-played",
     show_dialog: "true",
   });
 
