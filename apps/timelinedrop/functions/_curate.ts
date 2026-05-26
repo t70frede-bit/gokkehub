@@ -150,27 +150,77 @@ export async function buildSpotifyProfile(
   const accessToken = await getActiveHostToken(env, refreshToken);
   if (!accessToken) return empty;
 
-  // Two API calls — medium_term (6 months) is the sweet spot for "what
-  // they currently listen to" vs all-time / short-term outliers. 50
-  // artists + 50 tracks fits Cloudflare's subrequest budget easily.
-  const [topArtists, topTracks] = await Promise.all([
+  // Pull all three time ranges in parallel — medium alone often comes
+  // back wildly artist-concentrated (one obsession in the last 6 months
+  // can hog 80% of the slots and starve the candidate pool of variety).
+  // Short_term and long_term snapshot different listening windows so
+  // the union pulls in artists medium missed.
+  // 6 subrequests/player; fine for solo/duo, watch the budget for 4+.
+  const [shortA, mediumA, longA, shortT, mediumT, longT] = await Promise.all([
+    getMyTopArtists(accessToken, "short_term",  50),
     getMyTopArtists(accessToken, "medium_term", 50),
+    getMyTopArtists(accessToken, "long_term",   50),
+    getMyTopTracks(accessToken,  "short_term",  50),
     getMyTopTracks(accessToken,  "medium_term", 50),
+    getMyTopTracks(accessToken,  "long_term",   50),
   ]);
 
-  // Convert Spotify shapes to the existing LastfmArtistRef / LastfmTrackRef
-  // shape so scoreCandidate, sharedTopArtists, expandViaSimilar etc. work
-  // without changes. Synthesise a playcount = (50 - rank) * 10 so the
-  // first-listed artist gets the highest weight.
-  const topArtistsAll: LastfmArtistRef[] = topArtists.map((a, i) => ({
-    name:      a.name,
-    playcount: String((50 - i) * 10),
-  }));
-  const topTracksAll: LastfmTrackRef[] = topTracks.map((t, i) => ({
-    name:      t.name,
-    artist:    { name: t.artists[0]?.name ?? "" },
-    playcount: String((50 - i) * 10),
-  }));
+  // Merge + dedupe by Spotify ID, preserving the highest-ranked
+  // occurrence across windows. Rank weight derived from position
+  // (50-i)*10 — first appearance wins so a track at rank 1 in short
+  // beats the same track at rank 30 in long.
+  const artistMap = new Map<string, { ref: LastfmArtistRef; bestRank: number }>();
+  const addArtists = (list: typeof shortA) => list.forEach((a, i) => {
+    const key  = a.id;
+    const rank = (50 - i) * 10;
+    const cur  = artistMap.get(key);
+    if (!cur || rank > cur.bestRank) {
+      artistMap.set(key, { ref: { name: a.name, playcount: String(rank) }, bestRank: rank });
+    }
+  });
+  addArtists(shortA);
+  addArtists(mediumA);
+  addArtists(longA);
+  const topArtistsAll: LastfmArtistRef[] = [...artistMap.values()]
+    .sort((a, b) => b.bestRank - a.bestRank)
+    .map(v => v.ref);
+
+  const trackMap = new Map<string, { ref: LastfmTrackRef; bestRank: number }>();
+  const addTracks = (list: typeof shortT) => list.forEach((t, i) => {
+    const key  = t.id;
+    const rank = (50 - i) * 10;
+    const cur  = trackMap.get(key);
+    if (!cur || rank > cur.bestRank) {
+      trackMap.set(key, {
+        ref: {
+          name:      t.name,
+          artist:    { name: t.artists[0]?.name ?? "" },
+          playcount: String(rank),
+        },
+        bestRank: rank,
+      });
+    }
+  });
+  addTracks(shortT);
+  addTracks(mediumT);
+  addTracks(longT);
+
+  // Sort by best rank then CAP per artist — single-artist obsessions
+  // (e.g. 44/50 of a user's medium_term being one artist) collapse the
+  // pool to that artist when buildCandidatePool slices the top N. Cap
+  // at 3 per artist so an obsession still wins by representation but
+  // doesn't crowd out the rest of the taste graph.
+  const MAX_TRACKS_PER_ARTIST = 3;
+  const sortedTracks = [...trackMap.values()].sort((a, b) => b.bestRank - a.bestRank);
+  const perArtist = new Map<string, number>();
+  const topTracksAll: LastfmTrackRef[] = [];
+  for (const v of sortedTracks) {
+    const aName = typeof v.ref.artist === "string" ? v.ref.artist : v.ref.artist.name;
+    const count = perArtist.get(lc(aName)) ?? 0;
+    if (count >= MAX_TRACKS_PER_ARTIST) continue;
+    topTracksAll.push(v.ref);
+    perArtist.set(lc(aName), count + 1);
+  }
 
   const profile: PlayerProfile = {
     ...empty,
