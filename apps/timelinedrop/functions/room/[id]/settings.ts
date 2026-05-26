@@ -30,7 +30,7 @@ function sanitize(input: unknown): TlRoomSettings {
   if (typeof s.skipRecentlyHeard === "boolean") out.skipRecentlyHeard = s.skipRecentlyHeard;
   if (typeof s.singleScreenMode === "boolean")  out.singleScreenMode  = s.singleScreenMode;
   if (typeof s.gamemasterMode === "boolean")    out.gamemasterMode    = s.gamemasterMode;
-  if (s.songSource === "group-taste" || s.songSource === "playlist") {
+  if (s.songSource === "group-taste" || s.songSource === "spotify-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }
   if (s.audioMode === "browser" || s.audioMode === "discord-bot" || s.audioMode === "all-clients-stream") {

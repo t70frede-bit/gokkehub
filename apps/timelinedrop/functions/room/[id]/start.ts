@@ -43,11 +43,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   let pool = room.track_pool ?? [];
   // Need: 1 starter card per team + 1 first round track
   const minTracks = teams.length + 1;
-  // For "group-taste" rooms we generate songs on the fly here rather than
-  // making the host hit a separate "Generate" button. Curation runs the
-  // Last.fm + Spotify pipeline; cold cache takes a few seconds.
+  // For "group-taste" + "spotify-taste" rooms we generate songs on the
+  // fly here rather than making the host hit a separate "Generate"
+  // button. The curate.ts handler picks the right profile-source branch
+  // based on settings.songSource.
   const songSource = room.settings?.songSource ?? "group-taste";
-  if (songSource === "group-taste" && pool.length < Math.max(minTracks, 10)) {
+  const autoCurate = songSource === "group-taste" || songSource === "spotify-taste";
+  if (autoCurate && pool.length < Math.max(minTracks, 10)) {
     // handleGenerate reads the request body for player_id; we already validated
     // the host above. Build a synthetic request that matches what curate.ts expects.
     const genReq = new Request(req.url, {

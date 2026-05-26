@@ -35,7 +35,12 @@ export type PlaylistMode = "as-is" | "inspiration" | "smart-filter";
 // Where the round's songs come from. Group taste runs the curation engine
 // against each player's Last.fm history; playlist uses tracks the host pasted
 // from a Spotify playlist URL.
-export type SongSource = "group-taste" | "playlist";
+// "group-taste"   — Last.fm profiles per player + Last.fm similar artists.
+// "spotify-taste" — Spotify /me/top profiles per player + Last.fm similar
+//                   artists for the adjacency leap (no per-player Last.fm
+//                   account needed).
+// "playlist"      — host pastes Spotify playlist URLs; pool is fixed.
+export type SongSource = "group-taste" | "spotify-taste" | "playlist";
 
 // How audio actually plays during a round.
 // "browser"     — the host's browser runs the Spotify Web Playback SDK.

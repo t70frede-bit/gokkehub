@@ -42,7 +42,7 @@ function sanitizeSettings(input: unknown): TlRoomSettings {
   if (typeof s.skipRecentlyHeard === "boolean") out.skipRecentlyHeard = s.skipRecentlyHeard;
   if (typeof s.singleScreenMode === "boolean")  out.singleScreenMode  = s.singleScreenMode;
   if (typeof s.gamemasterMode === "boolean")    out.gamemasterMode    = s.gamemasterMode;
-  if (s.songSource === "group-taste" || s.songSource === "playlist") {
+  if (s.songSource === "group-taste" || s.songSource === "spotify-taste" || s.songSource === "playlist") {
     out.songSource = s.songSource;
   }
   if (s.audioMode === "browser" || s.audioMode === "discord-bot" || s.audioMode === "all-clients-stream") {
@@ -169,6 +169,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       lastfm_username:  session?.lastfm?.username ?? null,
       manual_artists:   [],
     });
+
+    if (session?.spotify?.refreshToken) {
+      // Stash host's Spotify refresh token for spotify-taste curation
+      // (each player gets the same per-room+player KV key — see join.ts).
+      await env.SESSIONS.put(
+        `tl:room:${roomId}:player:${playerId}:spotify`,
+        session.spotify.refreshToken,
+        { expirationTtl: 86400 },
+      );
+    }
 
     if (session) {
       await env.SESSIONS.put(`tl:${roomId}:player`, playerId, { expirationTtl: 86400 });

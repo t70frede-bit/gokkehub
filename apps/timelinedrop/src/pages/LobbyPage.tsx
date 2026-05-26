@@ -669,11 +669,16 @@ export default function LobbyPage() {
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-3">Songs</h2>
 
-              {/* Source toggle */}
+              {/* Source toggle — three modes:
+                  • Last.fm taste  : per-player Last.fm history (legacy)
+                  • Spotify taste  : per-player Spotify /me/top + Last.fm
+                                     adjacency (no Last.fm account needed)
+                  • Spotify playlist: host curates a fixed playlist */}
               <Toggle
                 options={[
-                  { value: "group-taste", label: "🎧 Group taste" },
-                  { value: "playlist",    label: "🔗 Spotify playlist" },
+                  { value: "group-taste",   label: "🎧 Last.fm taste" },
+                  { value: "spotify-taste", label: "🎵 Spotify taste" },
+                  { value: "playlist",      label: "🔗 Spotify playlist" },
                 ]}
                 value={settings.songSource}
                 onChange={v => saveSettings({ songSource: v as SongSource })}
@@ -758,6 +763,67 @@ export default function LobbyPage() {
                     <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
                       profile
                     </a> for playback.
+                  </p>
+                </div>
+              )}
+
+              {/* Spotify taste branch — each player's own Spotify /me/top
+                  feeds the candidate pool. Last.fm artist.getSimilar is
+                  still used for the adjacency leap (medium/hard
+                  difficulty), but no per-player Last.fm account is needed.
+                  Players just have to be Spotify-authed at join time. */}
+              {settings.songSource === "spotify-taste" && (
+                <div className="mt-4 flex flex-col gap-4">
+                  <div>
+                    <p className="text-sm font-medium mb-2">Difficulty</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {([
+                        { value: "easy",    label: "🟢 Easy",    hint: "Songs everyone knows" },
+                        { value: "medium",  label: "🟡 Medium",  hint: "Mix of known + similar" },
+                        { value: "hard",    label: "🟠 Hard",    hint: "Rare picks from your taste" },
+                        { value: "hardest", label: "🔴 Hardest", hint: "Genre-matched unknowns" },
+                      ] as const).map(({ value, label, hint }) => {
+                        const active = settings.difficulty === value;
+                        return (
+                          <button
+                            key={value}
+                            onClick={() => saveSettings({ difficulty: value as Difficulty })}
+                            title={hint}
+                            className="text-left rounded-md p-2.5 transition-all border"
+                            style={{
+                              borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                              background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                            }}
+                          >
+                            <p className="text-sm font-semibold">{label}</p>
+                            <p className="text-[10px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => saveSettings({ skipRecentlyHeard: !settings.skipRecentlyHeard })}
+                    className="text-sm font-semibold px-3 py-2 rounded-md border transition-all self-start"
+                    style={{
+                      borderColor: settings.skipRecentlyHeard ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                      background:  settings.skipRecentlyHeard ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                    }}
+                  >
+                    🆕 {settings.skipRecentlyHeard ? "Skip recently heard ON" : "Skip recently heard OFF"}
+                  </button>
+                  <p className="text-xs px-3 py-2 rounded-md"
+                    style={{
+                      background: "rgba(var(--color-primary-rgb),0.08)",
+                      border:     "1px solid rgba(var(--color-primary-rgb),0.25)",
+                      color:      "rgb(var(--text-secondary-rgb))",
+                    }}>
+                    🎵 Each player's Spotify top tracks feed the pool; Last.fm fills in
+                    similar artists for the harder difficulties. Players need to be
+                    Spotify-authed when they join (link Spotify on your{" "}
+                    <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline">
+                      profile
+                    </a>). No Last.fm account needed.
                   </p>
                 </div>
               )}

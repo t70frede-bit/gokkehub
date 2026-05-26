@@ -7,7 +7,7 @@ import { searchTrackUri, getActiveHostToken } from "../../_spotify";
 import type { SpotifyTrack, Difficulty, TlPlayer } from "../../../src/lib/types";
 import { DEFAULT_TL_SETTINGS } from "../../../src/lib/types";
 import {
-  buildProfile, scoreCandidate,
+  buildProfile, buildSpotifyProfile, scoreCandidate,
   sharedTopArtists, expandViaSimilar, tracksFromArtists, hardestPoolArtists, arrangePlaylistArc,
   type Candidate, type ScoredCandidate, type PlayerProfile,
 } from "../../_curate";
@@ -83,11 +83,21 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   const accessToken = await getActiveHostToken(env, refreshToken);
   if (!accessToken) return json({ error: "Could not refresh Spotify token" }, 500, req);
 
-  // 1) Build per-player profiles
+  // 1) Build per-player profiles. Source switch: songSource picks which
+  // listening-history backend feeds the pool. "spotify-taste" pulls each
+  // player's own Spotify /me/top/* data + uses Last.fm only for the
+  // similar-artists adjacency leap; "group-taste" stays on Last.fm
+  // user.getTop* end-to-end (legacy path).
   const eligible = players.filter(p => !p.is_spectator);
   const profiles: PlayerProfile[] = [];
-  for (const p of eligible) {
-    profiles.push(await buildProfile(env, p));
+  if (settings.songSource === "spotify-taste") {
+    for (const p of eligible) {
+      profiles.push(await buildSpotifyProfile(env, p, roomId));
+    }
+  } else {
+    for (const p of eligible) {
+      profiles.push(await buildProfile(env, p));
+    }
   }
 
   // 2) Build candidate pool based on difficulty

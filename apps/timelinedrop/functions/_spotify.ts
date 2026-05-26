@@ -108,6 +108,50 @@ export async function searchManyWithDelay(
   return found;
 }
 
+// ── /me endpoints (user-scoped) ─────────────────────────────────────────────
+// These power the "spotify-taste" curation source: each player's own top
+// artists / tracks / recently-played feed the candidate pool. They require
+// the PLAYER's access token (not the host's), so the caller must resolve
+// the per-player token before invoking.
+
+export interface SpotifyTopArtist {
+  id:     string;
+  name:   string;
+  genres: string[];
+}
+
+export interface SpotifyTopTrack {
+  id:      string;
+  name:    string;
+  artists: Array<{ id: string; name: string }>;
+}
+
+type TopRange = "short_term" | "medium_term" | "long_term";
+
+export async function getMyTopArtists(
+  accessToken: string,
+  range:       TopRange,
+  limit       = 50,
+): Promise<SpotifyTopArtist[]> {
+  const url = `https://api.spotify.com/v1/me/top/artists?time_range=${range}&limit=${Math.min(limit, 50)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null) as { items?: SpotifyTopArtist[] } | null;
+  return data?.items ?? [];
+}
+
+export async function getMyTopTracks(
+  accessToken: string,
+  range:       TopRange,
+  limit       = 50,
+): Promise<SpotifyTopTrack[]> {
+  const url = `https://api.spotify.com/v1/me/top/tracks?time_range=${range}&limit=${Math.min(limit, 50)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null) as { items?: SpotifyTopTrack[] } | null;
+  return data?.items ?? [];
+}
+
 // Used by the host-token bridge: refresh if expired, then return access token.
 export async function getActiveHostToken(env: Env, refreshToken: string): Promise<string | null> {
   try {

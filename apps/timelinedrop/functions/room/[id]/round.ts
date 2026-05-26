@@ -73,7 +73,7 @@ function maybeTopUpPool(
   roomId: string,
   poolLength: number,
   newCursor: number,
-  songSource: "group-taste" | "playlist" | undefined,
+  songSource: "group-taste" | "spotify-taste" | "playlist" | undefined,
   waitUntil: WaitUntil,
 ) {
   if (songSource === "playlist") return;

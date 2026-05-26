@@ -79,6 +79,18 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       manual_artists:   [],
     });
 
+    // Stash this player's Spotify refresh token in KV so curate.ts can
+    // pull their /me/top/* data when the room is in spotify-taste mode.
+    // Cookie-bound session is unreadable from the curate-side request
+    // (different player). Keyed per-room+player; 24h TTL matches sessions.
+    if (session?.spotify?.refreshToken) {
+      await env.SESSIONS.put(
+        `tl:room:${roomId}:player:${playerId}:spotify`,
+        session.spotify.refreshToken,
+        { expirationTtl: 86400 },
+      );
+    }
+
     return json({
       player_id:    playerId,
       team_id:      teamId,

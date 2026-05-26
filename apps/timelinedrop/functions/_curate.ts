@@ -7,12 +7,13 @@ import {
   parsePlaycount,
   type LastfmArtistRef, type LastfmTrackRef,
 } from "./_lastfm";
+import { getMyTopArtists, getMyTopTracks, getActiveHostToken } from "./_spotify";
 
 // ── Per-player profile ─────────────────────────────────────────────────────
 
 export interface PlayerProfile {
   player:           TlPlayer;
-  source:           "lastfm" | "manual" | "none";
+  source:           "lastfm" | "spotify" | "manual" | "none";
   topArtistsAll:    LastfmArtistRef[];   // all-time top 50
   topArtistsRecent: LastfmArtistRef[];   // 3-month top 25
   topTracksAll:     LastfmTrackRef[];    // all-time top 50
@@ -74,6 +75,78 @@ export async function buildProfile(env: Env, player: TlPlayer): Promise<PlayerPr
     profile.topTrackKeys.add(k);
   }
 
+  return profile;
+}
+
+// ── Build a profile from the player's own Spotify listening data ──────────
+// Used for songSource="spotify-taste". The player's refresh token must
+// have been stashed in KV at join/create time (see join.ts, create.ts).
+// Returns the same PlayerProfile shape so downstream scoring + adjacency
+// (Last.fm artist.getSimilar) reuse the existing pipeline unchanged.
+export async function buildSpotifyProfile(
+  env:    Env,
+  player: TlPlayer,
+  roomId: string,
+): Promise<PlayerProfile> {
+  const empty: PlayerProfile = {
+    player, source: "none",
+    topArtistsAll: [], topArtistsRecent: [], topTracksAll: [], topTracksRecent: [], recentTracks: [],
+    artistPlaycounts: new Map(), recentArtistCounts: new Map(),
+    trackPlaycounts: new Map(), topTrackKeys: new Set(), recent7d: new Set(),
+  };
+
+  // Resolve the player's own refresh token, then their active access token.
+  const refreshToken = await env.SESSIONS.get(`tl:room:${roomId}:player:${player.id}:spotify`);
+  if (!refreshToken) {
+    // No Spotify auth on file — fall back to manual_artists if any, else empty.
+    if ((player.manual_artists?.length ?? 0) > 0) {
+      const profile = { ...empty, source: "manual" as const };
+      for (const a of player.manual_artists) {
+        profile.topArtistsAll.push({ name: a, playcount: "100" });
+        profile.artistPlaycounts.set(lc(a), 100);
+      }
+      return profile;
+    }
+    return empty;
+  }
+  const accessToken = await getActiveHostToken(env, refreshToken);
+  if (!accessToken) return empty;
+
+  // Two API calls — medium_term (6 months) is the sweet spot for "what
+  // they currently listen to" vs all-time / short-term outliers. 50
+  // artists + 50 tracks fits Cloudflare's subrequest budget easily.
+  const [topArtists, topTracks] = await Promise.all([
+    getMyTopArtists(accessToken, "medium_term", 50),
+    getMyTopTracks(accessToken,  "medium_term", 50),
+  ]);
+
+  // Convert Spotify shapes to the existing LastfmArtistRef / LastfmTrackRef
+  // shape so scoreCandidate, sharedTopArtists, expandViaSimilar etc. work
+  // without changes. Synthesise a playcount = (50 - rank) * 10 so the
+  // first-listed artist gets the highest weight.
+  const topArtistsAll: LastfmArtistRef[] = topArtists.map((a, i) => ({
+    name:      a.name,
+    playcount: String((50 - i) * 10),
+  }));
+  const topTracksAll: LastfmTrackRef[] = topTracks.map((t, i) => ({
+    name:      t.name,
+    artist:    { name: t.artists[0]?.name ?? "" },
+    playcount: String((50 - i) * 10),
+  }));
+
+  const profile: PlayerProfile = {
+    ...empty,
+    source: "spotify",
+    topArtistsAll,
+    topTracksAll,
+  };
+  for (const a of topArtistsAll) profile.artistPlaycounts.set(lc(a.name), parsePlaycount(a.playcount));
+  for (const t of topTracksAll) {
+    const aName = typeof t.artist === "string" ? t.artist : t.artist.name;
+    const k = trackKey(aName, t.name);
+    profile.trackPlaycounts.set(k, parsePlaycount(t.playcount));
+    profile.topTrackKeys.add(k);
+  }
   return profile;
 }
 
