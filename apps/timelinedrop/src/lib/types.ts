@@ -254,6 +254,10 @@ export interface TlPlayer {
   is_host:          boolean;
   is_spectator:     boolean;
   discord_id:       string | null;
+  // Migration 027 — set at join/create if the joining session has
+  // Spotify linked. Lobby reads it to show "X of Y players have
+  // Spotify connected" in the spotify-taste curation branch.
+  spotify_id:       string | null;
   lastfm_username:  string | null;
   manual_artists:   string[];      // fallback when no Last.fm
   joined_at:        string;

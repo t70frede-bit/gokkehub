@@ -60,10 +60,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const teamHasCaptain = !!teamId && players.some(p => p.team_id === teamId && p.is_captain && !p.is_spectator);
     const becomeCaptain  = !forceSpectator && teamId !== null && !teamHasCaptain;
 
-    // Pull discord id and Last.fm username from session if logged in.
+    // Pull discord id, Last.fm username, and Spotify id from session.
     const session = await getSession(env.SESSIONS, req);
     const discordId      = session?.discord?.id ?? null;
     const lastfmUsername = session?.lastfm?.username ?? null;
+    const spotifyId      = session?.spotify?.id ?? null;
 
     const playerId = crypto.randomUUID();
     await createPlayer(env, {
@@ -76,6 +77,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       is_spectator:     forceSpectator,
       discord_id:       discordId,
       lastfm_username:  lastfmUsername,
+      spotify_id:       spotifyId,
       manual_artists:   [],
     });
 

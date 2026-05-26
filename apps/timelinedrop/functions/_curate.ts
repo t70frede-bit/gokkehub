@@ -84,9 +84,10 @@ export async function buildProfile(env: Env, player: TlPlayer): Promise<PlayerPr
 // Returns the same PlayerProfile shape so downstream scoring + adjacency
 // (Last.fm artist.getSimilar) reuse the existing pipeline unchanged.
 export async function buildSpotifyProfile(
-  env:    Env,
-  player: TlPlayer,
-  roomId: string,
+  env:           Env,
+  player:        TlPlayer,
+  roomId:        string,
+  hostFallback?: { hostId: string; hostSessionId: string | null | undefined },
 ): Promise<PlayerProfile> {
   const empty: PlayerProfile = {
     player, source: "none",
@@ -95,8 +96,29 @@ export async function buildSpotifyProfile(
     trackPlaycounts: new Map(), topTrackKeys: new Set(), recent7d: new Set(),
   };
 
-  // Resolve the player's own refresh token, then their active access token.
-  const refreshToken = await env.SESSIONS.get(`tl:room:${roomId}:player:${player.id}:spotify`);
+  // Resolve the player's own refresh token. The per-player KV stash is
+  // written at join/create time, but if a player linked Spotify AFTER
+  // joining there'd be no stash. For the HOST specifically we have a
+  // second source: room.host_session_id points at their full session
+  // record in KV, which always has the latest refresh token. Use it as
+  // a fallback so the common "host linked Spotify after creating the
+  // room" case still works.
+  const playerKey = `tl:room:${roomId}:player:${player.id}:spotify`;
+  let refreshToken = await env.SESSIONS.get(playerKey);
+  if (!refreshToken && hostFallback && player.id === hostFallback.hostId && hostFallback.hostSessionId) {
+    const raw = await env.SESSIONS.get(hostFallback.hostSessionId);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { spotify?: { refreshToken?: string } };
+        if (parsed.spotify?.refreshToken) {
+          refreshToken = parsed.spotify.refreshToken;
+          // Re-stash on the per-player key so subsequent calls hit the
+          // fast path. 24h TTL matches the session.
+          await env.SESSIONS.put(playerKey, refreshToken, { expirationTtl: 86400 });
+        }
+      } catch { /* malformed session JSON — ignore */ }
+    }
+  }
   if (!refreshToken) {
     // No Spotify auth on file — fall back to manual_artists if any, else empty.
     if ((player.manual_artists?.length ?? 0) > 0) {

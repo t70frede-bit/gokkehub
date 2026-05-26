@@ -167,6 +167,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       is_spectator:     effectiveIsSpectator,
       discord_id:       session?.discord?.id ?? null,
       lastfm_username:  session?.lastfm?.username ?? null,
+      spotify_id:       session?.spotify?.id ?? null,
       manual_artists:   [],
     });
 

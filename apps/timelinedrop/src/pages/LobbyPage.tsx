@@ -687,11 +687,6 @@ export default function LobbyPage() {
               {/* Group taste branch */}
               {settings.songSource === "group-taste" && (
                 <div className="mt-4 flex flex-col gap-4">
-                  {/* Music-coverage indicator — only relevant for group-taste
-                      since playlist mode doesn't read from per-player music
-                      libraries. Tells the host how many lobby members have
-                      Last.fm or manual artists set so they know how rich
-                      the curation pool will be. */}
                   {(() => {
                     const activePlayers = visiblePlayers.filter(p => !p.is_spectator);
                     if (activePlayers.length === 0) return null;
@@ -703,9 +698,9 @@ export default function LobbyPage() {
                           background: allLinked ? "rgba(34,197,94,0.10)" : "rgba(255,255,255,0.04)",
                           border:     `1px solid ${allLinked ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.08)"}`,
                         }}>
-                        <span className="text-base">🎵</span>
+                        <span className="text-base">🎧</span>
                         <p className="text-xs flex-1" style={{ color: allLinked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
-                          <strong>{linked.length} of {activePlayers.length}</strong> players have music linked
+                          <strong>{linked.length} of {activePlayers.length}</strong> players have Last.fm connected
                           {!allLinked && <span> · songs come from those who have</span>}
                         </p>
                       </div>
@@ -774,6 +769,25 @@ export default function LobbyPage() {
                   Players just have to be Spotify-authed at join time. */}
               {settings.songSource === "spotify-taste" && (
                 <div className="mt-4 flex flex-col gap-4">
+                  {(() => {
+                    const activePlayers = visiblePlayers.filter(p => !p.is_spectator);
+                    if (activePlayers.length === 0) return null;
+                    const linked = activePlayers.filter(p => !!p.spotify_id);
+                    const allLinked = linked.length === activePlayers.length;
+                    return (
+                      <div className="px-3 py-2 rounded-md flex items-center gap-2"
+                        style={{
+                          background: allLinked ? "rgba(34,197,94,0.10)" : "rgba(255,255,255,0.04)",
+                          border:     `1px solid ${allLinked ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.08)"}`,
+                        }}>
+                        <span className="text-base">🎵</span>
+                        <p className="text-xs flex-1" style={{ color: allLinked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
+                          <strong>{linked.length} of {activePlayers.length}</strong> players have Spotify connected
+                          {!allLinked && <span> · songs come from those who have</span>}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm font-medium mb-2">Difficulty</p>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
