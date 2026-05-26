@@ -87,7 +87,17 @@ export async function buildSpotifyProfile(
   env:           Env,
   player:        TlPlayer,
   roomId:        string,
-  hostFallback?: { hostId: string; hostSessionId: string | null | undefined },
+  hostFallback?: {
+    hostId:           string;
+    /** Caller's own refresh token (from request cookie). Most reliable
+     *  when the host themselves is triggering curate — bypasses KV
+     *  indirection entirely. Used only when player.id === hostId. */
+    hostRefreshToken?: string;
+    /** KV session ID for the host. Indirect fallback when
+     *  hostRefreshToken isn't available (e.g. background top-up from
+     *  a non-host action). Requires migration 011 to be applied. */
+    hostSessionId?:   string | null;
+  },
 ): Promise<PlayerProfile> {
   const empty: PlayerProfile = {
     player, source: "none",
@@ -96,30 +106,36 @@ export async function buildSpotifyProfile(
     trackPlaycounts: new Map(), topTrackKeys: new Set(), recent7d: new Set(),
   };
 
-  // Resolve the player's own refresh token. The per-player KV stash is
-  // written at join/create time, but if a player linked Spotify AFTER
-  // joining there'd be no stash. For the HOST specifically we have a
-  // second source: room.host_session_id points at their full session
-  // record in KV, which always has the latest refresh token. Use it as
-  // a fallback so the common "host linked Spotify after creating the
-  // room" case still works.
-  const playerKey = `tl:room:${roomId}:player:${player.id}:spotify`;
+  // Resolve the player's refresh token. Layered lookup:
+  //   1. Per-player KV stash  (written at join/create, fast path)
+  //   2. Host-only: caller's own refresh token from the request cookie
+  //      (only the host invokes curate via /start, so this is reliable)
+  //   3. Host-only: read room.host_session_id → KV → session JSON
+  //      (background top-ups, where the caller may not be the host)
+  // Each successful step re-stashes the per-player KV so subsequent
+  // calls hit the fast path.
+  const playerKey  = `tl:room:${roomId}:player:${player.id}:spotify`;
+  const isHost     = !!(hostFallback && player.id === hostFallback.hostId);
   let refreshToken = await env.SESSIONS.get(playerKey);
-  if (!refreshToken && hostFallback && player.id === hostFallback.hostId && hostFallback.hostSessionId) {
+
+  if (!refreshToken && isHost && hostFallback?.hostRefreshToken) {
+    refreshToken = hostFallback.hostRefreshToken;
+    await env.SESSIONS.put(playerKey, refreshToken, { expirationTtl: 86400 });
+  }
+  if (!refreshToken && isHost && hostFallback?.hostSessionId) {
     const raw = await env.SESSIONS.get(hostFallback.hostSessionId);
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as { spotify?: { refreshToken?: string } };
         if (parsed.spotify?.refreshToken) {
           refreshToken = parsed.spotify.refreshToken;
-          // Re-stash on the per-player key so subsequent calls hit the
-          // fast path. 24h TTL matches the session.
           await env.SESSIONS.put(playerKey, refreshToken, { expirationTtl: 86400 });
         }
       } catch { /* malformed session JSON — ignore */ }
     }
   }
   if (!refreshToken) {
+    console.log(`[curate/spotify-taste] no Spotify token for player ${player.id} (host=${isHost}); skipping`);
     // No Spotify auth on file — fall back to manual_artists if any, else empty.
     if ((player.manual_artists?.length ?? 0) > 0) {
       const profile = { ...empty, source: "manual" as const };

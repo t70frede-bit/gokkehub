@@ -91,7 +91,14 @@ async function handleGenerate(req: Request, roomId: string, env: Env, isRefill: 
   const eligible = players.filter(p => !p.is_spectator);
   const profiles: PlayerProfile[] = [];
   if (settings.songSource === "spotify-taste") {
-    const hostFallback = { hostId: room.host_id, hostSessionId: room.host_session_id };
+    // Caller (host or background top-up agent) — pass their refresh
+    // token directly as the most reliable host-profile source. Falls
+    // back to room.host_session_id-via-KV if not present.
+    const hostFallback = {
+      hostId:           room.host_id,
+      hostRefreshToken: refreshToken,
+      hostSessionId:    room.host_session_id,
+    };
     for (const p of eligible) {
       profiles.push(await buildSpotifyProfile(env, p, roomId, hostFallback));
     }
