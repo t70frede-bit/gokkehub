@@ -4,7 +4,7 @@ import { Badge, Button, CopyInviteButton, Input, Modal, Panel, Toggle } from "@g
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy, TlPlaylistCatalogEntry } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
@@ -47,6 +47,12 @@ export default function LobbyPage() {
   const [addingPlaylist, setAddingPlaylist] = useState(false);
   const [playlistError,  setPlaylistError]  = useState<string | null>(null);
   const [playlistMsg,    setPlaylistMsg]    = useState<string | null>(null);
+  const [catalogOpen,    setCatalogOpen]    = useState(false);
+  const [catalog,        setCatalog]        = useState<TlPlaylistCatalogEntry[] | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError,   setCatalogError]   = useState<string | null>(null);
+  const [catalogAddingId,setCatalogAddingId] = useState<number | null>(null);
+  const [catalogGenre,   setCatalogGenre]   = useState<string | null>(null);
   const [starting,       setStarting]       = useState(false);
   const [startError,     setStartError]     = useState<string | null>(null);
   // "Advanced settings" collapse on the host's settings panel
@@ -145,6 +151,56 @@ export default function LobbyPage() {
       setPlaylistError(`Couldn't reach the server: ${msg}`);
     } finally {
       setAddingPlaylist(false);
+    }
+  }
+
+  // Lazy-load the catalog on first modal open. Caches in component state
+  // so re-opens are instant. No realtime — the catalog is admin-curated
+  // and changes infrequently; a hard reload picks up new entries.
+  async function openCatalog() {
+    setCatalogOpen(true);
+    if (catalog !== null) return;
+    setCatalogLoading(true); setCatalogError(null);
+    try {
+      const res = await fetch("/catalog", { credentials: "include" });
+      const data = await res.json().catch(() => ({})) as { items?: TlPlaylistCatalogEntry[]; error?: string };
+      if (!res.ok) { setCatalogError(data.error ?? `HTTP ${res.status}`); return; }
+      setCatalog(data.items ?? []);
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCatalogLoading(false);
+    }
+  }
+
+  // Add a catalog playlist by building the canonical Spotify URL and
+  // calling the same /room/:id/playlist import endpoint the URL-paste
+  // path uses. One round-trip; the server already handles dedupe,
+  // shuffling, and the playlistImports record.
+  async function addCatalogPlaylist(entry: TlPlaylistCatalogEntry) {
+    setCatalogAddingId(entry.id);
+    setPlaylistError(null); setPlaylistMsg(null);
+    try {
+      const url = `https://open.spotify.com/playlist/${entry.spotify_playlist_id}`;
+      const res = await fetch(`/room/${roomId}/playlist`, {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        credentials: "include",
+        body:        JSON.stringify({ url }),
+      });
+      const raw = await res.text();
+      let parsed: { added?: number; total?: number; name?: string; error?: string } = {};
+      try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
+      if (!res.ok) {
+        setPlaylistError(parsed.error ?? `HTTP ${res.status}: ${raw.slice(0, 200)}`);
+        return;
+      }
+      setPlaylistMsg(`Added ${parsed.added ?? 0} songs from "${parsed.name ?? entry.name}" (${parsed.total ?? 0} total)`);
+      setCatalogOpen(false);
+    } catch (err) {
+      setPlaylistError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCatalogAddingId(null);
     }
   }
 
@@ -875,8 +931,24 @@ export default function LobbyPage() {
                   label change. */}
               {settings.songSource === "playlist" && (
                 <div className="mt-4 flex flex-col gap-3">
+                  {/* Primary CTA — browse the curated catalog. URL paste is
+                      the secondary path for hosts who already have a
+                      specific playlist in mind. */}
+                  <button
+                    onClick={openCatalog}
+                    className="w-full text-left rounded-lg px-4 py-3 transition-all border"
+                    style={{
+                      borderColor: "rgba(var(--color-primary-rgb),0.5)",
+                      background:  "rgba(var(--color-primary-rgb),0.10)",
+                      color:       "rgb(var(--color-primary-rgb))",
+                    }}
+                  >
+                    <p className="font-bold">📚 Browse catalog</p>
+                    <p className="text-xs opacity-70 mt-0.5">Curated playlists, tagged by genre + difficulty</p>
+                  </button>
+
                   <div>
-                    <p className="text-sm font-medium mb-2">Spotify playlist URL</p>
+                    <p className="text-sm font-medium mb-2">Or paste a Spotify playlist URL</p>
                     <div className="flex gap-2">
                       <Input
                         value={playlistUrl}
@@ -1164,6 +1236,126 @@ export default function LobbyPage() {
             setEditingArtists(null);
           }}
         />
+      )}
+
+      {/* Playlist catalog browser — lazy-loaded on first open. Filter
+          chips by genre tag, grid of cards. Click a card → adds via the
+          existing /room/:id/playlist endpoint and closes the modal.
+          Per-player effective difficulty deferred to a follow-up; the
+          baseline + the proposed-difficulty hint cover the v1 use case. */}
+      {catalogOpen && (
+        <Modal open onClose={() => setCatalogOpen(false)} maxWidth="720px">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="font-extrabold"
+              style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)" }}>
+              📚 Playlist catalog
+            </h2>
+            {catalog && (
+              <span className="text-xs opacity-60">{catalog.length} playlists</span>
+            )}
+          </div>
+
+          {catalogLoading && <p className="text-sm opacity-60">Loading catalog…</p>}
+          {catalogError   && <p className="text-sm text-red-400">{catalogError}</p>}
+
+          {catalog && catalog.length > 0 && (() => {
+            const allGenres = Array.from(new Set(catalog.flatMap(c => c.genre_tags))).sort();
+            const visible   = catalogGenre
+              ? catalog.filter(c => c.genre_tags.includes(catalogGenre))
+              : catalog;
+            return (
+              <>
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  <button
+                    onClick={() => setCatalogGenre(null)}
+                    className="text-xs px-2.5 py-1 rounded-full"
+                    style={{
+                      background: catalogGenre === null ? "rgba(var(--color-primary-rgb),0.22)" : "rgba(255,255,255,0.04)",
+                      border:     `1px solid rgba(var(--color-primary-rgb),${catalogGenre === null ? 0.5 : 0.15})`,
+                      color:      "rgb(var(--color-primary-rgb))",
+                      fontWeight: catalogGenre === null ? 700 : 400,
+                    }}
+                  >
+                    All ({catalog.length})
+                  </button>
+                  {allGenres.map(g => {
+                    const count = catalog.filter(c => c.genre_tags.includes(g)).length;
+                    const active = catalogGenre === g;
+                    return (
+                      <button
+                        key={g}
+                        onClick={() => setCatalogGenre(active ? null : g)}
+                        className="text-xs px-2.5 py-1 rounded-full"
+                        style={{
+                          background: active ? "rgba(var(--color-primary-rgb),0.22)" : "rgba(255,255,255,0.04)",
+                          border:     `1px solid rgba(var(--color-primary-rgb),${active ? 0.5 : 0.15})`,
+                          color:      "rgb(var(--color-primary-rgb))",
+                          fontWeight: active ? 700 : 400,
+                        }}
+                      >
+                        {g} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[55vh] overflow-y-auto scrollbar-themed pr-1">
+                  {visible.map(entry => {
+                    const adding = catalogAddingId === entry.id;
+                    return (
+                      <div key={entry.id} className="rounded-lg p-3 border"
+                        style={{
+                          borderColor: "rgba(var(--color-primary-rgb),0.25)",
+                          background:  "rgba(var(--surface-raised-rgb),0.5)",
+                        }}>
+                        <div className="flex items-baseline justify-between gap-2 mb-1">
+                          <p className="font-bold text-sm truncate" title={entry.name}>{entry.name}</p>
+                          <span className="text-[10px] uppercase tracking-wider opacity-50 flex-shrink-0">
+                            {entry.owner_name}
+                          </span>
+                        </div>
+                        <p className="text-xs opacity-60 mb-2 line-clamp-2">{entry.description}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                            <span style={{ color: "rgb(var(--color-primary-rgb))" }} title="Baseline difficulty">
+                              {"⭐".repeat(entry.baseline_difficulty)}
+                            </span>
+                            {entry.genre_tags.slice(0, 3).map(t => (
+                              <span key={t} className="px-1.5 py-0.5 rounded-full opacity-70"
+                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => addCatalogPlaylist(entry)}
+                            disabled={adding}
+                            className="text-xs font-bold px-2.5 py-1 rounded disabled:opacity-50 flex-shrink-0"
+                            style={{
+                              background: "rgba(var(--color-primary-rgb),0.18)",
+                              color:      "rgb(var(--color-primary-rgb))",
+                              border:     "1px solid rgba(var(--color-primary-rgb),0.4)",
+                            }}
+                          >
+                            {adding ? "Adding…" : "+ Add"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
+
+          <button
+            onClick={() => setCatalogOpen(false)}
+            className="mt-4 w-full text-center"
+            style={{ fontSize: "var(--text-sm)", color: "rgb(var(--text-muted-rgb))" }}
+          >
+            Close
+          </button>
+        </Modal>
       )}
     </div>
   );

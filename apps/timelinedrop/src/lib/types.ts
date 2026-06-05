@@ -265,6 +265,22 @@ export interface TlPlayer {
 
 export type Confidence = "known" | "likely" | "stretch" | "wild";
 
+export interface TlPlaylistCatalogEntry {
+  id:                  number;
+  name:                string;
+  description:         string | null;
+  spotify_playlist_id: string;
+  owner_name:          string | null;
+  genre_tags:          string[];
+  era_tags:            string[];
+  baseline_difficulty: number;       // 1-5
+  track_count:         number | null;
+  added_by:            string;
+  added_at:            string;
+  last_validated_at:   string | null;
+  is_active:           boolean;
+}
+
 export interface TlShopPing {
   id:          number;
   room_id:     string;
