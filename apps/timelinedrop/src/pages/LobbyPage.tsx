@@ -99,6 +99,16 @@ export default function LobbyPage() {
 
   const teamSwap = settings.teamSwapEnabled || isHost;
 
+  // True when the room's host has linked Spotify (spotify_id populated at
+  // join/create via migration 027). Drives whether Spotify-dependent
+  // settings — playlist mode, spotify-taste mode, the in-browser Spotify
+  // SDK audio option — show up at all. The host needs Spotify for
+  // playback to work in those modes; the API import flow needs their
+  // OAuth token too. Without it, exposing the options just leads to
+  // mysterious failures at Start time.
+  const hostPlayer    = players.find(p => p.is_host);
+  const hostHasSpotify = !!hostPlayer?.spotify_id;
+
   // Visible players (apply hideSpectators when configured)
   const visiblePlayers = players.filter(p => !(settings.hideSpectators && !isHost && p.is_spectator && p.id !== myPlayerId));
 
@@ -669,20 +679,36 @@ export default function LobbyPage() {
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-3">Songs</h2>
 
-              {/* Source toggle — three modes:
-                  • Last.fm taste  : per-player Last.fm history (legacy)
-                  • Spotify taste  : per-player Spotify /me/top + Last.fm
-                                     adjacency (no Last.fm account needed)
-                  • Spotify playlist: host curates a fixed playlist */}
+              {/* Source toggle. Spotify options drop off when the host
+                  hasn't linked Spotify on their profile — the import +
+                  playback paths both need their OAuth token. The lobby
+                  surfaces a small hint below the toggle when this kicks
+                  in so the host knows why options vanished. */}
               <Toggle
-                options={[
+                options={hostHasSpotify ? [
                   { value: "group-taste",   label: "🎧 Last.fm taste" },
                   { value: "spotify-taste", label: "🎵 Spotify taste" },
                   { value: "playlist",      label: "🔗 Spotify playlist" },
+                ] : [
+                  { value: "group-taste",   label: "🎧 Last.fm taste" },
                 ]}
-                value={settings.songSource}
+                value={hostHasSpotify ? settings.songSource : "group-taste"}
                 onChange={v => saveSettings({ songSource: v as SongSource })}
               />
+              {!hostHasSpotify && (
+                <p className="text-xs mt-2 px-3 py-2 rounded-md"
+                  style={{
+                    background: "rgba(220,160,0,0.10)",
+                    border:     "1px solid rgba(220,160,0,0.35)",
+                    color:      "rgb(220,160,0)",
+                  }}>
+                  Spotify-based song sources are hidden because the host hasn't linked Spotify.
+                  Link it on{" "}
+                  <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline font-semibold">
+                    your profile
+                  </a> to unlock them. (Spotify integration is in closed testing — only allowlisted accounts can link.)
+                </p>
+              )}
 
               {/* Group taste branch */}
               {settings.songSource === "group-taste" && (
@@ -943,10 +969,29 @@ export default function LobbyPage() {
                   { value: "browser",            label: "🎵 Spotify (Local audio)" },
                   { value: "discord-bot",        label: "🤖 Discord bot" },
                   { value: "all-clients-stream", label: "🎧 YouTube (Shared audio)" },
-                ] as const).filter(o => !(gamemastering && o.value === "discord-bot"))}
+                ] as const).filter(o => {
+                  // Discord-bot hidden in gamemaster (no second human).
+                  if (gamemastering && o.value === "discord-bot") return false;
+                  // Spotify SDK playback needs the host to be Spotify-
+                  // linked; otherwise the SDK init silently fails for
+                  // every player.
+                  if (!hostHasSpotify && o.value === "browser") return false;
+                  return true;
+                })}
                 value={settings.audioMode}
                 onChange={v => saveSettings({ audioMode: v as AudioMode })}
               />
+              {!hostHasSpotify && (
+                <p className="text-xs mt-2 px-3 py-2 rounded-md"
+                  style={{
+                    background: "rgba(220,160,0,0.10)",
+                    border:     "1px solid rgba(220,160,0,0.35)",
+                    color:      "rgb(220,160,0)",
+                  }}>
+                  Spotify SDK playback is hidden because the host hasn't linked Spotify.
+                  Discord-bot and YouTube modes don't need Spotify at all.
+                </p>
+              )}
               {settings.audioMode === "browser" && (
                 <p className="text-xs mt-3 px-3 py-2 rounded-md"
                   style={{

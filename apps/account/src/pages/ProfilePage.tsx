@@ -252,7 +252,8 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/spotify"; }}
           onDisconnect={() => handleDisconnect("spotify")}
           color="#1db954"
-          description="Give GokkeHub access to your music taste"
+          betaBadge="Closed testing"
+          description="Allowlisted accounts only — ask the host to add yours"
           scopeWarning={(() => {
             if (!session.linked.spotify) return undefined;
             const required = ["streaming", "playlist-read-private", "user-modify-playback-state", "user-top-read"];
@@ -411,9 +412,13 @@ interface LinkedAccountRowProps {
   color: string;
   description: string;
   scopeWarning?: string;
+  /** When set, renders a small amber "Closed testing" pill next to the
+   *  account name — used to telegraph Spotify's 5/25-user dev allowlist
+   *  before a user wastes time trying to link and seeing a silent fail. */
+  betaBadge?: string;
 }
 
-function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color, description, scopeWarning }: LinkedAccountRowProps) {
+function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconnect, color, description, scopeWarning, betaBadge }: LinkedAccountRowProps) {
   return (
     <Panel variant="bare">
       <div className="flex items-center gap-4 p-4">
@@ -424,7 +429,22 @@ function LinkedAccountRow({ name, icon, linked, disconnecting, onLink, onDisconn
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>{name}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-medium" style={{ color: "rgb(var(--text-primary-rgb))" }}>{name}</p>
+            {betaBadge && (
+              <span
+                className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{
+                  background: "rgba(220,160,0,0.16)",
+                  border:     "1px solid rgba(220,160,0,0.45)",
+                  color:      "rgb(220,160,0)",
+                }}
+                title="Spotify is in Closed Testing — only allowlisted Spotify accounts can link until Spotify approves the app for wider access."
+              >
+                {betaBadge}
+              </span>
+            )}
+          </div>
           <p className="text-sm" style={{ color: scopeWarning ? "rgb(220,160,0)" : linked ? "rgba(34,197,94,0.85)" : "rgb(var(--text-muted-rgb))" }}>
             {scopeWarning ?? (linked ? "Connected" : description)}
           </p>
