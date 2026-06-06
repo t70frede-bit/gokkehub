@@ -16,7 +16,7 @@ import type { SpotifyTrack, TlRoomSettings, TlPlaylistCatalogEntry } from "../..
 //     subrequests so we stay under Cloudflare's 50-per-request limit.
 //   • spotify_playlist_id (legacy): forwards to the existing /playlist
 //     endpoint's flow — kept as a fallback, not exercised by current
---     catalog seeds (all multi-decade hand-encoded after 029).
+//     catalog seeds (all multi-decade hand-encoded after 029).
 //
 // Reuses the same playlistImports + shuffle-unplayed-tail logic the
 // URL-paste path uses, so add/remove behaves identically.
