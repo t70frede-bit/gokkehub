@@ -55,8 +55,22 @@ export async function getTeams(env: Env, roomId: string): Promise<TlTeam[]> {
 }
 
 export async function createTeam(env: Env, data: Partial<TlTeam>): Promise<TlTeam> {
-  const rows = await req<TlTeam>(env, "POST", "tl_teams", "", data);
-  return rows[0];
+  try {
+    const rows = await req<TlTeam>(env, "POST", "tl_teams", "", data);
+    return rows[0];
+  } catch (err) {
+    // Same defensive retry pattern as createPlayer — drop the color
+    // column (migration 023) if it doesn't exist on the operator's DB.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (data.color !== undefined && /\bcolor\b/.test(msg)) {
+      console.warn("[createTeam] color column missing — run migration 023. Retrying without it.");
+      const { color, ...without } = data;
+      void color;
+      const rows = await req<TlTeam>(env, "POST", "tl_teams", "", without);
+      return rows[0];
+    }
+    throw err;
+  }
 }
 
 export async function updateTeam(env: Env, teamId: number, data: Partial<TlTeam>): Promise<void> {
@@ -70,8 +84,25 @@ export async function getPlayers(env: Env, roomId: string): Promise<TlPlayer[]> 
 }
 
 export async function createPlayer(env: Env, data: Partial<TlPlayer>): Promise<TlPlayer> {
-  const rows = await req<TlPlayer>(env, "POST", "tl_players", "", data);
-  return rows[0];
+  try {
+    const rows = await req<TlPlayer>(env, "POST", "tl_players", "", data);
+    return rows[0];
+  } catch (err) {
+    // Defensive retry for forward-compat columns the operator may not
+    // have migrated yet (currently: spotify_id from migration 027). If
+    // the insert fails on an unknown column, drop the most recently
+    // added optional columns and retry. Logs which one was missing so
+    // the operator sees what migration to run.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (data.spotify_id !== undefined && /spotify_id/.test(msg)) {
+      console.warn("[createPlayer] spotify_id column missing — run migration 027. Retrying without it.");
+      const { spotify_id, ...without } = data;
+      void spotify_id;
+      const rows = await req<TlPlayer>(env, "POST", "tl_players", "", without);
+      return rows[0];
+    }
+    throw err;
+  }
 }
 
 export async function updatePlayer(env: Env, playerId: string, data: Partial<TlPlayer>): Promise<void> {

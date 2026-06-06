@@ -90,6 +90,22 @@ export default function LobbyPage() {
     return () => setHeaderControls(DEFAULT_HEADER_CONTROLS);
   }, [stateLoaded, streamerMode, gamemasterMode, setHeaderControls]);
 
+  // Auto-correct a stuck Spotify SDK audio mode when host has no Spotify
+  // (e.g. host disconnected after room create). Lives ABOVE the early
+  // return so the hook count is stable across renders.
+  const meIsHost          = state?.myPlayer?.is_host ?? false;
+  const hostHasSpotifyEff = !!state?.players.find(p => p.is_host)?.spotify_id;
+  const audioModeEff      = state?.room.settings?.audioMode ?? "browser";
+  useEffect(() => {
+    if (!stateLoaded) return;
+    if (!meIsHost) return;
+    if (hostHasSpotifyEff) return;
+    if (audioModeEff !== "browser") return;
+    void saveSettings({ audioMode: "all-clients-stream" });
+  // saveSettings is stable enough; we want this to fire on the gate flipping.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateLoaded, meIsHost, hostHasSpotifyEff, audioModeEff]);
+
   if (error)  return <Centered>Error: {error}</Centered>;
   if (!state) return <Centered>Loading…</Centered>;
 
@@ -114,20 +130,6 @@ export default function LobbyPage() {
   // mysterious failures at Start time.
   const hostPlayer    = players.find(p => p.is_host);
   const hostHasSpotify = !!hostPlayer?.spotify_id;
-
-  // Auto-correct a stuck Spotify SDK audio mode when host has no Spotify
-  // (e.g. host disconnected after room create, or admin-flipped the
-  // setting in a way that landed here). Silently re-saves to a viable
-  // YouTube mode. Runs only for the host, only when the gate would
-  // otherwise leave them in an unplayable state.
-  useEffect(() => {
-    if (!isHost) return;
-    if (hostHasSpotify) return;
-    if (settings.audioMode !== "browser") return;
-    void saveSettings({ audioMode: gamemastering ? "all-clients-stream" : "all-clients-stream" });
-  // saveSettings is stable; we want this to fire on the gate flipping.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, hostHasSpotify, settings.audioMode, gamemastering]);
 
   // Visible players (apply hideSpectators when configured)
   const visiblePlayers = players.filter(p => !(settings.hideSpectators && !isHost && p.is_spectator && p.id !== myPlayerId));
