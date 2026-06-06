@@ -62,7 +62,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const entry = rows[0];
     if (!entry) return json({ error: "Catalog entry not found" }, 404, req);
 
-    // Resolve host's Spotify access token — needed for searchTrackUri.
+    if (!entry.track_list || entry.track_list.length === 0) {
+      return json({ error: "Catalog entry has no track list to import" }, 400, req);
+    }
+
+    // Resolve host's Spotify token if available — used to enrich each
+    // track with the canonical Spotify URI + cover art. NOT required:
+    // when the host has no Spotify (or the audio mode is YouTube-based),
+    // the bot resolves playback from track.name + track.artist at round
+    // time, and the catalog year is authoritative anyway.
     const requestSession = await getSession(env.SESSIONS, req);
     let refreshToken = requestSession?.spotify?.refreshToken;
     if (!refreshToken && room.host_session_id) {
@@ -74,34 +82,60 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         } catch { /* malformed — ignore */ }
       }
     }
-    if (!refreshToken) {
-      return json({ error: "Host needs Spotify linked to import catalog playlists" }, 400, req);
+    let accessToken: string | null = null;
+    if (refreshToken) {
+      accessToken = await getActiveHostToken(env, refreshToken);
     }
-    const accessToken = await getActiveHostToken(env, refreshToken);
-    if (!accessToken) return json({ error: "Could not refresh Spotify token" }, 500, req);
 
-    // Track-list mode (the only mode current seeds use).
-    if (!entry.track_list || entry.track_list.length === 0) {
-      return json({ error: "Catalog entry has no track list to import" }, 400, req);
+    // Browser/SDK audio mode REQUIRES a real Spotify URI; YouTube modes
+    // can play from artist+title strings the bot YouTube-searches at
+    // round time. Refuse only when the host has chosen Spotify SDK
+    // playback without a Spotify session.
+    const audioMode = room.settings?.audioMode ?? "browser";
+    if (!accessToken && audioMode === "browser") {
+      return json({
+        error: "Spotify SDK playback needs the host's Spotify account. Switch to Discord-bot or YouTube audio mode, or link Spotify.",
+      }, 400, req);
     }
 
     const imported: SpotifyTrack[] = [];
-    let attempts = 0;
-    for (const t of entry.track_list) {
-      if (attempts >= MAX_SPOTIFY_LOOKUPS) break;
-      attempts++;
-      const hit = await searchTrackUri(accessToken, t.artist, t.title);
-      if (hit) {
-        // Override Spotify's release year with the curated one — Spotify's
-        // release_date can drift on compilations / remasters. The catalog
-        // year is what the curator vetted, so it wins for placement.
-        imported.push({ ...hit, releaseYear: t.year });
+    if (accessToken) {
+      // Spotify-enriched path: resolve a real URI per track. Cap on
+      // subrequests + small delay to stay under Cloudflare's 50-per-
+      // request budget for big catalog lists.
+      let attempts = 0;
+      for (const t of entry.track_list) {
+        if (attempts >= MAX_SPOTIFY_LOOKUPS) break;
+        attempts++;
+        const hit = await searchTrackUri(accessToken, t.artist, t.title);
+        if (hit) {
+          // Override Spotify's release year with the curated one — Spotify's
+          // release_date can drift on compilations / remasters. The catalog
+          // year is what the curator vetted, so it wins for placement.
+          imported.push({ ...hit, releaseYear: t.year });
+        }
+        if (SEARCH_DELAY_MS > 0) await new Promise(r => setTimeout(r, SEARCH_DELAY_MS));
       }
-      if (SEARCH_DELAY_MS > 0) await new Promise(r => setTimeout(r, SEARCH_DELAY_MS));
-    }
-
-    if (imported.length === 0) {
-      return json({ error: "No tracks matched on Spotify — check the catalog entry" }, 400, req);
+      if (imported.length === 0) {
+        return json({ error: "No tracks matched on Spotify — check the catalog entry" }, 400, req);
+      }
+    } else {
+      // No-Spotify fallback: synthesise SpotifyTrack-shaped rows from
+      // catalog metadata. ID is deterministic across rooms
+      // (catalog-{catalogId}-{index}) so per-track stats aggregate
+      // correctly even without Spotify enrichment. coverUrl is empty —
+      // the timeline rail already falls back to a grey placeholder.
+      entry.track_list.forEach((t, i) => {
+        imported.push({
+          id:          `catalog-${entry.id}-${i}`,
+          name:        t.title,
+          artist:      t.artist,
+          releaseYear: t.year,
+          coverUrl:    "",
+          durationMs:  0,
+          uri:         "",
+        } as SpotifyTrack);
+      });
     }
 
     // Merge into pool with the same shuffle-unplayed-tail approach the

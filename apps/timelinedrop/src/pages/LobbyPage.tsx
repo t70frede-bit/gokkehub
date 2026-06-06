@@ -115,6 +115,20 @@ export default function LobbyPage() {
   const hostPlayer    = players.find(p => p.is_host);
   const hostHasSpotify = !!hostPlayer?.spotify_id;
 
+  // Auto-correct a stuck Spotify SDK audio mode when host has no Spotify
+  // (e.g. host disconnected after room create, or admin-flipped the
+  // setting in a way that landed here). Silently re-saves to a viable
+  // YouTube mode. Runs only for the host, only when the gate would
+  // otherwise leave them in an unplayable state.
+  useEffect(() => {
+    if (!isHost) return;
+    if (hostHasSpotify) return;
+    if (settings.audioMode !== "browser") return;
+    void saveSettings({ audioMode: gamemastering ? "all-clients-stream" : "all-clients-stream" });
+  // saveSettings is stable; we want this to fire on the gate flipping.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, hostHasSpotify, settings.audioMode, gamemastering]);
+
   // Visible players (apply hideSpectators when configured)
   const visiblePlayers = players.filter(p => !(settings.hideSpectators && !isHost && p.is_spectator && p.id !== myPlayerId));
 
@@ -747,11 +761,12 @@ export default function LobbyPage() {
                 options={hostHasSpotify ? [
                   { value: "group-taste",   label: "🎧 Last.fm taste" },
                   { value: "spotify-taste", label: "🎵 Spotify taste" },
-                  { value: "playlist",      label: "🔗 Spotify playlist" },
+                  { value: "playlist",      label: "📚 Playlist" },
                 ] : [
                   { value: "group-taste",   label: "🎧 Last.fm taste" },
+                  { value: "playlist",      label: "📚 Playlist" },
                 ]}
-                value={hostHasSpotify ? settings.songSource : "group-taste"}
+                value={settings.songSource}
                 onChange={v => saveSettings({ songSource: v as SongSource })}
               />
 
@@ -936,19 +951,24 @@ export default function LobbyPage() {
                     <p className="text-xs opacity-70 mt-0.5">Curated playlists, tagged by genre + difficulty</p>
                   </button>
 
-                  <div>
-                    <p className="text-sm font-medium mb-2">Or paste a Spotify playlist URL</p>
-                    <div className="flex gap-2">
-                      <Input
-                        value={playlistUrl}
-                        onChange={e => setPlaylistUrl(e.target.value)}
-                        placeholder="https://open.spotify.com/playlist/…"
-                        className="flex-1"
-                        onKeyDown={e => e.key === "Enter" && addPlaylist()}
-                      />
-                      <Button onClick={addPlaylist} loading={addingPlaylist} size="sm" variant="ghost">Add</Button>
+                  {/* URL paste path needs Spotify (the source URL is itself
+                      a Spotify playlist). Hide silently when host has no
+                      Spotify — catalog above works without it. */}
+                  {hostHasSpotify && (
+                    <div>
+                      <p className="text-sm font-medium mb-2">Or paste a Spotify playlist URL</p>
+                      <div className="flex gap-2">
+                        <Input
+                          value={playlistUrl}
+                          onChange={e => setPlaylistUrl(e.target.value)}
+                          placeholder="https://open.spotify.com/playlist/…"
+                          className="flex-1"
+                          onKeyDown={e => e.key === "Enter" && addPlaylist()}
+                        />
+                        <Button onClick={addPlaylist} loading={addingPlaylist} size="sm" variant="ghost">Add</Button>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {playlistError && <p className="text-sm text-red-400">{playlistError}</p>}
                   {playlistMsg   && <p className="text-sm text-green-400">{playlistMsg}</p>}
