@@ -108,6 +108,39 @@ export async function searchManyWithDelay(
   return found;
 }
 
+// ── iTunes cover-art lookup ────────────────────────────────────────────────
+// Free, no-auth Apple endpoint that returns track metadata + a small
+// (100×100) artwork URL. We bump the size by string-substitution to get
+// a higher-res variant (Apple's CDN serves whatever size you ask for).
+// Used to fill in cover art for catalog playlists when the host has no
+// Spotify session — without Spotify search we have no other URL source.
+//
+// Subrequest budget: 1 per track. Caller should cap to leave headroom
+// for the room read + pool write.
+
+export async function lookupItunesCover(
+  artist: string,
+  title:  string,
+): Promise<string | null> {
+  const q = encodeURIComponent(`${artist} ${title}`.slice(0, 80));
+  const url = `https://itunes.apple.com/search?term=${q}&entity=song&limit=1&media=music`;
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "musix-gokkehub/1.0" } });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      resultCount?: number;
+      results?: Array<{ artworkUrl100?: string }>;
+    };
+    const raw = data.results?.[0]?.artworkUrl100;
+    if (!raw) return null;
+    // Bump resolution from 100×100 to 300×300 — Apple's CDN serves
+    // arbitrary sizes via the URL pattern, no extra request.
+    return raw.replace(/\/100x100bb\.(jpg|png)$/i, "/300x300bb.$1");
+  } catch {
+    return null;
+  }
+}
+
 // ── /me endpoints (user-scoped) ─────────────────────────────────────────────
 // These power the "spotify-taste" curation source: each player's own top
 // artists / tracks / recently-played feed the candidate pool. They require

@@ -3,7 +3,7 @@ import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import { getRoom, updateRoom } from "../../_supabase";
-import { searchTrackUri, getActiveHostToken } from "../../_spotify";
+import { searchTrackUri, getActiveHostToken, lookupItunesCover } from "../../_spotify";
 import type { SpotifyTrack, TlRoomSettings, TlPlaylistCatalogEntry } from "../../../src/lib/types";
 
 // POST /room/:id/catalog-import { catalog_id }
@@ -23,6 +23,11 @@ import type { SpotifyTrack, TlRoomSettings, TlPlaylistCatalogEntry } from "../..
 
 const MAX_SPOTIFY_LOOKUPS = 40;
 const SEARCH_DELAY_MS     = 30;
+// Cap iTunes lookups so a 50-track catalog stays under Cloudflare's
+// 50-subrequest budget (room read + catalog read + pool write + ~40
+// iTunes = headroom for jitter). Tracks past the cap fall back to
+// the grey-square placeholder; not great but not broken.
+const MAX_ITUNES_LOOKUPS  = 40;
 
 interface Body {
   player_id:  string;
@@ -123,11 +128,32 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       // No-Spotify fallback: synthesise SpotifyTrack-shaped rows from
       // catalog metadata. ID is deterministic across rooms
       // (catalog-{catalogId}-{index}) so per-track stats aggregate
-      // correctly even without Spotify enrichment. coverUrl is empty —
-      // the timeline rail already falls back to a grey placeholder.
-      entry.track_list.forEach((t, i) => {
+      // correctly even without Spotify enrichment.
+      //
+      // Cover art comes from iTunes Search — free, no auth, returns
+      // an album-art URL we can resize via path substitution. Lookups
+      // run in parallel up to MAX_ITUNES_LOOKUPS to stay under
+      // Cloudflare's 50-subrequest budget; the rest fall back to the
+      // grey-square placeholder the timeline rail already handles.
+      const toLookup = entry.track_list.slice(0, MAX_ITUNES_LOOKUPS);
+      const rest    = entry.track_list.slice(MAX_ITUNES_LOOKUPS);
+      const covers  = await Promise.all(
+        toLookup.map(t => lookupItunesCover(t.artist, t.title)),
+      );
+      toLookup.forEach((t, i) => {
         imported.push({
           id:          `catalog-${entry.id}-${i}`,
+          name:        t.title,
+          artist:      t.artist,
+          releaseYear: t.year,
+          coverUrl:    covers[i] ?? "",
+          durationMs:  0,
+          uri:         "",
+        } as SpotifyTrack);
+      });
+      rest.forEach((t, i) => {
+        imported.push({
+          id:          `catalog-${entry.id}-${i + MAX_ITUNES_LOOKUPS}`,
           name:        t.title,
           artist:      t.artist,
           releaseYear: t.year,
