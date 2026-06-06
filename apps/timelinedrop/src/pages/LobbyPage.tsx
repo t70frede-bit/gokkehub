@@ -178,24 +178,27 @@ export default function LobbyPage() {
   // path uses. One round-trip; the server already handles dedupe,
   // shuffling, and the playlistImports record.
   async function addCatalogPlaylist(entry: TlPlaylistCatalogEntry) {
+    if (!myPlayerId) return;
     setCatalogAddingId(entry.id);
     setPlaylistError(null); setPlaylistMsg(null);
     try {
-      const url = `https://open.spotify.com/playlist/${entry.spotify_playlist_id}`;
-      const res = await fetch(`/room/${roomId}/playlist`, {
+      const res = await fetch(`/room/${roomId}/catalog-import`, {
         method:      "POST",
         headers:     { "Content-Type": "application/json" },
         credentials: "include",
-        body:        JSON.stringify({ url }),
+        body:        JSON.stringify({ player_id: myPlayerId, catalog_id: entry.id }),
       });
       const raw = await res.text();
-      let parsed: { added?: number; total?: number; name?: string; error?: string } = {};
+      let parsed: { added?: number; total?: number; name?: string; matched?: number; attempted?: number; error?: string } = {};
       try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
       if (!res.ok) {
         setPlaylistError(parsed.error ?? `HTTP ${res.status}: ${raw.slice(0, 200)}`);
         return;
       }
-      setPlaylistMsg(`Added ${parsed.added ?? 0} songs from "${parsed.name ?? entry.name}" (${parsed.total ?? 0} total)`);
+      const matchedNote = parsed.matched && parsed.attempted && parsed.matched < parsed.attempted
+        ? ` (${parsed.matched} of ${parsed.attempted} matched on Spotify)`
+        : "";
+      setPlaylistMsg(`Added ${parsed.added ?? 0} songs from "${parsed.name ?? entry.name}"${matchedNote}`);
       setCatalogOpen(false);
     } catch (err) {
       setPlaylistError(err instanceof Error ? err.message : String(err));
@@ -751,20 +754,6 @@ export default function LobbyPage() {
                 value={hostHasSpotify ? settings.songSource : "group-taste"}
                 onChange={v => saveSettings({ songSource: v as SongSource })}
               />
-              {!hostHasSpotify && (
-                <p className="text-xs mt-2 px-3 py-2 rounded-md"
-                  style={{
-                    background: "rgba(220,160,0,0.10)",
-                    border:     "1px solid rgba(220,160,0,0.35)",
-                    color:      "rgb(220,160,0)",
-                  }}>
-                  Spotify-based song sources are hidden because the host hasn't linked Spotify.
-                  Link it on{" "}
-                  <a href="https://account.gokkehub.com/profile" target="_blank" rel="noreferrer" className="underline font-semibold">
-                    your profile
-                  </a> to unlock them. (Spotify integration is in closed testing — only allowlisted accounts can link.)
-                </p>
-              )}
 
               {/* Group taste branch */}
               {settings.songSource === "group-taste" && (
@@ -1053,17 +1042,6 @@ export default function LobbyPage() {
                 value={settings.audioMode}
                 onChange={v => saveSettings({ audioMode: v as AudioMode })}
               />
-              {!hostHasSpotify && (
-                <p className="text-xs mt-2 px-3 py-2 rounded-md"
-                  style={{
-                    background: "rgba(220,160,0,0.10)",
-                    border:     "1px solid rgba(220,160,0,0.35)",
-                    color:      "rgb(220,160,0)",
-                  }}>
-                  Spotify SDK playback is hidden because the host hasn't linked Spotify.
-                  Discord-bot and YouTube modes don't need Spotify at all.
-                </p>
-              )}
               {settings.audioMode === "browser" && (
                 <p className="text-xs mt-3 px-3 py-2 rounded-md"
                   style={{
@@ -1320,6 +1298,11 @@ export default function LobbyPage() {
                             <span style={{ color: "rgb(var(--color-primary-rgb))" }} title="Baseline difficulty">
                               {"⭐".repeat(entry.baseline_difficulty)}
                             </span>
+                            {entry.track_list && (
+                              <span className="opacity-60" title="Songs in the curated list">
+                                · {entry.track_list.length} tracks
+                              </span>
+                            )}
                             {entry.genre_tags.slice(0, 3).map(t => (
                               <span key={t} className="px-1.5 py-0.5 rounded-full opacity-70"
                                 style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>

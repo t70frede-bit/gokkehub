@@ -265,11 +265,23 @@ export interface TlPlayer {
 
 export type Confidence = "known" | "likely" | "stretch" | "wild";
 
+export interface CatalogTrackRef {
+  artist: string;
+  title:  string;
+  year:   number;
+}
+
 export interface TlPlaylistCatalogEntry {
   id:                  number;
   name:                string;
   description:         string | null;
-  spotify_playlist_id: string;
+  /** Migration 029 — nullable. Catalog entries can carry either a
+   *  Spotify playlist ID (legacy) OR a hand-encoded track_list. */
+  spotify_playlist_id: string | null;
+  /** Migration 029 — array of {artist, title, year} tuples. At import
+   *  time the server resolves Spotify URIs via searchTrackUri for
+   *  each entry. Wins over spotify_playlist_id when both are set. */
+  track_list:          CatalogTrackRef[] | null;
   owner_name:          string | null;
   genre_tags:          string[];
   era_tags:            string[];
