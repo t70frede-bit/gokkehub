@@ -7,7 +7,7 @@ import { kr, formatDateTime } from "@/lib/format";
 import { mobilePayLink, trackingRef, MOBILEPAY_NUMBER } from "@/lib/mobilepay";
 import type { Transaction } from "@/lib/types";
 
-const QUICK = [100, 200, 500, 1000];
+const QUICK = [5, 10, 25, 50];
 
 export default function TopUpPage() {
   const { profile } = useAuth();

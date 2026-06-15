@@ -16,8 +16,9 @@ export default function GamesPage() {
   const usernames = useUsernames();
 
   const [open, setOpen] = useState(false);
-  const [min, setMin] = useState(50);
-  const [max, setMax] = useState(500);
+  // Default placeholders only — the host can change these before creating.
+  const [min, setMin] = useState(25);
+  const [max, setMax] = useState(50);
   const [rebuys, setRebuys] = useState<"on" | "off">("on");
   const [busy, setBusy] = useState(false);
 
