@@ -1,0 +1,11 @@
+/**
+ * poker (poker.gokkehub.com)
+ * Inherits the platform v0.2 "vinyl liner notes" defaults (warm charcoal +
+ * amber accent). A whisper of green in the background tint nods to the felt
+ * without breaking the single-accent rule — the amber stays the only accent.
+ */
+:root {
+  --bg-tint-1: #17150F;
+  --bg-tint-2: #110F0A;
+  --bg-tint-3: #201D14;
+}

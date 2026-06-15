@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The shared base.css adds 20px body padding (sized for desktop game pages).
+   Poker is a phone-first app with its own header + bottom nav, so we zero it
+   and let the app shell own all spacing. */
+body {
+  padding: 0;
+  /* Respect iOS safe areas when installed to the home screen. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Numbers (balances, codes) read better tabular + monospace. */
+.tnum { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); }
+
+/* Hide scrollbars on horizontal chip rows but keep them scrollable. */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

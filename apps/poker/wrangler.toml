@@ -1,0 +1,8 @@
+# Cloudflare Pages config for the poker app (poker.gokkehub.com).
+# Mirrors the other GokkeHub apps: a static SPA built to ./dist.
+# This app has NO Pages Functions — all backend logic lives in Supabase
+# (RPCs + an Edge Function), so no [vars] / Supabase secrets are needed here.
+# The client reads VITE_SUPABASE_* at BUILD time (see the deploy workflow).
+name = "poker"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-01-01"
