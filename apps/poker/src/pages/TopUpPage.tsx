@@ -4,7 +4,7 @@ import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { kr, formatDateTime } from "@/lib/format";
-import { mobilePayLink, trackingRef, MOBILEPAY_NUMBER } from "@/lib/mobilepay";
+import { mobilePayBoxLink, trackingRef, MOBILEPAY_BOX_URL } from "@/lib/mobilepay";
 import type { Transaction } from "@/lib/types";
 
 const QUICK = [5, 10, 25, 50];
@@ -63,21 +63,30 @@ export default function TopUpPage() {
             {kr(created.amount)}
           </p>
 
-          <div className="mt-5 p-4 rounded-lg text-center" style={{ background: "rgb(var(--surface-input-rgb))", border: "1px dashed rgb(var(--border-rgb))" }}>
-            <p className="text-xs uppercase font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>Tracking code</p>
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(ref).then(
+                () => addToast("Tracking code copied", "success"),
+                () => addToast("Couldn't copy — type it manually", "error"),
+              );
+            }}
+            className="w-full mt-5 p-4 rounded-lg text-center transition-all active:scale-[0.99]"
+            style={{ background: "rgb(var(--surface-input-rgb))", border: "1px dashed rgb(var(--border-rgb))" }}
+          >
+            <p className="text-xs uppercase font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>Tracking code · tap to copy</p>
             <p className="mono font-bold mt-1" style={{ fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>{ref}</p>
-            <p className="text-xs mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              Put this in the MobilePay comment so the house can match your payment.
+            <p className="text-xs mt-1" style={{ color: "rgb(var(--color-warning-rgb))" }}>
+              Write this in the MobilePay message so the house can match your payment.
             </p>
-          </div>
+          </button>
 
-          {MOBILEPAY_NUMBER ? (
-            <a href={mobilePayLink(created.amount, created.tracking_code!)} className="block mt-5">
+          {MOBILEPAY_BOX_URL ? (
+            <a href={mobilePayBoxLink(created.amount, created.tracking_code!)} target="_blank" rel="noreferrer" className="block mt-4">
               <Button fullWidth>Open MobilePay</Button>
             </a>
           ) : (
-            <p className="text-sm mt-5 text-center" style={{ color: "rgb(var(--color-danger-rgb))" }}>
-              MobilePay number not configured (VITE_MOBILEPAY_NUMBER).
+            <p className="text-sm mt-4 text-center" style={{ color: "rgb(var(--color-danger-rgb))" }}>
+              MobilePay box not configured (VITE_MOBILEPAY_BOX_URL).
             </p>
           )}
 

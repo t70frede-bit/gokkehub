@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_TRACKING_PREFIX: string;
   /** One-time site access code. Defaults to "PokernightAtGokkes" if unset. */
   readonly VITE_SITE_CODE: string;
+  /** MobilePay Box pay-in link. Defaults to the group's box if unset. */
+  readonly VITE_MOBILEPAY_BOX_URL: string;
 }
 
 interface ImportMeta {

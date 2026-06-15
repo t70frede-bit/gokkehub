@@ -186,6 +186,7 @@ jobs:
           VITE_MOBILEPAY_NUMBER:  ${{ secrets.POKER_MOBILEPAY_NUMBER }}
           VITE_TRACKING_PREFIX:   ${{ secrets.POKER_TRACKING_PREFIX }}
           VITE_SITE_CODE:         ${{ secrets.POKER_SITE_CODE }}
+          VITE_MOBILEPAY_BOX_URL: ${{ secrets.POKER_MOBILEPAY_BOX_URL }}
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
