@@ -27,12 +27,12 @@ function FullScreenSpinner() {
 export default function App() {
   const { session, profile, loading, isAdmin } = useAuth();
 
-  return <SiteGate>{renderApp()}</SiteGate>;
+  if (loading) return <FullScreenSpinner />;
+  if (!session || !profile) return <LoginPage />;
 
-  function renderApp() {
-    if (loading) return <FullScreenSpinner />;
-    if (!session || !profile) return <LoginPage />;
-    return (
+  // Discord login first, THEN the one-time site-code gate, then the app.
+  return (
+    <SiteGate>
       <Layout>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -46,6 +46,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
-    );
-  }
+    </SiteGate>
+  );
 }
