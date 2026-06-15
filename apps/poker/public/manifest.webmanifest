@@ -1,0 +1,12 @@
+{
+  "name": "GokkeHub Poker",
+  "short_name": "Poker",
+  "description": "Private poker balance tracker for the GokkeHub group.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1A1614",
+  "theme_color": "#1A1614",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -156,4 +156,43 @@ jobs:
           workingDirectory: apps/timelinedrop
           command: pages deploy dist --project-name=timelinedrop --branch=main
 
+  # ── Deploy poker (poker.gokkehub.com) ───────────────────────────────────────
+  # Mirrors the timelinedrop/account pattern: checkout + install the full repo so
+  # workspace packages (@gokkehub/ui, @gokkehub/config) resolve, build only the
+  # poker workspace, then `pages deploy dist` from apps/poker. The MobilePay
+  # number + tracking prefix are extra build-time env vars (client-inlined).
+  # ADDED for the poker app — does not touch any existing job above.
+  deploy-poker:
+    name: Deploy poker
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build poker app
+        run: npm run build --workspace=apps/poker
+        env:
+          VITE_SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          VITE_MOBILEPAY_NUMBER:  ${{ secrets.POKER_MOBILEPAY_NUMBER }}
+          VITE_TRACKING_PREFIX:   ${{ secrets.POKER_TRACKING_PREFIX }}
+          VITE_SITE_CODE:         ${{ secrets.POKER_SITE_CODE }}
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/poker
+          command: pages deploy dist --project-name=poker --branch=main
+
   # trackguess, beatrank deploy jobs will be added once those apps are built
