@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-// Fetches the id -> username directory once. Used to label players/events that
-// the RLS-restricted poker_users table won't expose to non-admins.
-export function useUsernames(): Record<string, string> {
+// id -> username directory for a group's members. Used to label players/events
+// without exposing the RLS-restricted poker_users table.
+export function useUsernames(groupId: string | undefined): Record<string, string> {
   const [map, setMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    supabase.rpc("poker_usernames").then(({ data }) => {
+    if (!groupId) return;
+    supabase.rpc("poker_usernames", { p_group: groupId }).then(({ data }) => {
       if (!data) return;
       const next: Record<string, string> = {};
       for (const row of data as { user_id: string; username: string }[]) {
@@ -15,7 +16,7 @@ export function useUsernames(): Record<string, string> {
       }
       setMap(next);
     });
-  }, []);
+  }, [groupId]);
 
   return map;
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
 import { useUsernames } from "@/hooks/useUsernames";
 import { formatDateTime } from "@/lib/format";
 import type { GamePlayer, GameSession } from "@/lib/types";
@@ -11,13 +12,17 @@ interface Row extends GameSession { player_count: number; }
 export default function AdminSessions() {
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const usernames = useUsernames();
+  const { activeGroup } = useAuth();
+  const gid = activeGroup?.group_id;
+  const usernames = useUsernames(gid);
   const [rows, setRows] = useState<Row[]>([]);
 
   const reload = async () => {
+    if (!gid) return;
     const { data: sessions } = await supabase
-      .from("poker_game_sessions").select("*").order("created_at", { ascending: false }).limit(200);
-    const { data: players } = await supabase.from("poker_game_players").select("session_id");
+      .from("poker_game_sessions").select("*").eq("group_id", gid)
+      .order("created_at", { ascending: false }).limit(200);
+    const { data: players } = await supabase.from("poker_game_players").select("session_id").eq("group_id", gid);
     const counts = new Map<string, number>();
     for (const p of (players as Pick<GamePlayer, "session_id">[]) ?? []) {
       counts.set(p.session_id, (counts.get(p.session_id) ?? 0) + 1);
@@ -33,7 +38,8 @@ export default function AdminSessions() {
       .on("postgres_changes", { event: "*", schema: "public", table: "poker_game_players" }, reload)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gid]);
 
   const del = async (id: string) => {
     const { error } = await supabase.rpc("poker_delete_session", { p_session: id });

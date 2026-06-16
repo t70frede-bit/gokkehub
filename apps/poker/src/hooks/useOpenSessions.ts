@@ -6,22 +6,25 @@ export interface SessionWithCount extends GameSession {
   player_count: number;
 }
 
-// Live list of lobby + active sessions for the Games tab.
-export function useOpenSessions() {
+// Live list of lobby + active sessions in the active group.
+export function useOpenSessions(groupId: string | undefined) {
   const [sessions, setSessions] = useState<SessionWithCount[]>([]);
   const [loading, setLoading] = useState(true);
 
   const reload = async () => {
+    if (!groupId) { setSessions([]); setLoading(false); return; }
     const { data: rows } = await supabase
       .from("poker_game_sessions")
       .select("*")
+      .eq("group_id", groupId)
       .in("status", ["lobby", "active"])
       .order("created_at", { ascending: false });
 
     const list = (rows as GameSession[]) ?? [];
     const { data: players } = await supabase
       .from("poker_game_players")
-      .select("session_id");
+      .select("session_id")
+      .eq("group_id", groupId);
     const counts = new Map<string, number>();
     for (const p of (players as Pick<GamePlayer, "session_id">[]) ?? []) {
       counts.set(p.session_id, (counts.get(p.session_id) ?? 0) + 1);
@@ -40,7 +43,8 @@ export function useOpenSessions() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
 
   return { sessions, loading, reload };
 }

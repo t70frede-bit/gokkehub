@@ -7,18 +7,48 @@ export type TxStatus = "pending" | "confirmed" | "rejected" | "cancelled";
 export type SessionStatus = "lobby" | "active" | "finished";
 export type EventType = "player_joined" | "rebuy" | "cashout" | "session_ended";
 
+export type MemberStatus = "active" | "pending" | "rejected";
+
 export interface PokerUser {
   id: string;
   username: string;
   email: string | null;
-  role: Role;
-  balance: number;
   created_at: string;
+  active_group_id: string | null;
+  // legacy single-tenant columns (kept on the row but superseded by membership)
+  role?: Role;
+  balance?: number;
+}
+
+export type PaymentType = "mobilepay_box" | "swish" | "paypal" | "revolut" | "vipps" | "other";
+
+/** One of the current user's group memberships (from poker_my_groups). */
+export interface MyGroup {
+  group_id: string;
+  name: string;
+  role: Role;
+  status: MemberStatus;
+  is_active: boolean;
+  balance: number;
+  payment_type: PaymentType;
+  payment_value: string | null;
+  invite_token: string;
+}
+
+/** A row in a group's member list (admin view, from poker_group_member_list). */
+export interface GroupMemberRow {
+  member_id: string;
+  user_id: string;
+  username: string;
+  role: Role;
+  status: MemberStatus;
+  balance: number;
 }
 
 export interface Transaction {
   id: string;
   user_id: string;
+  group_id: string;
   amount: number;
   type: TxType;
   status: TxStatus;
@@ -32,6 +62,7 @@ export interface Transaction {
 export interface GameSession {
   id: string;
   host_id: string;
+  group_id: string;
   status: SessionStatus;
   min_buyin: number;
   max_buyin: number;
@@ -43,6 +74,7 @@ export interface GameSession {
 export interface GamePlayer {
   id: string;
   session_id: string;
+  group_id: string;
   user_id: string;
   total_buyin: number;
   cashout_value: number | null;
@@ -55,6 +87,7 @@ export interface GamePlayer {
 export interface GameEvent {
   id: string;
   session_id: string;
+  group_id: string;
   type: EventType;
   user_id: string | null;
   amount: number | null;

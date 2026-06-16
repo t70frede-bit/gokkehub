@@ -7,30 +7,33 @@ import { kr } from "@/lib/format";
 import type { GamePlayer, GameSession, Transaction } from "@/lib/types";
 
 export default function HomePage() {
-  const { profile } = useAuth();
+  const { profile, balance, activeGroup } = useAuth();
   const navigate = useNavigate();
   const [requested, setRequested] = useState(0);
   const [limbo, setLimbo] = useState(0);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const uid = profile?.id;
+  const gid = activeGroup?.group_id;
 
   const reload = async () => {
-    if (!uid) return;
-    // Pending deposit requests → "Requested".
+    if (!uid || !gid) return;
+    // Pending deposit requests in this group → "Requested".
     const { data: txs } = await supabase
       .from("poker_transactions")
       .select("amount, type, status")
       .eq("user_id", uid)
+      .eq("group_id", gid)
       .eq("type", "deposit")
       .eq("status", "pending");
     setRequested(((txs as Pick<Transaction, "amount">[]) ?? []).reduce((s, t) => s + t.amount, 0));
 
-    // Buy-ins currently in an active game → "In limbo".
+    // Buy-ins currently in an active game in this group → "In limbo".
     const { data: gps } = await supabase
       .from("poker_game_players")
       .select("session_id, total_buyin, cashed_out_at")
       .eq("user_id", uid)
+      .eq("group_id", gid)
       .is("cashed_out_at", null);
     const rows = (gps as Pick<GamePlayer, "session_id" | "total_buyin">[]) ?? [];
     if (rows.length === 0) {
@@ -61,7 +64,7 @@ export default function HomePage() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid]);
+  }, [uid, gid]);
 
   return (
     <div className="space-y-5">
@@ -71,10 +74,10 @@ export default function HomePage() {
           Balance
         </p>
         <p className="font-display font-bold tnum mt-1" style={{ fontSize: "var(--text-display)", color: "rgb(var(--color-primary-rgb))", lineHeight: 1 }}>
-          {kr(profile?.balance ?? 0)}
+          {kr(balance)}
         </p>
         <p className="text-sm mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          Spendable funds — confirmed by the house.
+          Spendable in {activeGroup?.name ?? "this group"} — confirmed by the house.
         </p>
 
         {/* Conditional secondary lines */}
