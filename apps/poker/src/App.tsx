@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { useStandalone } from "@/hooks/useStandalone";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 import HomePage from "@/pages/HomePage";
@@ -27,6 +29,14 @@ function FullScreenSpinner() {
 
 export default function App() {
   const { session, profile, loading, isAdmin, activeGroup } = useAuth();
+  const standalone = useStandalone();
+
+  // Mark the document when installed (home-screen) so CSS can add the iPhone
+  // safe-area top padding on EVERY screen (login, group gate, in-app), not just
+  // the Layout header.
+  useEffect(() => {
+    document.documentElement.classList.toggle("pwa-standalone", standalone);
+  }, [standalone]);
 
   if (loading) return <FullScreenSpinner />;
   if (!session || !profile) return <LoginPage />;

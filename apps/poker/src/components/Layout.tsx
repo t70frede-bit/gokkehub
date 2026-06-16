@@ -45,13 +45,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg-tint-1)" }}>
       {/* Top bar */}
       <header
-        className="flex items-center justify-between px-4 flex-shrink-0 sticky top-0 z-40"
+        className="pwa-safe-top flex items-center justify-between px-4 flex-shrink-0 sticky top-0 z-40"
         style={{
-          // Installed (standalone) on iPhone the web view extends under the
-          // status bar/notch, cutting off the header — pad the top by the safe
-          // area only when running as an app (it's 0 in a normal browser tab).
+          // .pwa-safe-top adds env(safe-area-inset-top) padding when installed,
+          // so the iPhone status bar/notch doesn't clip the header.
           minHeight: 56,
-          paddingTop: standalone ? "env(safe-area-inset-top)" : undefined,
           background: "rgba(var(--surface-base-rgb), 0.85)",
           borderBottom: "1px solid rgb(var(--border-rgb))",
           backdropFilter: "blur(12px)",

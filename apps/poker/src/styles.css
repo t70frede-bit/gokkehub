@@ -11,6 +11,12 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* When installed as a PWA, push screens below the iPhone status bar/notch.
+   `.pwa-standalone` is toggled on <html> from App via useStandalone (iOS Safari
+   doesn't reliably match the display-mode media query, so we use JS detection).
+   Applied to each top-level screen's root via the .pwa-safe-top class. */
+html.pwa-standalone .pwa-safe-top { padding-top: env(safe-area-inset-top); }
+
 /* Numbers (balances, codes) read better tabular + monospace. */
 .tnum { font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--font-mono); }

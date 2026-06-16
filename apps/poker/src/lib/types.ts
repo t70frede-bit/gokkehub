@@ -22,6 +22,9 @@ export interface PokerUser {
 
 export type PaymentType = "mobilepay_box" | "swish" | "paypal" | "revolut" | "vipps" | "other";
 
+/** Single join method a group enables. */
+export type JoinMode = "invite" | "request" | "passcode";
+
 /** One of the current user's group memberships (from poker_my_groups). */
 export interface MyGroup {
   group_id: string;

@@ -24,7 +24,7 @@ export default function JoinInvitePage() {
   }, [token, refresh, navigate]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-5" style={{ background: "var(--bg-tint-1)" }}>
+    <div className="pwa-safe-top min-h-screen flex items-center justify-center p-5" style={{ background: "var(--bg-tint-1)" }}>
       <div className="w-full max-w-sm">
         <Panel>
           {error ? (

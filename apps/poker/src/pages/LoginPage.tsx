@@ -5,7 +5,7 @@ export default function LoginPage() {
   const { loginWithDiscord } = useAuth();
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-5"
+    <div className="pwa-safe-top min-h-screen flex flex-col items-center justify-center p-5"
       style={{ background: "var(--bg-tint-1)" }}>
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">

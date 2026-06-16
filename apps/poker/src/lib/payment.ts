@@ -21,20 +21,23 @@ export interface PaymentMethodSpec {
   valuePlaceholder: string;
   /** True if we can build a deep link that prefills the amount. */
   prefills: boolean;
+  /** Optional helper shown under the input. */
+  hint?: string;
 }
 
 export const PAYMENT_METHODS: PaymentMethodSpec[] = [
   { type: "mobilepay_box", label: "MobilePay Box", valueLabel: "Box pay-in link",
-    valuePlaceholder: "https://qr.mobilepay.dk/box/…/pay-in", prefills: true },
+    valuePlaceholder: "https://qr.mobilepay.dk/box/…/pay-in", prefills: true,
+    hint: "In MobilePay: open your Box → Request → Copy link, and paste it here. (The short box number alone won’t work.)" },
   { type: "swish", label: "Swish", valueLabel: "Swish number",
-    valuePlaceholder: "46701234567", prefills: true },
-  { type: "paypal", label: "PayPal", valueLabel: "PayPal.me handle or link",
-    valuePlaceholder: "paypal.me/yourname", prefills: true },
+    valuePlaceholder: "e.g. 0701234567", prefills: true },
+  { type: "paypal", label: "PayPal", valueLabel: "PayPal.me handle",
+    valuePlaceholder: "e.g. yourname (from paypal.me/yourname)", prefills: true },
   { type: "revolut", label: "Revolut", valueLabel: "Revolut.me link",
     valuePlaceholder: "https://revolut.me/yourtag", prefills: false },
   { type: "vipps", label: "Vipps", valueLabel: "Vipps number",
-    valuePlaceholder: "12345678", prefills: false },
-  { type: "other", label: "Other / bank transfer", valueLabel: "Instructions or link",
+    valuePlaceholder: "e.g. 12345678", prefills: false },
+  { type: "other", label: "Other / bank", valueLabel: "Instructions or link",
     valuePlaceholder: "Reg 1234 · Acct 5678901234, or any link", prefills: false },
 ];
 

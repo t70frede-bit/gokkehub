@@ -3,7 +3,8 @@ import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { PAYMENT_METHODS } from "@/lib/payment";
-import type { PaymentType } from "@/lib/types";
+import { JoinModePicker } from "@/pages/GroupsPage";
+import type { JoinMode, PaymentType } from "@/lib/types";
 
 interface GroupRow {
   name: string;
@@ -37,8 +38,12 @@ export default function AdminGroupSettings() {
   const spec = PAYMENT_METHODS.find((m) => m.type === g.payment_type)!;
   const inviteLink = `${window.location.origin}/join/${g.invite_token}`;
 
+  const joinMode: JoinMode = g.join_passcode ? "passcode" : g.join_request ? "request" : "invite";
+  const setJoinMode = (m: JoinMode) =>
+    set({ join_invite: m === "invite", join_request: m === "request", join_passcode: m === "passcode" });
+
   const save = async () => {
-    if (g.join_passcode && (g.passcode ?? "").length < 3) { addToast("Passcode too short.", "error"); return; }
+    if (joinMode === "passcode" && (g.passcode ?? "").length < 3) { addToast("Passcode too short.", "error"); return; }
     setBusy(true);
     const { error } = await supabase.rpc("poker_update_group", {
       p_group: gid, p_name: g.name, p_payment_type: g.payment_type, p_payment_value: g.payment_value,
@@ -80,8 +85,11 @@ export default function AdminGroupSettings() {
             </div>
           </div>
 
-          <Input label={spec.valueLabel} autoCapitalize="none" value={g.payment_value ?? ""}
-            onChange={(e) => set({ payment_value: e.target.value })} placeholder={spec.valuePlaceholder} />
+          <div>
+            <Input label={spec.valueLabel} autoCapitalize="none" value={g.payment_value ?? ""}
+              onChange={(e) => set({ payment_value: e.target.value })} placeholder={spec.valuePlaceholder} />
+            {spec.hint && <p className="text-xs mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>{spec.hint}</p>}
+          </div>
 
           <Button fullWidth loading={busy} onClick={save}>Save changes</Button>
         </div>
@@ -91,18 +99,15 @@ export default function AdminGroupSettings() {
         <p className="text-xs uppercase font-bold tracking-wider mb-3" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.08em" }}>
           How people can join
         </p>
-        <div className="space-y-2">
-          <CheckRow label="Invite link" checked={g.join_invite} onChange={(v) => set({ join_invite: v })} />
-          <CheckRow label="Request (admin approves)" checked={g.join_request} onChange={(v) => set({ join_request: v })} />
-          <CheckRow label="Group name + passcode" checked={g.join_passcode} onChange={(v) => set({ join_passcode: v })} />
-        </div>
-        {g.join_passcode && (
+        <JoinModePicker value={joinMode} onChange={setJoinMode} />
+
+        {joinMode === "passcode" && (
           <div className="mt-3">
             <Input label="Passcode" value={g.passcode ?? ""} onChange={(e) => set({ passcode: e.target.value })} />
           </div>
         )}
 
-        {g.join_invite && (
+        {joinMode === "invite" && (
           <button onClick={copyInvite}
             className="w-full mt-3 p-3 rounded-lg text-left transition-all active:scale-[0.99]"
             style={{ background: "rgb(var(--surface-input-rgb))", border: "1px dashed rgb(var(--border-rgb))" }}>
@@ -110,20 +115,11 @@ export default function AdminGroupSettings() {
             <p className="text-sm mono mt-1 break-all" style={{ color: "rgb(var(--color-primary-rgb))" }}>{inviteLink}</p>
           </button>
         )}
+
+        <p className="text-xs mt-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          Remember to press “Save changes” above after switching the join method.
+        </p>
       </Panel>
     </div>
-  );
-}
-
-function CheckRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button onClick={() => onChange(!checked)} className="w-full flex items-center justify-between py-2 px-3 rounded-md"
-      style={{ background: "rgb(var(--surface-input-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-      <span className="text-sm" style={{ color: "rgb(var(--text-primary-rgb))" }}>{label}</span>
-      <span className="w-9 h-5 rounded-full flex items-center transition-all px-0.5"
-        style={{ background: checked ? "rgb(var(--color-primary-rgb))" : "rgb(var(--border-rgb))", justifyContent: checked ? "flex-end" : "flex-start" }}>
-        <span className="w-4 h-4 rounded-full" style={{ background: "rgb(var(--bg-rgb))" }} />
-      </span>
-    </button>
   );
 }
