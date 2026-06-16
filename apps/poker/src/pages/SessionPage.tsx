@@ -10,7 +10,7 @@ import type { GamePlayer } from "@/lib/types";
 
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
-  const { profile, isAdmin, activeGroup } = useAuth();
+  const { profile, isAdmin, activeGroup, balance } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const { session, players, loading } = useLiveSession(id);
@@ -134,11 +134,11 @@ export default function SessionPage() {
       </div>
 
       {joinOpen && (
-        <JoinModal session={session} balance={profile?.balance ?? 0}
+        <JoinModal session={session} balance={balance}
           onClose={() => setJoinOpen(false)} addToast={addToast} />
       )}
       {rebuyOpen && me && (
-        <RebuyModal sessionId={session.id} balance={profile?.balance ?? 0}
+        <RebuyModal sessionId={session.id} balance={balance}
           onClose={() => setRebuyOpen(false)} addToast={addToast} />
       )}
       {cashoutOpen && me && (
