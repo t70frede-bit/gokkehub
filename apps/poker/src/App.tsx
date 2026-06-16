@@ -6,6 +6,7 @@ import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 import HomePage from "@/pages/HomePage";
 import TopUpPage from "@/pages/TopUpPage";
+import WithdrawPage from "@/pages/WithdrawPage";
 import GamesPage from "@/pages/GamesPage";
 import SessionPage from "@/pages/SessionPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
@@ -57,6 +58,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/topup" element={<TopUpPage />} />
+        <Route path="/withdraw" element={<WithdrawPage />} />
         <Route path="/games" element={<GamesPage />} />
         <Route path="/games/:id" element={<SessionPage />} />
         <Route path="/leaderboard" element={<LeaderboardPage />} />

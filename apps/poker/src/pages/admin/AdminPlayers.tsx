@@ -47,6 +47,7 @@ export default function AdminPlayers() {
 
   const pending = members.filter((m) => m.status === "pending");
   const active = members.filter((m) => m.status === "active");
+  const totalBalance = active.reduce((s, m) => s + m.balance, 0);
 
   return (
     <div className="space-y-4">
@@ -68,6 +69,20 @@ export default function AdminPlayers() {
           </div>
         </Panel>
       )}
+
+      <Panel variant="bare" className="p-3 flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase font-bold" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.06em" }}>
+            Total held balance
+          </p>
+          <p className="text-[11px]" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            {active.length} {active.length === 1 ? "player" : "players"} · what the house owes
+          </p>
+        </div>
+        <span className="font-display font-bold tnum" style={{ fontSize: "var(--text-xl)", color: "rgb(var(--color-primary-rgb))" }}>
+          {kr(totalBalance)}
+        </span>
+      </Panel>
 
       <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
         Members of {activeGroup?.name}. Players appear after they join.

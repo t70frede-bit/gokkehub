@@ -12,7 +12,7 @@ export function useAdminPending(groupId: string | undefined, isAdmin: boolean): 
     const reload = async () => {
       const [tx, mem] = await Promise.all([
         supabase.from("poker_transactions").select("id", { count: "exact", head: true })
-          .eq("group_id", groupId).eq("type", "deposit").eq("status", "pending"),
+          .eq("group_id", groupId).eq("status", "pending"),
         supabase.from("poker_group_members").select("id", { count: "exact", head: true })
           .eq("group_id", groupId).eq("status", "pending"),
       ]);
