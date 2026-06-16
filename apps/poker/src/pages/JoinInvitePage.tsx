@@ -15,6 +15,7 @@ export default function JoinInvitePage() {
   useEffect(() => {
     if (ran.current || !token) return;
     ran.current = true;
+    localStorage.removeItem("poker_pending_invite"); // consumed — don't loop
     (async () => {
       const { error } = await supabase.rpc("poker_join_by_invite", { p_token: token });
       if (error) { setError(error.message); return; }

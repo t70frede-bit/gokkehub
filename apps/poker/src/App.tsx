@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useStandalone } from "@/hooks/useStandalone";
 import Layout from "@/components/Layout";
@@ -32,6 +32,7 @@ function FullScreenSpinner() {
 export default function App() {
   const { session, profile, loading, isAdmin, activeGroup } = useAuth();
   const standalone = useStandalone();
+  const location = useLocation();
 
   // Mark the document when installed (home-screen) so CSS can add the iPhone
   // safe-area top padding on EVERY screen (login, group gate, in-app), not just
@@ -40,8 +41,22 @@ export default function App() {
     document.documentElement.classList.toggle("pwa-standalone", standalone);
   }, [standalone]);
 
+  // Capture an invite token from the URL as early as possible (even before
+  // login) so it survives the Discord OAuth round-trip, which returns to "/".
+  useEffect(() => {
+    const m = window.location.pathname.match(/^\/join\/(.+)$/);
+    if (m) localStorage.setItem("poker_pending_invite", m[1]);
+  }, []);
+
   if (loading) return <FullScreenSpinner />;
   if (!session || !profile) return <LoginPage />;
+
+  // Logged in: consume a pending invite (e.g. captured before login) by routing
+  // to the join handler. JoinInvitePage clears the stash to avoid a loop.
+  const pendingInvite = localStorage.getItem("poker_pending_invite");
+  if (pendingInvite && location.pathname !== `/join/${pendingInvite}`) {
+    return <Navigate to={`/join/${pendingInvite}`} replace />;
+  }
 
   // No active group yet → the create/join gate (invite links still work).
   if (!activeGroup) {
