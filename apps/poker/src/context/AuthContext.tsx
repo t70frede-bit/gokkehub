@@ -16,6 +16,8 @@ interface AuthValue {
   balance: number;
   /** Admin of the active group? */
   isAdmin: boolean;
+  /** Discord avatar URL from the session, if any. */
+  avatarUrl: string | null;
   loading: boolean;
   loginWithDiscord: () => Promise<void>;
   logout: () => Promise<void>;
@@ -78,6 +80,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const activeGroup =
     groups.find((g) => g.is_active && g.status === "active") ?? null;
 
+  const meta = session?.user?.user_metadata as Record<string, string> | undefined;
+  const avatarUrl = meta?.avatar_url ?? meta?.picture ?? null;
+
   const loginWithDiscord = useCallback(async () => {
     await supabase.auth.signInWithOAuth({
       provider: "discord",
@@ -106,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         activeGroup,
         balance: activeGroup?.balance ?? 0,
         isAdmin: activeGroup?.role === "admin",
+        avatarUrl,
         loading,
         loginWithDiscord,
         logout,

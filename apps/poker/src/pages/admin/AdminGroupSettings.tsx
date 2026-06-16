@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Button, Input, Panel, useToast } from "@gokkehub/ui";
+import { Button, Input, Modal, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { PAYMENT_METHODS } from "@/lib/payment";
 import { JoinModePicker } from "@/pages/GroupsPage";
-import type { JoinMode, PaymentType } from "@/lib/types";
+import type { GroupMemberRow, JoinMode, PaymentType } from "@/lib/types";
 
 interface GroupRow {
   name: string;
@@ -18,11 +18,13 @@ interface GroupRow {
 }
 
 export default function AdminGroupSettings() {
-  const { activeGroup, refresh } = useAuth();
+  const { activeGroup, refresh, profile } = useAuth();
   const { addToast } = useToast();
   const gid = activeGroup?.group_id;
   const [g, setG] = useState<GroupRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const [members, setMembers] = useState<GroupMemberRow[]>([]);
+  const [transferTo, setTransferTo] = useState<GroupMemberRow | null>(null);
 
   useEffect(() => {
     if (!gid) return;
@@ -30,7 +32,18 @@ export default function AdminGroupSettings() {
       .select("name, payment_type, payment_value, passcode, invite_token, join_invite, join_request, join_passcode")
       .eq("id", gid).single()
       .then(({ data }) => setG((data as GroupRow) ?? null));
+    supabase.rpc("poker_group_member_list", { p_group: gid })
+      .then(({ data }) => setMembers((data as GroupMemberRow[]) ?? []));
   }, [gid]);
+
+  const transfer = async () => {
+    if (!transferTo || !gid) return;
+    const { error } = await supabase.rpc("poker_transfer_ownership", { p_group: gid, p_user: transferTo.user_id });
+    setTransferTo(null);
+    if (error) { addToast(error.message, "error"); return; }
+    addToast(`Ownership transferred to ${transferTo.username}`, "success");
+    refresh();
+  };
 
   if (!g) return <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>Loading…</p>;
 
@@ -120,6 +133,41 @@ export default function AdminGroupSettings() {
           Remember to press “Save changes” above after switching the join method.
         </p>
       </Panel>
+
+      {/* Transfer ownership */}
+      <Panel>
+        <p className="text-xs uppercase font-bold tracking-wider mb-1" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.08em" }}>
+          Transfer ownership
+        </p>
+        <p className="text-xs mb-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          Make another member the admin. You’ll become a player.
+        </p>
+        {members.filter((m) => m.status === "active" && m.user_id !== profile?.id).length === 0 ? (
+          <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>No other members yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {members.filter((m) => m.status === "active" && m.user_id !== profile?.id).map((m) => (
+              <div key={m.member_id} className="flex items-center justify-between py-2" style={{ borderTop: "1px solid rgb(var(--border-rgb))" }}>
+                <span className="font-semibold" style={{ color: "rgb(var(--text-primary-rgb))" }}>{m.username}</span>
+                <Button size="sm" variant="ghost" onClick={() => setTransferTo(m)}>Make owner</Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {transferTo && (
+        <Modal open onClose={() => setTransferTo(null)}>
+          <h2 className="font-display text-xl font-bold mb-2" style={{ color: "rgb(var(--text-primary-rgb))" }}>Transfer ownership?</h2>
+          <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            <b style={{ color: "rgb(var(--text-primary-rgb))" }}>{transferTo.username}</b> becomes the group admin and you become a player. You can be promoted back only by an admin.
+          </p>
+          <div className="space-y-2">
+            <Button fullWidth variant="danger" onClick={transfer}>Yes, transfer to {transferTo.username}</Button>
+            <button className="w-full text-center text-xs py-2" style={{ color: "rgb(var(--text-muted-rgb))" }} onClick={() => setTransferTo(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

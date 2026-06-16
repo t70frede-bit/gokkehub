@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useStandalone } from "@/hooks/useStandalone";
+import { useAdminPending } from "@/hooks/useAdminPending";
 import InstallBanner from "@/components/InstallBanner";
 
 const ICONS: Record<string, JSX.Element> = {
@@ -29,16 +30,17 @@ const tabStyle = (isActive: boolean) => ({
 });
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { isAdmin, logout, activeGroup } = useAuth();
+  const { isAdmin, activeGroup, avatarUrl, profile } = useAuth();
   const navigate = useNavigate();
   const standalone = useStandalone();
+  const pending = useAdminPending(activeGroup?.group_id, isAdmin);
 
   const tabs = [
-    { to: "/", icon: "home", label: "Home", end: true },
-    { to: "/games", icon: "games", label: "Games", end: false },
-    { to: "/leaderboard", icon: "board", label: "Board", end: false },
-    { to: "/me", icon: "me", label: "Me", end: true },
-    ...(isAdmin ? [{ to: "/admin", icon: "admin", label: "Admin", end: false }] : []),
+    { to: "/", icon: "home", label: "Home", end: true, badge: 0 },
+    { to: "/games", icon: "games", label: "Games", end: false, badge: 0 },
+    { to: "/leaderboard", icon: "board", label: "Board", end: false, badge: 0 },
+    { to: "/me", icon: "me", label: "Me", end: true, badge: 0 },
+    ...(isAdmin ? [{ to: "/admin", icon: "admin", label: "Admin", end: false, badge: pending }] : []),
   ];
 
   return (
@@ -79,11 +81,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </button>
           )}
           <button
-            onClick={logout}
-            className="text-xs font-semibold rounded-md px-2.5 py-1.5"
-            style={{ color: "rgb(var(--text-muted-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+            onClick={() => navigate("/settings")}
+            className="rounded-full overflow-hidden flex items-center justify-center"
+            style={{ width: 32, height: 32, border: "1px solid rgb(var(--border-rgb))", background: "rgb(var(--surface-raised-rgb))" }}
+            title="Settings"
+            aria-label="Settings"
           >
-            Sign out
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-sm font-bold" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                {(profile?.username ?? "?").charAt(0).toUpperCase()}
+              </span>
+            )}
           </button>
         </div>
       </header>
@@ -108,7 +118,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {tabs.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={tabClass}
             style={({ isActive }) => tabStyle(isActive)}>
-            <TabIcon name={t.icon} />
+            <span className="relative">
+              <TabIcon name={t.icon} />
+              {t.badge > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
+                  style={{ background: "rgb(var(--color-danger-rgb))", color: "#fff" }}
+                >
+                  {t.badge > 9 ? "9+" : t.badge}
+                </span>
+              )}
+            </span>
             {t.label}
           </NavLink>
         ))}

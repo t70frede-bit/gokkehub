@@ -10,6 +10,7 @@ import GamesPage from "@/pages/GamesPage";
 import SessionPage from "@/pages/SessionPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import ProfilePage from "@/pages/ProfilePage";
+import SettingsPage from "@/pages/SettingsPage";
 import GroupsPage from "@/pages/GroupsPage";
 import JoinInvitePage from "@/pages/JoinInvitePage";
 import AdminPage from "@/pages/admin/AdminPage";
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/leaderboard" element={<LeaderboardPage />} />
         <Route path="/me" element={<ProfilePage />} />
         <Route path="/players/:id" element={<ProfilePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/groups" element={<GroupsPage />} />
         <Route path="/join/:token" element={<JoinInvitePage />} />
         <Route path="/admin/*" element={isAdmin ? <AdminPage /> : <Navigate to="/" replace />} />
