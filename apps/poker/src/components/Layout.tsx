@@ -1,5 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { useStandalone } from "@/hooks/useStandalone";
+import InstallBanner from "@/components/InstallBanner";
 
 const ICONS: Record<string, JSX.Element> = {
   home: <path d="M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9" />,
@@ -29,6 +31,7 @@ const tabStyle = (isActive: boolean) => ({
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { profile, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
+  const standalone = useStandalone();
 
   const tabs = [
     { to: "/", icon: "home", label: "Home", end: true },
@@ -42,8 +45,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg-tint-1)" }}>
       {/* Top bar */}
       <header
-        className="flex items-center justify-between px-4 h-14 flex-shrink-0 sticky top-0 z-40"
+        className="flex items-center justify-between px-4 flex-shrink-0 sticky top-0 z-40"
         style={{
+          // Installed (standalone) on iPhone the web view extends under the
+          // status bar/notch, cutting off the header — pad the top by the safe
+          // area only when running as an app (it's 0 in a normal browser tab).
+          minHeight: 56,
+          paddingTop: standalone ? "env(safe-area-inset-top)" : undefined,
           background: "rgba(var(--surface-base-rgb), 0.85)",
           borderBottom: "1px solid rgb(var(--border-rgb))",
           backdropFilter: "blur(12px)",
@@ -74,7 +82,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Page body */}
-      <main className="flex-1 w-full max-w-lg mx-auto px-4 py-5 pb-28">{children}</main>
+      <main className="flex-1 w-full max-w-lg mx-auto px-4 py-5 pb-28">
+        {!standalone && <InstallBanner />}
+        {children}
+      </main>
 
       {/* Bottom tab nav */}
       <nav
