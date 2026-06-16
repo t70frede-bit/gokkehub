@@ -56,9 +56,7 @@ export default function GamesPage() {
               <button className="w-full text-left" onClick={() => navigate(`/games/${s.id}`)}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge variant={s.status === "active" ? "host" : "primary"}>
-                      {s.status === "active" ? "Live" : "Lobby"}
-                    </Badge>
+                    <Badge variant="host">Live</Badge>
                     <span className="text-sm font-semibold" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
                       {usernames[s.host_id] ?? "—"}'s table
                     </span>
@@ -90,7 +88,7 @@ export default function GamesPage() {
           </div>
           <Button fullWidth loading={busy} onClick={create}>Create table</Button>
           <p className="text-center text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            You’ll host as {profile?.username}. You can start the game once people join.
+            You’ll host as {profile?.username}. The table goes live right away — players join by buying in, and it ends when everyone cashes out.
           </p>
         </div>
       </Modal>

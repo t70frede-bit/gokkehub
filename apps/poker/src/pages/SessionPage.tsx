@@ -45,9 +45,7 @@ export default function SessionPage() {
           <h1 className="font-display text-xl font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>
             {name(session.host_id)}'s table
           </h1>
-          <Badge variant={session.status === "active" ? "host" : "primary"}>
-            {session.status === "active" ? "Live" : "Lobby"}
-          </Badge>
+          <Badge variant="host">Live</Badge>
         </div>
         <p className="text-xs mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
           Buy-in {kr(session.min_buyin)}–{kr(session.max_buyin)} · Rebuys {session.rebuys_enabled ? "on" : "off"}
@@ -83,45 +81,28 @@ export default function SessionPage() {
         )}
       </Panel>
 
-      {/* Actions */}
+      {/* Actions — the game is live from creation; it ends when everyone cashes out */}
       <div className="space-y-3">
-        {!me && (session.status === "lobby" || session.status === "active") && (
+        {!me && (
           <Button fullWidth onClick={() => setJoinOpen(true)}>Join — buy in</Button>
         )}
 
         {me && !me.cashed_out_at && (
           <>
-            {session.status === "active" && session.rebuys_enabled && (
+            {session.rebuys_enabled && (
               <Button variant="ghost" fullWidth onClick={() => setRebuyOpen(true)}>Rebuy</Button>
             )}
-            {session.status === "active" && (
-              <Button fullWidth onClick={() => setCashoutOpen(true)}>Cash out</Button>
-            )}
-            {session.status === "lobby" && (
-              <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-                You’re in for {kr(me.total_buyin)} — waiting for the host to start.
-              </p>
-            )}
+            <Button fullWidth onClick={() => setCashoutOpen(true)}>Cash out</Button>
           </>
         )}
 
-        {me?.cashed_out_at && session.status === "active" && (
+        {me?.cashed_out_at && (
           <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             You cashed out with {krSigned(me.net_result)}. Waiting for the others.
           </p>
         )}
 
-        {isHost && session.status === "lobby" && (
-          <Button variant="ghost" fullWidth disabled={players.length === 0}
-            onClick={async () => {
-              const { error } = await supabase.rpc("poker_start_session", { p_session: session.id });
-              if (error) addToast(error.message, "error");
-            }}>
-            Start game
-          </Button>
-        )}
-
-        {(isHost || isAdmin) && session.status === "lobby" && players.length === 0 && (
+        {(isHost || isAdmin) && players.length === 0 && (
           <button className="block w-full text-center text-xs py-2" style={{ color: "rgb(var(--color-danger-rgb))" }}
             onClick={async () => {
               const { error } = await supabase.rpc("poker_delete_session", { p_session: session.id });
