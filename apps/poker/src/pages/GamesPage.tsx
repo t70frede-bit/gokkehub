@@ -9,11 +9,11 @@ import { kr } from "@/lib/format";
 import type { GameSession } from "@/lib/types";
 
 export default function GamesPage() {
-  const { profile } = useAuth();
+  const { profile, activeGroup } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const { sessions, loading } = useOpenSessions();
-  const usernames = useUsernames();
+  const { sessions, loading } = useOpenSessions(activeGroup?.group_id);
+  const usernames = useUsernames(activeGroup?.group_id);
 
   const [open, setOpen] = useState(false);
   // Default placeholders only — the host can change these before creating.

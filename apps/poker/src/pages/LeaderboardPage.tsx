@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Panel } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
 import { kr, krSigned, netColor } from "@/lib/format";
 import type { LeaderboardRow } from "@/lib/types";
 
@@ -34,12 +35,15 @@ function render(cat: Cat, r: LeaderboardRow) {
 
 export default function LeaderboardPage() {
   const navigate = useNavigate();
+  const { activeGroup } = useAuth();
   const [cat, setCat] = useState<Cat>("won");
   const [rows, setRows] = useState<LeaderboardRow[]>([]);
 
   useEffect(() => {
-    supabase.rpc("poker_leaderboard").then(({ data }) => setRows((data as LeaderboardRow[]) ?? []));
-  }, []);
+    if (!activeGroup) return;
+    supabase.rpc("poker_leaderboard", { p_group: activeGroup.group_id })
+      .then(({ data }) => setRows((data as LeaderboardRow[]) ?? []));
+  }, [activeGroup]);
 
   const sorted = [...rows].sort((a, b) =>
     cat === "loss" ? valueFor(cat, a) - valueFor(cat, b) : valueFor(cat, b) - valueFor(cat, a),

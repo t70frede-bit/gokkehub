@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
 import { useUsernames } from "@/hooks/useUsernames";
 import { kr, txLabel, statusLabel, formatDateTime } from "@/lib/format";
-import { trackingRef } from "@/lib/mobilepay";
+import { trackingRef } from "@/lib/payment";
 import type { Transaction, TxStatus } from "@/lib/types";
 
 const FILTERS: (TxStatus | "all")[] = ["all", "pending", "confirmed", "cancelled", "rejected"];
@@ -21,14 +22,18 @@ const NEGATIVE = new Set(["withdrawal", "buy_in", "rebuy"]);
 
 export default function AdminTransactions() {
   const { addToast } = useToast();
-  const usernames = useUsernames();
+  const { activeGroup } = useAuth();
+  const usernames = useUsernames(activeGroup?.group_id);
   const [filter, setFilter] = useState<TxStatus | "all">("pending");
   const [txs, setTxs] = useState<Transaction[]>([]);
+  const gid = activeGroup?.group_id;
 
   const reload = async () => {
+    if (!gid) return;
     const { data } = await supabase
       .from("poker_transactions")
       .select("*")
+      .eq("group_id", gid)
       .order("created_at", { ascending: false })
       .limit(300);
     setTxs((data as Transaction[]) ?? []);
@@ -41,7 +46,8 @@ export default function AdminTransactions() {
       .on("postgres_changes", { event: "*", schema: "public", table: "poker_transactions" }, reload)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gid]);
 
   const setStatus = async (tx: Transaction, status: TxStatus) => {
     if (tx.status === status) return;

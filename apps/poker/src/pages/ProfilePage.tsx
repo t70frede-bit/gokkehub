@@ -17,35 +17,37 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 
 export default function ProfilePage() {
   const { id } = useParams<{ id: string }>();
-  const { profile, isAdmin } = useAuth();
+  const { profile, isAdmin, balance, activeGroup } = useAuth();
   const navigate = useNavigate();
 
   const targetId = id ?? profile?.id;
   const isSelf = targetId === profile?.id;
+  const gid = activeGroup?.group_id;
 
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [otherBalance, setOtherBalance] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!targetId) return;
-    supabase.rpc("poker_player_stats", { p_user: targetId }).then(({ data }) => {
+    if (!targetId || !gid) return;
+    supabase.rpc("poker_player_stats", { p_user: targetId, p_group: gid }).then(({ data }) => {
       setStats(((data as PlayerStats[]) ?? [])[0] ?? null);
     });
-    supabase.rpc("poker_player_history", { p_user: targetId }).then(({ data }) => {
+    supabase.rpc("poker_player_history", { p_user: targetId, p_group: gid }).then(({ data }) => {
       setHistory((data as HistoryRow[]) ?? []);
     });
-    // Admin viewing another player can read their balance (RLS allows it).
+    // Admin viewing another member can read their group balance (RLS allows it).
     if (isAdmin && !isSelf) {
-      supabase.from("poker_users").select("balance").eq("id", targetId).single()
+      supabase.from("poker_group_members").select("balance")
+        .eq("user_id", targetId).eq("group_id", gid).maybeSingle()
         .then(({ data }) => setOtherBalance((data as { balance: number } | null)?.balance ?? null));
     }
-  }, [targetId, isAdmin, isSelf]);
+  }, [targetId, isAdmin, isSelf, gid]);
 
   if (!stats) return <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>Loading…</p>;
 
-  // Balance: own always; admin can see others; otherwise hidden.
-  const shownBalance = isSelf ? profile?.balance ?? null : isAdmin ? otherBalance : null;
+  // Balance: own always; admin can see others' group balance; otherwise hidden.
+  const shownBalance = isSelf ? balance : isAdmin ? otherBalance : null;
 
   return (
     <div className="space-y-5">

@@ -29,7 +29,7 @@ const tabStyle = (isActive: boolean) => ({
 });
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { profile, isAdmin, logout } = useAuth();
+  const { isAdmin, logout, activeGroup } = useAuth();
   const navigate = useNavigate();
   const standalone = useStandalone();
 
@@ -65,11 +65,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         >
           Gokke<span style={{ color: "rgb(var(--color-primary-rgb))" }}>Poker</span>
         </button>
-        <div className="flex items-center gap-3">
-          {profile && (
-            <span className="text-sm font-semibold" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-              {profile.username}
-            </span>
+        <div className="flex items-center gap-2">
+          {activeGroup && (
+            <button
+              onClick={() => navigate("/groups")}
+              className="text-xs font-bold rounded-full px-3 py-1.5 max-w-[40vw] truncate"
+              style={{
+                color: "rgb(var(--color-primary-rgb))",
+                background: "rgba(var(--color-primary-rgb), 0.14)",
+                border: "1px solid rgba(var(--color-primary-rgb), 0.5)",
+              }}
+              title="Switch group"
+            >
+              {activeGroup.name} ▾
+            </button>
           )}
           <button
             onClick={logout}

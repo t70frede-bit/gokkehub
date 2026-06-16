@@ -4,13 +4,13 @@ import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { kr, formatDateTime } from "@/lib/format";
-import { mobilePayBoxLink, trackingRef, MOBILEPAY_BOX_URL } from "@/lib/mobilepay";
+import { buildPayment, paymentLabel, trackingRef } from "@/lib/payment";
 import type { Transaction } from "@/lib/types";
 
 const QUICK = [5, 10, 25, 50];
 
 export default function TopUpPage() {
-  const { profile } = useAuth();
+  const { profile, activeGroup } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const [amount, setAmount] = useState<number | "">("");
@@ -18,19 +18,23 @@ export default function TopUpPage() {
   const [created, setCreated] = useState<Transaction | null>(null);
   const [pending, setPending] = useState<Transaction[]>([]);
 
+  const gid = activeGroup?.group_id;
+  const method = activeGroup ? paymentLabel(activeGroup.payment_type) : "MobilePay";
+
   const loadPending = async () => {
-    if (!profile) return;
+    if (!profile || !gid) return;
     const { data } = await supabase
       .from("poker_transactions")
       .select("*")
       .eq("user_id", profile.id)
+      .eq("group_id", gid)
       .eq("type", "deposit")
       .eq("status", "pending")
       .order("created_at", { ascending: false });
     setPending((data as Transaction[]) ?? []);
   };
 
-  useEffect(() => { loadPending(); /* eslint-disable-next-line */ }, [profile?.id]);
+  useEffect(() => { loadPending(); /* eslint-disable-next-line */ }, [profile?.id, gid]);
 
   const request = async () => {
     if (!amount || amount <= 0) return;
@@ -50,18 +54,29 @@ export default function TopUpPage() {
     loadPending();
   };
 
-  // ── Code + MobilePay step ──
+  // ── Code + pay step ──
   if (created) {
     const ref = trackingRef(created.tracking_code!);
+    const target = activeGroup
+      ? buildPayment(activeGroup.payment_type, activeGroup.payment_value, created.amount, created.tracking_code!)
+      : null;
+    const manualText = activeGroup?.payment_value && !target?.href ? activeGroup.payment_value : null;
+
     return (
       <div className="space-y-5">
         <Panel>
           <p className="text-xs uppercase font-bold tracking-wider text-center" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.08em" }}>
-            Pay this much
+            Pay this much via {method}
           </p>
           <p className="font-display font-bold tnum text-center mt-1" style={{ fontSize: "var(--text-3xl)", color: "rgb(var(--color-primary-rgb))" }}>
             {kr(created.amount)}
           </p>
+
+          {manualText && (
+            <div className="mt-4 p-3 rounded-lg text-sm" style={{ background: "rgb(var(--surface-input-rgb))", border: "1px solid rgb(var(--border-rgb))", color: "rgb(var(--text-primary-rgb))", whiteSpace: "pre-wrap" }}>
+              {manualText}
+            </div>
+          )}
 
           <button
             onClick={() => {
@@ -70,25 +85,25 @@ export default function TopUpPage() {
                 () => addToast("Couldn't copy — type it manually", "error"),
               );
             }}
-            className="w-full mt-5 p-4 rounded-lg text-center transition-all active:scale-[0.99]"
+            className="w-full mt-4 p-4 rounded-lg text-center transition-all active:scale-[0.99]"
             style={{ background: "rgb(var(--surface-input-rgb))", border: "1px dashed rgb(var(--border-rgb))" }}
           >
             <p className="text-xs uppercase font-bold" style={{ color: "rgb(var(--text-muted-rgb))" }}>Tracking code · tap to copy</p>
             <p className="mono font-bold mt-1" style={{ fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>{ref}</p>
             <p className="text-xs mt-1" style={{ color: "rgb(var(--color-warning-rgb))" }}>
-              Write this in the MobilePay message so the house can match your payment.
+              Include this in the payment message so the house can match it.
             </p>
           </button>
 
-          {MOBILEPAY_BOX_URL ? (
-            <a href={mobilePayBoxLink(created.amount, created.tracking_code!)} target="_blank" rel="noreferrer" className="block mt-4">
-              <Button fullWidth>Open MobilePay</Button>
+          {target?.href ? (
+            <a href={target.href} target="_blank" rel="noreferrer" className="block mt-4">
+              <Button fullWidth>Open {method}</Button>
             </a>
-          ) : (
+          ) : !activeGroup?.payment_value ? (
             <p className="text-sm mt-4 text-center" style={{ color: "rgb(var(--color-danger-rgb))" }}>
-              MobilePay box not configured (VITE_MOBILEPAY_BOX_URL).
+              The group admin hasn’t set up a payment method yet.
             </p>
-          )}
+          ) : null}
 
           <div className="mt-4 flex items-center justify-center gap-2 text-sm" style={{ color: "rgb(var(--color-warning-rgb))" }}>
             <span className="inline-block w-2 h-2 rounded-full" style={{ background: "rgb(var(--color-warning-rgb))" }} />
@@ -110,7 +125,7 @@ export default function TopUpPage() {
       <Panel>
         <h2 className="font-display text-xl font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>Request a top-up</h2>
         <p className="text-sm mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          Pick an amount, pay via MobilePay, and the house confirms it into your balance.
+          Pick an amount, pay via {method}, and the house confirms it into your {activeGroup?.name ?? "group"} balance.
         </p>
 
         <div className="grid grid-cols-4 gap-2 mt-4">

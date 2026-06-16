@@ -4,68 +4,101 @@ import { Badge, Button, Input, Modal, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { kr } from "@/lib/format";
-import type { PokerUser } from "@/lib/types";
+import type { GroupMemberRow } from "@/lib/types";
 
 export default function AdminPlayers() {
   const { addToast } = useToast();
-  const { profile } = useAuth();
+  const { activeGroup, profile } = useAuth();
   const navigate = useNavigate();
-  const [players, setPlayers] = useState<PokerUser[]>([]);
-  const [adjust, setAdjust] = useState<PokerUser | null>(null);
+  const gid = activeGroup?.group_id;
+  const [members, setMembers] = useState<GroupMemberRow[]>([]);
+  const [adjust, setAdjust] = useState<GroupMemberRow | null>(null);
 
   const reload = async () => {
-    const { data } = await supabase.from("poker_users").select("*").order("username");
-    setPlayers((data as PokerUser[]) ?? []);
+    if (!gid) return;
+    const { data } = await supabase.rpc("poker_group_member_list", { p_group: gid });
+    setMembers((data as GroupMemberRow[]) ?? []);
   };
 
   useEffect(() => {
     reload();
     const channel = supabase
-      .channel("poker_admin_players")
-      .on("postgres_changes", { event: "*", schema: "public", table: "poker_users" }, reload)
+      .channel("poker_admin_members")
+      .on("postgres_changes", { event: "*", schema: "public", table: "poker_group_members" }, reload)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gid]);
 
-  const setRole = async (p: PokerUser, role: "player" | "admin") => {
-    const { error } = await supabase.rpc("poker_set_role", { p_user: p.id, p_role: role });
+  const setRole = async (m: GroupMemberRow, role: "player" | "admin") => {
+    const { error } = await supabase.rpc("poker_set_member_role", { p_group: gid, p_user: m.user_id, p_role: role });
     if (error) { addToast(error.message, "error"); return; }
-    addToast(role === "admin" ? `${p.username} is now house` : `${p.username} is now a player`, "success");
+    addToast(role === "admin" ? `${m.username} is now house` : `${m.username} is now a player`, "success");
   };
+  const approve = async (m: GroupMemberRow) => {
+    const { error } = await supabase.rpc("poker_approve_member", { p_member: m.member_id });
+    if (error) { addToast(error.message, "error"); return; }
+    addToast(`${m.username} approved`, "success");
+  };
+  const reject = async (m: GroupMemberRow) => {
+    const { error } = await supabase.rpc("poker_reject_member", { p_member: m.member_id });
+    if (error) { addToast(error.message, "error"); return; }
+  };
+
+  const pending = members.filter((m) => m.status === "pending");
+  const active = members.filter((m) => m.status === "active");
 
   return (
     <div className="space-y-4">
+      {pending.length > 0 && (
+        <Panel>
+          <p className="text-xs uppercase font-bold tracking-wider mb-3" style={{ color: "rgb(var(--color-warning-rgb))", letterSpacing: "0.08em" }}>
+            Join requests ({pending.length})
+          </p>
+          <div className="space-y-2">
+            {pending.map((m) => (
+              <div key={m.member_id} className="flex items-center justify-between py-2" style={{ borderTop: "1px solid rgb(var(--border-rgb))" }}>
+                <span className="font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>{m.username}</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => approve(m)}>Approve</Button>
+                  <button className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }} onClick={() => reject(m)}>Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
       <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-        Players appear here automatically the first time they sign in with Discord.
+        Members of {activeGroup?.name}. Players appear after they join.
       </p>
 
       <div className="space-y-2">
-        {players.map((p) => (
-          <Panel key={p.id} variant="bare" className="p-3">
+        {active.map((m) => (
+          <Panel key={m.member_id} variant="bare" className="p-3">
             <div className="flex items-center justify-between">
-              <button className="flex items-center gap-2 min-w-0" onClick={() => navigate(`/players/${p.id}`)}>
-                <span className="font-bold truncate" style={{ color: "rgb(var(--text-primary-rgb))" }}>{p.username}</span>
-                {p.role === "admin" && <Badge variant="host">House</Badge>}
+              <button className="flex items-center gap-2 min-w-0" onClick={() => navigate(`/players/${m.user_id}`)}>
+                <span className="font-bold truncate" style={{ color: "rgb(var(--text-primary-rgb))" }}>{m.username}</span>
+                {m.role === "admin" && <Badge variant="host">House</Badge>}
               </button>
               <div className="flex items-center gap-3 flex-shrink-0">
-                <span className="font-bold tnum" style={{ color: "rgb(var(--color-primary-rgb))" }}>{kr(p.balance)}</span>
-                <Button size="sm" variant="ghost" onClick={() => setAdjust(p)}>Adjust</Button>
+                <span className="font-bold tnum" style={{ color: "rgb(var(--color-primary-rgb))" }}>{kr(m.balance)}</span>
+                <Button size="sm" variant="ghost" onClick={() => setAdjust(m)}>Adjust</Button>
               </div>
             </div>
 
-            {/* Role toggle — don't let an admin demote themselves by accident. */}
             <div className="flex gap-1.5 mt-2.5">
               {(["player", "admin"] as const).map((r) => {
-                const isSelf = p.id === profile?.id;
-                const active = p.role === r;
+                const isSelf = m.user_id === profile?.id;
+                const activeRole = m.role === r;
                 return (
-                  <button key={r} disabled={active || (isSelf && r === "player")}
-                    onClick={() => setRole(p, r)}
+                  <button key={r} disabled={activeRole || (isSelf && r === "player")}
+                    onClick={() => setRole(m, r)}
                     className="flex-1 py-1.5 rounded-md text-[11px] font-bold capitalize transition-all active:scale-[0.98] disabled:opacity-100"
                     style={{
-                      background: active ? "rgba(var(--color-primary-rgb),0.16)" : "rgb(var(--surface-input-rgb))",
-                      color: active ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
-                      border: `1px solid ${active ? "rgba(var(--color-primary-rgb),0.6)" : "rgb(var(--border-rgb))"}`,
+                      background: activeRole ? "rgba(var(--color-primary-rgb),0.16)" : "rgb(var(--surface-input-rgb))",
+                      color: activeRole ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
+                      border: `1px solid ${activeRole ? "rgba(var(--color-primary-rgb),0.6)" : "rgb(var(--border-rgb))"}`,
                       opacity: isSelf && r === "player" ? 0.4 : 1,
                     }}>
                     {r === "admin" ? "House" : "Player"}
@@ -77,13 +110,14 @@ export default function AdminPlayers() {
         ))}
       </div>
 
-      {adjust && <AdjustModal player={adjust} onClose={() => setAdjust(null)} addToast={addToast} />}
+      {adjust && gid && <AdjustModal member={adjust} groupId={gid} onClose={() => setAdjust(null)} addToast={addToast} />}
     </div>
   );
 }
 
-function AdjustModal({ player, onClose, addToast }: {
-  player: PokerUser; onClose: () => void; addToast: (m: string, v?: "error" | "success" | "info") => void;
+function AdjustModal({ member, groupId, onClose, addToast }: {
+  member: GroupMemberRow; groupId: string; onClose: () => void;
+  addToast: (m: string, v?: "error" | "success" | "info") => void;
 }) {
   const [delta, setDelta] = useState<number | "">("");
   const [note, setNote] = useState("");
@@ -93,7 +127,7 @@ function AdjustModal({ player, onClose, addToast }: {
     if (delta === "" || delta === 0) return;
     setBusy(true);
     const { error } = await supabase.rpc("poker_admin_adjust_balance", {
-      p_user: player.id, p_delta: Number(delta), p_note: note || null,
+      p_group: groupId, p_user: member.user_id, p_delta: Number(delta), p_note: note || null,
     });
     setBusy(false);
     if (error) { addToast(error.message, "error"); return; }
@@ -103,8 +137,8 @@ function AdjustModal({ player, onClose, addToast }: {
 
   return (
     <Modal open onClose={onClose}>
-      <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Adjust {player.username}</h2>
-      <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>Current balance {kr(player.balance)}</p>
+      <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Adjust {member.username}</h2>
+      <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>Current balance {kr(member.balance)}</p>
       <div className="space-y-4">
         <Input label="Change (kr) — positive credits, negative debits" type="number" inputMode="numeric"
           value={delta} onChange={(e) => setDelta(e.target.value ? parseInt(e.target.value, 10) : "")} />

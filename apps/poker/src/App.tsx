@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import Layout from "@/components/Layout";
-import SiteGate from "@/components/SiteGate";
 import LoginPage from "@/pages/LoginPage";
 import HomePage from "@/pages/HomePage";
 import TopUpPage from "@/pages/TopUpPage";
@@ -9,6 +8,8 @@ import GamesPage from "@/pages/GamesPage";
 import SessionPage from "@/pages/SessionPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import ProfilePage from "@/pages/ProfilePage";
+import GroupsPage from "@/pages/GroupsPage";
+import JoinInvitePage from "@/pages/JoinInvitePage";
 import AdminPage from "@/pages/admin/AdminPage";
 
 function FullScreenSpinner() {
@@ -25,27 +26,36 @@ function FullScreenSpinner() {
 }
 
 export default function App() {
-  const { session, profile, loading, isAdmin } = useAuth();
+  const { session, profile, loading, isAdmin, activeGroup } = useAuth();
 
   if (loading) return <FullScreenSpinner />;
   if (!session || !profile) return <LoginPage />;
 
-  // Discord login first, THEN the one-time site-code gate, then the app.
+  // No active group yet → the create/join gate (invite links still work).
+  if (!activeGroup) {
+    return (
+      <Routes>
+        <Route path="/join/:token" element={<JoinInvitePage />} />
+        <Route path="*" element={<GroupsPage />} />
+      </Routes>
+    );
+  }
+
   return (
-    <SiteGate>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/topup" element={<TopUpPage />} />
-          <Route path="/games" element={<GamesPage />} />
-          <Route path="/games/:id" element={<SessionPage />} />
-          <Route path="/leaderboard" element={<LeaderboardPage />} />
-          <Route path="/me" element={<ProfilePage />} />
-          <Route path="/players/:id" element={<ProfilePage />} />
-          <Route path="/admin/*" element={isAdmin ? <AdminPage /> : <Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
-    </SiteGate>
+    <Layout>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/topup" element={<TopUpPage />} />
+        <Route path="/games" element={<GamesPage />} />
+        <Route path="/games/:id" element={<SessionPage />} />
+        <Route path="/leaderboard" element={<LeaderboardPage />} />
+        <Route path="/me" element={<ProfilePage />} />
+        <Route path="/players/:id" element={<ProfilePage />} />
+        <Route path="/groups" element={<GroupsPage />} />
+        <Route path="/join/:token" element={<JoinInvitePage />} />
+        <Route path="/admin/*" element={isAdmin ? <AdminPage /> : <Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Layout>
   );
 }

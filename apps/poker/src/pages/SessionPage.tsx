@@ -10,11 +10,11 @@ import type { GamePlayer } from "@/lib/types";
 
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
-  const { profile, isAdmin } = useAuth();
+  const { profile, isAdmin, activeGroup } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const { session, players, loading } = useLiveSession(id);
-  const usernames = useUsernames();
+  const usernames = useUsernames(activeGroup?.group_id);
 
   const me = useMemo(() => players.find((p) => p.user_id === profile?.id), [players, profile]);
   const isHost = session?.host_id === profile?.id;
