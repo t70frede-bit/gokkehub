@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useStandalone } from "@/hooks/useStandalone";
 import { useAdminPending } from "@/hooks/useAdminPending";
@@ -32,6 +32,7 @@ const tabStyle = (isActive: boolean) => ({
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { isAdmin, activeGroup, avatarUrl, profile } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const standalone = useStandalone();
   const pending = useAdminPending(activeGroup?.group_id, isAdmin);
 
@@ -68,7 +69,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="flex items-center gap-2">
           {activeGroup && (
             <button
-              onClick={() => navigate("/groups")}
+              onClick={() => (location.pathname === "/groups" ? navigate(-1) : navigate("/groups"))}
               className="text-xs font-bold rounded-full px-3 py-1.5 max-w-[40vw] truncate"
               style={{
                 color: "rgb(var(--color-primary-rgb))",
