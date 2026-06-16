@@ -17,6 +17,22 @@ body {
    Applied to each top-level screen's root via the .pwa-safe-top class. */
 html.pwa-standalone .pwa-safe-top { padding-top: env(safe-area-inset-top); }
 
+/* Toasts: the shared @gokkehub/ui ToastProvider renders its container as the
+   page's only aria-live="polite" region (defaulting to a screen corner).
+   Poker-only override: center it at the bottom, just above the tab nav.
+   !important to beat the provider's Tailwind utility classes. */
+[aria-live="polite"] {
+  left: 50% !important;
+  right: auto !important;
+  /* rest just above the tab nav (~56px tall) */
+  bottom: calc(58px + env(safe-area-inset-bottom)) !important;
+  transform: translateX(-50%);
+  align-items: center !important;
+  /* sit BEHIND the bottom nav (which is z-40) so toasts appear to rise out
+     from behind the bar as they slide up + fade in */
+  z-index: 39 !important;
+}
+
 /* Numbers (balances, codes) read better tabular + monospace. */
 .tnum { font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--font-mono); }
