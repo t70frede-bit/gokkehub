@@ -56,7 +56,11 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
         {entries.length} in · {kr(session.bounty_buyin ?? 0)} each · winnings to {session.bounty_payout === "stack" ? "stack" : "balance"}
       </p>
 
-      {myEntry && iAmActive && (
+      {iAmLast && (
+        <Button fullWidth onClick={() => setWinnerOpen(true)}>🏆 Last one standing — grab pool &amp; end</Button>
+      )}
+
+      {myEntry && iAmActive && !iAmLast && (
         <Button variant="ghost" fullWidth disabled={targets.length === 0} onClick={() => setKoOpen(true)}>
           Record a knockout
         </Button>
