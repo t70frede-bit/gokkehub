@@ -59,11 +59,11 @@ update poker_users set active_group_id = 'a0000000-0000-0000-0000-0000000000d1'
   where id in ('a0000000-0000-0000-0000-0000000000a1','a0000000-0000-0000-0000-0000000000a2',
                'a0000000-0000-0000-0000-0000000000a3','a0000000-0000-0000-0000-0000000000a4');
 
--- ── Live, bounty-enabled session hosted by HouseDemo ─────────────────────────
+-- ── Live BOUNTY (tournament) session hosted by HouseDemo: fixed 200 buy-in ───
 insert into poker_game_sessions (id, host_id, group_id, status, min_buyin, max_buyin,
-  rebuys_enabled, bounty_enabled, bounty_buyin, bounty_pool)
+  rebuys_enabled, mode, bounty_enabled, bounty_buyin, bounty_pool)
 values ('a0000000-0000-0000-0000-0000000000d2','a0000000-0000-0000-0000-0000000000a1',
-  'a0000000-0000-0000-0000-0000000000d1','active', 100, 500, true, true, 50, 150)
+  'a0000000-0000-0000-0000-0000000000d1','active', 200, 200, true, 'tournament', true, 50, 150)
 on conflict (id) do nothing;
 
 -- Alice/Bob/Charlie: deposit 1000, buy in 200, pay 50 bounty → balance 750.

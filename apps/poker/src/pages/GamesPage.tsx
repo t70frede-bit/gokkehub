@@ -9,24 +9,34 @@ import { kr } from "@/lib/format";
 import type { GameSession } from "@/lib/types";
 
 export default function GamesPage() {
-  const { profile, activeGroup } = useAuth();
+  const { activeGroup } = useAuth();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const { sessions, loading } = useOpenSessions(activeGroup?.group_id);
   const usernames = useUsernames(activeGroup?.group_id);
 
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
   // Default placeholders only — the host can change these before creating.
   const [min, setMin] = useState(25);
   const [max, setMax] = useState(50);
+  const [fixedBuyin, setFixedBuyin] = useState(100);
+  const [bountyBuyin, setBountyBuyin] = useState(50);
   const [rebuys, setRebuys] = useState<"on" | "off">("on");
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
-    if (max < min) { addToast("Max buy-in must be ≥ min.", "error"); return; }
+    if (mode === "cash" && max < min) { addToast("Max buy-in must be ≥ min.", "error"); return; }
+    if (mode === "tournament" && (fixedBuyin <= 0 || bountyBuyin <= 0)) {
+      addToast("Set a buy-in and a bounty buy-in.", "error"); return;
+    }
     setBusy(true);
     const { data, error } = await supabase.rpc("poker_create_session", {
-      p_min: min, p_max: max, p_rebuys: rebuys === "on",
+      p_mode: mode,
+      p_min: mode === "tournament" ? fixedBuyin : min,
+      p_max: mode === "tournament" ? fixedBuyin : max,
+      p_rebuys: rebuys === "on",
+      p_bounty_buyin: mode === "tournament" ? bountyBuyin : null,
     });
     setBusy(false);
     if (error) { addToast(error.message, "error"); return; }
@@ -77,10 +87,28 @@ export default function GamesPage() {
       <Modal open={open} onClose={() => setOpen(false)}>
         <h2 className="font-display text-xl font-bold mb-4" style={{ color: "rgb(var(--text-primary-rgb))" }}>Host a session</h2>
         <div className="space-y-4">
-          <Input label="Min buy-in (kr)" type="number" inputMode="numeric" min={0}
-            value={min} onChange={(e) => setMin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
-          <Input label="Max buy-in (kr)" type="number" inputMode="numeric" min={0}
-            value={max} onChange={(e) => setMax(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+          <div>
+            <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Game mode</p>
+            <Toggle options={[{ value: "cash", label: "Cash game" }, { value: "tournament", label: "Bounty" }]}
+              value={mode} onChange={setMode} />
+          </div>
+
+          {mode === "cash" ? (
+            <>
+              <Input label="Min buy-in (kr)" type="number" inputMode="numeric" min={0}
+                value={min} onChange={(e) => setMin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+              <Input label="Max buy-in (kr)" type="number" inputMode="numeric" min={0}
+                value={max} onChange={(e) => setMax(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+            </>
+          ) : (
+            <>
+              <Input label="Fixed buy-in (kr)" type="number" inputMode="numeric" min={1}
+                value={fixedBuyin} onChange={(e) => setFixedBuyin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+              <Input label="Bounty buy-in (kr) — required for everyone" type="number" inputMode="numeric" min={1}
+                value={bountyBuyin} onChange={(e) => setBountyBuyin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+            </>
+          )}
+
           <div>
             <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Rebuys</p>
             <Toggle options={[{ value: "on", label: "Enabled" }, { value: "off", label: "Disabled" }]}
@@ -88,7 +116,9 @@ export default function GamesPage() {
           </div>
           <Button fullWidth loading={busy} onClick={create}>Create table</Button>
           <p className="text-center text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            You’ll host as {profile?.username}. The table goes live right away — players join by buying in, and it ends when everyone cashes out.
+            {mode === "tournament"
+              ? `Bounty game: everyone pays ${fixedBuyin || 0} kr buy-in + ${bountyBuyin || 0} kr bounty (auto-joined). Knock players out to win from the pool.`
+              : "Cash game: players buy in within your range. Goes live right away; ends when everyone cashes out."}
           </p>
         </div>
       </Modal>

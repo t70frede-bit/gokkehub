@@ -1,66 +1,33 @@
 import { useState } from "react";
-import { Badge, Button, Input, Modal, Panel, useToast } from "@gokkehub/ui";
+import { Badge, Button, Modal, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useBounty } from "@/hooks/useBounty";
 import { kr } from "@/lib/format";
 import type { GamePlayer, GameSession } from "@/lib/types";
 
-export default function BountyPanel({ session, players, usernames, userId, canManage, balance }: {
+// Shown only for bounty (tournament) games. Players are auto-enrolled when they
+// sit down (handled server-side in join), so here we just record knockouts,
+// show the live feed + pool, and let the host close/refund the remainder.
+export default function BountyPanel({ session, players, usernames, userId, canManage }: {
   session: GameSession;
   players: GamePlayer[];
   usernames: Record<string, string>;
   userId: string;
   canManage: boolean;
-  balance: number;
 }) {
   const { addToast } = useToast();
   const { entries, claims } = useBounty(session.id);
-  const [enableOpen, setEnableOpen] = useState(false);
-  const [buyin, setBuyin] = useState(25);
   const [koOpen, setKoOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  if (!session.bounty_enabled) return null;
+
   const name = (id: string) => usernames[id] ?? "—";
-  const enabled = !!session.bounty_enabled;
   const myEntry = entries.some((e) => e.user_id === userId);
-  const meSeated = players.some((p) => p.user_id === userId && !p.cashed_out_at);
   const knockedOut = new Set(claims.map((c) => c.eliminated_id));
   const targets = entries.filter((e) => e.user_id !== userId && !knockedOut.has(e.user_id));
+  void players;
 
-  const call = async (fn: () => PromiseLike<{ error: { message: string } | null }>, ok?: string) => {
-    setBusy(true);
-    const { error } = await fn();
-    setBusy(false);
-    if (error) { addToast(error.message, "error"); return false; }
-    if (ok) addToast(ok, "success");
-    return true;
-  };
-
-  // ── Not enabled: host can add it ──
-  if (!enabled) {
-    if (!canManage) return null;
-    return (
-      <>
-        <Button variant="ghost" fullWidth onClick={() => setEnableOpen(true)}>+ Add mystery bounty</Button>
-        <Modal open={enableOpen} onClose={() => setEnableOpen(false)}>
-          <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Mystery bounty</h2>
-          <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            Players opt in for a fixed buy-in. Knock someone out → draw a random slice of the pool (usually small, sometimes a jackpot).
-          </p>
-          <div className="space-y-4">
-            <Input label="Bounty buy-in (kr)" type="number" inputMode="numeric" min={1}
-              value={buyin} onChange={(e) => setBuyin(Math.max(1, parseInt(e.target.value || "1", 10)))} />
-            <Button fullWidth loading={busy} onClick={async () => {
-              if (await call(() => supabase.rpc("poker_enable_bounty", { p_session: session.id, p_buyin: buyin }), "Bounty added"))
-                setEnableOpen(false);
-            }}>Add bounty</Button>
-          </div>
-        </Modal>
-      </>
-    );
-  }
-
-  // ── Enabled ──
   return (
     <Panel>
       <div className="flex items-center justify-between mb-1">
@@ -68,15 +35,8 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
         <Badge variant="primary">Pool {kr(session.bounty_pool ?? 0)}</Badge>
       </div>
       <p className="text-xs mb-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-        {entries.length} in · buy-in {kr(session.bounty_buyin ?? 0)}
+        {entries.length} in · {kr(session.bounty_buyin ?? 0)} each (paid on buy-in)
       </p>
-
-      {meSeated && !myEntry && (
-        <Button fullWidth disabled={balance < (session.bounty_buyin ?? 0)}
-          onClick={() => call(() => supabase.rpc("poker_buy_bounty", { p_session: session.id }), "You're in the bounty")}>
-          Join bounty — {kr(session.bounty_buyin ?? 0)}
-        </Button>
-      )}
 
       {myEntry && (
         <Button variant="ghost" fullWidth disabled={targets.length === 0} onClick={() => setKoOpen(true)}>
@@ -84,7 +44,6 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
         </Button>
       )}
 
-      {/* Feed */}
       {claims.length > 0 && (
         <div className="mt-3 space-y-1.5">
           {claims.map((c) => (
@@ -100,12 +59,15 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
 
       {canManage && (session.bounty_pool ?? 0) > 0 && (
         <button className="block w-full text-center text-xs mt-3 py-1" style={{ color: "rgb(var(--text-muted-rgb))" }}
-          onClick={() => call(() => supabase.rpc("poker_close_bounty", { p_session: session.id }), "Bounty closed — pool refunded")}>
+          onClick={async () => {
+            const { error } = await supabase.rpc("poker_close_bounty", { p_session: session.id });
+            if (error) { addToast(error.message, "error"); return; }
+            addToast("Bounty closed — pool refunded", "success");
+          }}>
           Close & refund remaining pool
         </button>
       )}
 
-      {/* Knockout picker */}
       <Modal open={koOpen} onClose={() => setKoOpen(false)}>
         <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Who did you knock out?</h2>
         <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>You’ll draw a random bounty from the pool.</p>

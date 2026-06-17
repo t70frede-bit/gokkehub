@@ -72,6 +72,7 @@ export interface GameSession {
   rebuys_enabled: boolean;
   created_at: string;
   finished_at: string | null;
+  mode?: "cash" | "tournament";
   // mystery bounty (migration 009 — optional so pre-migration rows don't break)
   bounty_enabled?: boolean;
   bounty_buyin?: number;

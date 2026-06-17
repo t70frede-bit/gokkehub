@@ -7,7 +7,7 @@ import { useLiveSession } from "@/hooks/useLiveSession";
 import { useUsernames } from "@/hooks/useUsernames";
 import BountyPanel from "@/components/BountyPanel";
 import { kr, krSigned, netColor } from "@/lib/format";
-import type { GamePlayer } from "@/lib/types";
+import type { GamePlayer, GameSession } from "@/lib/types";
 
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -49,7 +49,10 @@ export default function SessionPage() {
           <Badge variant="host">Live</Badge>
         </div>
         <p className="text-xs mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          Buy-in {kr(session.min_buyin)}–{kr(session.max_buyin)} · Rebuys {session.rebuys_enabled ? "on" : "off"}
+          {session.bounty_enabled
+            ? `Bounty game · Buy-in ${kr(session.min_buyin)} + bounty ${kr(session.bounty_buyin ?? 0)}`
+            : `Buy-in ${kr(session.min_buyin)}–${kr(session.max_buyin)}`}
+          {" · Rebuys "}{session.rebuys_enabled ? "on" : "off"}
         </p>
       </Panel>
 
@@ -122,7 +125,6 @@ export default function SessionPage() {
         usernames={usernames}
         userId={profile!.id}
         canManage={isHost || isAdmin}
-        balance={balance}
       />
 
       {joinOpen && (
@@ -143,17 +145,19 @@ export default function SessionPage() {
 
 // ── Join ──
 function JoinModal({ session, balance, onClose, addToast }: {
-  session: { id: string; min_buyin: number; max_buyin: number };
+  session: GameSession;
   balance: number; onClose: () => void; addToast: (m: string, v?: "error" | "success" | "info") => void;
 }) {
+  const fixed = session.min_buyin === session.max_buyin;
+  const bounty = session.bounty_enabled ? (session.bounty_buyin ?? 0) : 0;
   const [amount, setAmount] = useState(session.min_buyin);
   const [busy, setBusy] = useState(false);
-  const max = Math.min(session.max_buyin, balance);
-  const tooPoor = balance < session.min_buyin;
+  const total = amount + bounty;
+  const tooPoor = balance < session.min_buyin + bounty;
+  const valid = amount >= session.min_buyin && amount <= session.max_buyin && total <= balance;
 
   const submit = async () => {
-    if (amount < session.min_buyin || amount > session.max_buyin) { addToast("Outside the buy-in range.", "error"); return; }
-    if (amount > balance) { addToast("That’s more than your balance.", "error"); return; }
+    if (!valid) { addToast("Check the buy-in / your balance.", "error"); return; }
     setBusy(true);
     const { error } = await supabase.rpc("poker_join_session", { p_session: session.id, p_buyin: amount });
     setBusy(false);
@@ -165,20 +169,27 @@ function JoinModal({ session, balance, onClose, addToast }: {
     <Modal open onClose={onClose}>
       <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Buy in</h2>
       <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-        Range {kr(session.min_buyin)}–{kr(session.max_buyin)} · Balance {kr(balance)}
+        {fixed ? `Fixed buy-in ${kr(session.min_buyin)}` : `Range ${kr(session.min_buyin)}–${kr(session.max_buyin)}`} · Balance {kr(balance)}
       </p>
       {tooPoor ? (
         <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>
-          Your balance is below the minimum buy-in. Top up first.
+          Your balance won’t cover the buy-in{bounty > 0 ? " + bounty" : ""}. Top up first.
         </p>
       ) : (
         <div className="space-y-4">
-          <Input label="Buy-in (kr)" type="number" inputMode="numeric" min={session.min_buyin} max={max}
-            value={amount} onChange={(e) => setAmount(Math.max(0, parseInt(e.target.value || "0", 10)))} />
-          <Button fullWidth loading={busy}
-            disabled={amount < session.min_buyin || amount > session.max_buyin || amount > balance}
-            onClick={submit}>
-            Sit down for {kr(amount)}
+          {!fixed && (
+            <Input label="Buy-in (kr)" type="number" inputMode="numeric" min={session.min_buyin} max={session.max_buyin}
+              value={amount} onChange={(e) => setAmount(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+          )}
+          {bounty > 0 && (
+            <div className="text-sm space-y-1 p-3 rounded-md" style={{ background: "rgb(var(--surface-input-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
+              <div className="flex justify-between"><span style={{ color: "rgb(var(--text-muted-rgb))" }}>Buy-in</span><span className="tnum" style={{ color: "rgb(var(--text-primary-rgb))" }}>{kr(amount)}</span></div>
+              <div className="flex justify-between"><span style={{ color: "rgb(var(--text-muted-rgb))" }}>Bounty (required)</span><span className="tnum" style={{ color: "rgb(var(--text-primary-rgb))" }}>{kr(bounty)}</span></div>
+              <div className="flex justify-between font-bold" style={{ borderTop: "1px solid rgb(var(--border-rgb))", paddingTop: 4 }}><span style={{ color: "rgb(var(--text-secondary-rgb))" }}>Total</span><span className="tnum" style={{ color: "rgb(var(--color-primary-rgb))" }}>{kr(total)}</span></div>
+            </div>
+          )}
+          <Button fullWidth loading={busy} disabled={!valid} onClick={submit}>
+            Sit down for {kr(total)}
           </Button>
         </div>
       )}
