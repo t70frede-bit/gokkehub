@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Badge, Button, Modal, Panel, useToast } from "@gokkehub/ui";
+import { useEffect, useState } from "react";
+import { Badge, Button, Input, Modal, Panel, useToast } from "@gokkehub/ui";
 import { supabase } from "@/lib/supabase";
 import { useBounty } from "@/hooks/useBounty";
 import { kr } from "@/lib/format";
@@ -16,20 +16,33 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
   canManage: boolean;
 }) {
   const { addToast } = useToast();
-  const { entries, claims } = useBounty(session.id);
+  const { entries, claims, votes } = useBounty(session.id);
   const [koOpen, setKoOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [winnerOpen, setWinnerOpen] = useState(false);
+  const [winnerStack, setWinnerStack] = useState<number | "">("");
 
-  if (!session.bounty_enabled) return null;
+  const enabled = !!session.bounty_enabled;
+  const activePlayers = players.filter((p) => !p.cashed_out_at);
+  const iAmLast = enabled && activePlayers.length === 1 && activePlayers[0]?.user_id === userId;
+
+  // Auto-open the "last one standing" prompt for the lone survivor.
+  useEffect(() => {
+    if (iAmLast) setWinnerOpen(true);
+  }, [iAmLast]);
+
+  if (!enabled) return null;
 
   const name = (id: string) => usernames[id] ?? "—";
   const myEntry = entries.some((e) => e.user_id === userId);
-  const iAmActive = players.some((p) => p.user_id === userId && !p.cashed_out_at);
-  const activeIds = new Set(players.filter((p) => !p.cashed_out_at).map((p) => p.user_id));
+  const iAmActive = activePlayers.some((p) => p.user_id === userId);
+  const activeIds = new Set(activePlayers.map((p) => p.user_id));
   const claimedIds = new Set(claims.map((c) => c.eliminated_id));
   const pending = claims.filter((c) => c.status === "pending");
   const confirmed = claims.filter((c) => c.status === "confirmed");
   const targets = entries.filter((e) => e.user_id !== userId && activeIds.has(e.user_id) && !claimedIds.has(e.user_id));
+  const votedActive = votes.filter((v) => activeIds.has(v.user_id)).length;
+  const iVoted = votes.some((v) => v.user_id === userId);
 
   return (
     <Panel>
@@ -45,6 +58,22 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
         <Button variant="ghost" fullWidth disabled={targets.length === 0} onClick={() => setKoOpen(true)}>
           Record a knockout
         </Button>
+      )}
+
+      {/* Chop: unanimous split of the remaining pool */}
+      {iAmActive && activePlayers.length >= 2 && (session.bounty_pool ?? 0) > 0 && (
+        <div className="mt-2">
+          {iVoted ? (
+            <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              You voted to chop · {votedActive}/{activePlayers.length}
+              <button className="ml-2 underline" onClick={() => supabase.rpc("poker_unvote_chop", { p_session: session.id })}>undo</button>
+            </p>
+          ) : (
+            <Button variant="ghost" fullWidth onClick={chop}>
+              Vote to chop the pool ({votedActive}/{activePlayers.length})
+            </Button>
+          )}
+        </div>
       )}
 
       {/* Host/admin: resolve pending knockouts */}
@@ -113,6 +142,29 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
           )}
         </div>
       </Modal>
+
+      {/* Last one standing → grab the pool + cash out + end the game */}
+      <Modal open={winnerOpen && iAmLast} onClose={() => setWinnerOpen(false)}>
+        <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>🏆 Last one standing!</h2>
+        <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          The remaining pool <b style={{ color: "rgb(var(--color-primary-rgb))" }}>{kr(session.bounty_pool ?? 0)}</b> is yours.
+          Enter your final chip value to grab it and end the game.
+        </p>
+        <div className="space-y-4">
+          <Input label="Your chip value (kr)" type="number" inputMode="numeric" min={0}
+            value={winnerStack} onChange={(e) => setWinnerStack(e.target.value ? Math.max(0, parseInt(e.target.value, 10)) : "")} />
+          <Button fullWidth loading={busy} disabled={winnerStack === ""} onClick={async () => {
+            setBusy(true);
+            const { error } = await supabase.rpc("poker_grab_bounty", { p_session: session.id, p_cashout: Number(winnerStack) });
+            setBusy(false);
+            if (error) { addToast(error.message, "error"); return; }
+            addToast("You took the pool and ended the game", "success");
+            setWinnerOpen(false);
+          }}>
+            Grab {kr(session.bounty_pool ?? 0)} + cash out
+          </Button>
+        </div>
+      </Modal>
     </Panel>
   );
 
@@ -120,5 +172,11 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
     const { error } = await supabase.rpc(ok ? "poker_confirm_knockout" : "poker_reject_knockout", { p_claim: claimId });
     if (error) { addToast(error.message, "error"); return; }
     addToast(ok ? "Knockout confirmed" : "Knockout rejected", "success");
+  }
+
+  async function chop() {
+    const { data, error } = await supabase.rpc("poker_vote_chop", { p_session: session.id });
+    if (error) { addToast(error.message, "error"); return; }
+    addToast(data === "chopped" ? "Pool chopped — split among players" : "Voted to chop", "success");
   }
 }
