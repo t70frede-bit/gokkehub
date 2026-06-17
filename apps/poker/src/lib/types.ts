@@ -72,6 +72,26 @@ export interface GameSession {
   rebuys_enabled: boolean;
   created_at: string;
   finished_at: string | null;
+  // mystery bounty (migration 009 — optional so pre-migration rows don't break)
+  bounty_enabled?: boolean;
+  bounty_buyin?: number;
+  bounty_pool?: number;
+}
+
+export interface BountyEntry {
+  id: string;
+  session_id: string;
+  user_id: string;
+  amount: number;
+}
+
+export interface BountyClaim {
+  id: string;
+  session_id: string;
+  eliminator_id: string;
+  eliminated_id: string;
+  amount: number;
+  created_at: string;
 }
 
 export interface GamePlayer {

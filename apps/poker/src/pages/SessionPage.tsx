@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { useLiveSession } from "@/hooks/useLiveSession";
 import { useUsernames } from "@/hooks/useUsernames";
+import BountyPanel from "@/components/BountyPanel";
 import { kr, krSigned, netColor } from "@/lib/format";
 import type { GamePlayer } from "@/lib/types";
 
@@ -113,6 +114,16 @@ export default function SessionPage() {
           </button>
         )}
       </div>
+
+      {/* Mystery bounty side-pot */}
+      <BountyPanel
+        session={session}
+        players={players}
+        usernames={usernames}
+        userId={profile!.id}
+        canManage={isHost || isAdmin}
+        balance={balance}
+      />
 
       {joinOpen && (
         <JoinModal session={session} balance={balance}
