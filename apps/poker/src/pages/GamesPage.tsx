@@ -22,6 +22,7 @@ export default function GamesPage() {
   const [max, setMax] = useState(50);
   const [fixedBuyin, setFixedBuyin] = useState(100);
   const [bountyBuyin, setBountyBuyin] = useState(50);
+  const [bountyPayout, setBountyPayout] = useState<"balance" | "stack">("balance");
   const [rebuys, setRebuys] = useState<"on" | "off">("on");
   const [busy, setBusy] = useState(false);
 
@@ -37,6 +38,7 @@ export default function GamesPage() {
       p_max: mode === "tournament" ? fixedBuyin : max,
       p_rebuys: mode === "cash" ? rebuys === "on" : false,
       p_bounty_buyin: mode === "tournament" ? bountyBuyin : null,
+      p_bounty_payout: mode === "tournament" ? bountyPayout : null,
     });
     setBusy(false);
     if (error) { addToast(error.message, "error"); return; }
@@ -110,6 +112,16 @@ export default function GamesPage() {
                 Each player pays <b style={{ color: "rgb(var(--text-primary-rgb))" }}>{kr(fixedBuyin + bountyBuyin)}</b> total
                 — {kr(fixedBuyin)} to the table + {kr(bountyBuyin)} to the bounty pool.
               </p>
+              <div>
+                <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Bounty winnings go to</p>
+                <Toggle options={[{ value: "balance", label: "Balance" }, { value: "stack", label: "Stack" }]}
+                  value={bountyPayout} onChange={setBountyPayout} />
+                <p className="text-xs mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                  {bountyPayout === "balance"
+                    ? "Won bounties become spendable balance right away."
+                    : "Won bounties go back onto the table as chips in play."}
+                </p>
+              </div>
             </>
           )}
 
