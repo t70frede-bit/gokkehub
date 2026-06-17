@@ -102,10 +102,14 @@ export default function GamesPage() {
             </>
           ) : (
             <>
-              <Input label="Fixed buy-in (kr)" type="number" inputMode="numeric" min={1}
+              <Input label="Table buy-in (kr) — chips in play" type="number" inputMode="numeric" min={1}
                 value={fixedBuyin} onChange={(e) => setFixedBuyin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
-              <Input label="Bounty buy-in (kr) — required for everyone" type="number" inputMode="numeric" min={1}
+              <Input label="Bounty buy-in (kr) — into the mystery pool" type="number" inputMode="numeric" min={1}
                 value={bountyBuyin} onChange={(e) => setBountyBuyin(Math.max(0, parseInt(e.target.value || "0", 10)))} />
+              <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                Each player pays <b style={{ color: "rgb(var(--text-primary-rgb))" }}>{kr(fixedBuyin + bountyBuyin)}</b> total
+                — {kr(fixedBuyin)} to the table + {kr(bountyBuyin)} to the bounty pool.
+              </p>
             </>
           )}
 
