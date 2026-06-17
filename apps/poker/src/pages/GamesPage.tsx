@@ -35,7 +35,7 @@ export default function GamesPage() {
       p_mode: mode,
       p_min: mode === "tournament" ? fixedBuyin : min,
       p_max: mode === "tournament" ? fixedBuyin : max,
-      p_rebuys: rebuys === "on",
+      p_rebuys: mode === "cash" ? rebuys === "on" : false,
       p_bounty_buyin: mode === "tournament" ? bountyBuyin : null,
     });
     setBusy(false);
@@ -113,11 +113,13 @@ export default function GamesPage() {
             </>
           )}
 
-          <div>
-            <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Rebuys</p>
-            <Toggle options={[{ value: "on", label: "Enabled" }, { value: "off", label: "Disabled" }]}
-              value={rebuys} onChange={setRebuys} />
-          </div>
+          {mode === "cash" && (
+            <div>
+              <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Rebuys</p>
+              <Toggle options={[{ value: "on", label: "Enabled" }, { value: "off", label: "Disabled" }]}
+                value={rebuys} onChange={setRebuys} />
+            </div>
+          )}
           <Button fullWidth loading={busy} onClick={create}>Create table</Button>
           <p className="text-center text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             {mode === "tournament"

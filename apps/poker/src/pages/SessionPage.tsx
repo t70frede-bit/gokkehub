@@ -93,7 +93,7 @@ export default function SessionPage() {
 
         {me && !me.cashed_out_at && (
           <>
-            {session.rebuys_enabled && (
+            {session.rebuys_enabled && !session.bounty_enabled && (
               <Button variant="ghost" fullWidth onClick={() => setRebuyOpen(true)}>Rebuy</Button>
             )}
             <Button fullWidth onClick={() => setCashoutOpen(true)}>Cash out</Button>
