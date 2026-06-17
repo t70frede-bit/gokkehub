@@ -1,10 +1,13 @@
 -- =============================================================================
--- DEMO TEARDOWN — removes everything demo-seed.sql created.
--- Deleting the demo group cascades its sessions, players, events, transactions,
--- memberships and bounty rows (incl. Gokkefar's demo membership + demo top-up).
--- Then the 4 demo accounts are deleted (cascades their poker_users rows).
--- Your real account (Gokkefar) and all real groups are untouched.
+-- DEMO TEARDOWN — removes "Demo Night" and the 4 demo accounts.
+-- Order matters: clear any active_group_id pointing at the group (incl. your
+-- Gokkefar account if the demo set it), then delete the group (cascades its
+-- sessions, players, events, transactions, memberships, bounty rows), then the
+-- demo accounts. Your real account + real groups are untouched.
 -- =============================================================================
+
+update poker_users set active_group_id = null
+  where active_group_id = 'a0000000-0000-0000-0000-0000000000d1';
 
 delete from poker_groups where id = 'a0000000-0000-0000-0000-0000000000d1';
 
