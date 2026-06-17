@@ -101,9 +101,18 @@ export default function SessionPage() {
         )}
 
         {me?.cashed_out_at && (
-          <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            You cashed out with {krSigned(me.net_result)}. Waiting for the others.
-          </p>
+          <Panel>
+            <p className="text-xs uppercase font-bold tracking-wider" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.08em" }}>
+              You’re out · your result
+            </p>
+            <p className="font-display font-bold tnum mt-1" style={{ fontSize: "var(--text-3xl)", color: netColor(me.net_result) }}>
+              {krSigned(me.net_result)}
+            </p>
+            <p className="text-sm mt-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+              Bought in {kr(me.total_buyin)} · cashed out {kr(me.cashout_value)}
+              {" · waiting for the others to finish"}
+            </p>
+          </Panel>
         )}
 
         {(isHost || isAdmin) && players.length === 0 && (

@@ -21,6 +21,8 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
   const [busy, setBusy] = useState(false);
   const [winnerOpen, setWinnerOpen] = useState(false);
   const [winnerStack, setWinnerStack] = useState<number | "">("");
+  const [chopOpen, setChopOpen] = useState(false);
+  const [chopStack, setChopStack] = useState<number | "">("");
 
   const enabled = !!session.bounty_enabled;
   const activePlayers = players.filter((p) => !p.cashed_out_at);
@@ -60,17 +62,17 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
         </Button>
       )}
 
-      {/* Chop: unanimous split of the remaining pool */}
-      {iAmActive && activePlayers.length >= 2 && (session.bounty_pool ?? 0) > 0 && (
+      {/* Chop: everyone still in agrees to split the pool + cash out → game ends */}
+      {iAmActive && activePlayers.length >= 2 && (
         <div className="mt-2">
           {iVoted ? (
             <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              You voted to chop · {votedActive}/{activePlayers.length}
+              Agreed to chop · {votedActive}/{activePlayers.length}
               <button className="ml-2 underline" onClick={() => supabase.rpc("poker_unvote_chop", { p_session: session.id })}>undo</button>
             </p>
           ) : (
-            <Button variant="ghost" fullWidth onClick={chop}>
-              Vote to chop the pool ({votedActive}/{activePlayers.length})
+            <Button variant="ghost" fullWidth onClick={() => setChopOpen(true)}>
+              Chop &amp; cash out ({votedActive}/{activePlayers.length})
             </Button>
           )}
         </div>
@@ -165,6 +167,28 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
           </Button>
         </div>
       </Modal>
+
+      {/* Chop: enter your chip value; when everyone agrees, the game ends */}
+      <Modal open={chopOpen} onClose={() => setChopOpen(false)}>
+        <h2 className="font-display text-xl font-bold mb-1" style={{ color: "rgb(var(--text-primary-rgb))" }}>Chop &amp; cash out</h2>
+        <p className="text-sm mb-4" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+          If everyone still in agrees, the remaining pool ({kr(session.bounty_pool ?? 0)}) is split equally and you all cash out at your chip values — then the game ends. Enter your chip value.
+        </p>
+        <div className="space-y-4">
+          <Input label="Your chip value (kr)" type="number" inputMode="numeric" min={0}
+            value={chopStack} onChange={(e) => setChopStack(e.target.value ? Math.max(0, parseInt(e.target.value, 10)) : "")} />
+          <Button fullWidth loading={busy} disabled={chopStack === ""} onClick={async () => {
+            setBusy(true);
+            const { data, error } = await supabase.rpc("poker_vote_chop", { p_session: session.id, p_cashout: Number(chopStack) });
+            setBusy(false);
+            if (error) { addToast(error.message, "error"); return; }
+            addToast(data === "chopped" ? "Chopped — game over!" : "Agreed to chop — waiting for the others", "success");
+            setChopOpen(false);
+          }}>
+            Agree to chop
+          </Button>
+        </div>
+      </Modal>
     </Panel>
   );
 
@@ -174,9 +198,4 @@ export default function BountyPanel({ session, players, usernames, userId, canMa
     addToast(ok ? "Knockout confirmed" : "Knockout rejected", "success");
   }
 
-  async function chop() {
-    const { data, error } = await supabase.rpc("poker_vote_chop", { p_session: session.id });
-    if (error) { addToast(error.message, "error"); return; }
-    addToast(data === "chopped" ? "Pool chopped — split among players" : "Voted to chop", "success");
-  }
 }
