@@ -77,6 +77,7 @@ export interface GameSession {
   bounty_enabled?: boolean;
   bounty_buyin?: number;
   bounty_pool?: number;
+  bounty_payout?: "balance" | "stack";
 }
 
 export interface BountyEntry {
@@ -89,9 +90,11 @@ export interface BountyEntry {
 export interface BountyClaim {
   id: string;
   session_id: string;
+  group_id: string;
   eliminator_id: string;
   eliminated_id: string;
-  amount: number;
+  amount: number | null;
+  status: "pending" | "confirmed";
   created_at: string;
 }
 

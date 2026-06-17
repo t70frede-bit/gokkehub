@@ -4,6 +4,7 @@ import { useStandalone } from "@/hooks/useStandalone";
 import { useAdminPending } from "@/hooks/useAdminPending";
 import InstallBanner from "@/components/InstallBanner";
 import StaleCashoutPrompt from "@/components/StaleCashoutPrompt";
+import KnockoutPrompt from "@/components/KnockoutPrompt";
 
 const ICONS: Record<string, JSX.Element> = {
   home: <path d="M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9" />,
@@ -108,6 +109,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Login-time nudge for an un-cashed-out table older than 24h */}
       <StaleCashoutPrompt />
+      {/* "You've been knocked out — accept?" — pops anywhere */}
+      <KnockoutPrompt />
 
 
       {/* Bottom tab nav */}
