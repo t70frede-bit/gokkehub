@@ -28,10 +28,11 @@ export default function AdminGroupSettings() {
 
   useEffect(() => {
     if (!gid) return;
+    // passcode is intentionally NOT selected — it's write-only (hardening 017).
     supabase.from("poker_groups")
-      .select("name, payment_type, payment_value, passcode, invite_token, join_invite, join_request, join_passcode")
+      .select("name, payment_type, payment_value, invite_token, join_invite, join_request, join_passcode")
       .eq("id", gid).single()
-      .then(({ data }) => setG((data as GroupRow) ?? null));
+      .then(({ data }) => setG((data ? { ...(data as object), passcode: "" } as GroupRow : null)));
     supabase.rpc("poker_group_member_list", { p_group: gid })
       .then(({ data }) => setMembers((data as GroupMemberRow[]) ?? []));
   }, [gid]);
@@ -56,7 +57,10 @@ export default function AdminGroupSettings() {
     set({ join_invite: m === "invite", join_request: m === "request", join_passcode: m === "passcode" });
 
   const save = async () => {
-    if (joinMode === "passcode" && (g.passcode ?? "").length < 3) { addToast("Passcode too short.", "error"); return; }
+    // passcode is write-only: blank = keep the current one. Only validate a new one.
+    if (joinMode === "passcode" && (g.passcode ?? "") !== "" && (g.passcode ?? "").length < 3) {
+      addToast("Passcode too short.", "error"); return;
+    }
     setBusy(true);
     const { error } = await supabase.rpc("poker_update_group", {
       p_group: gid, p_name: g.name, p_payment_type: g.payment_type, p_payment_value: g.payment_value,
@@ -116,7 +120,7 @@ export default function AdminGroupSettings() {
 
         {joinMode === "passcode" && (
           <div className="mt-3">
-            <Input label="Passcode" value={g.passcode ?? ""} onChange={(e) => set({ passcode: e.target.value })} />
+            <Input label="Passcode (blank = keep current)" placeholder="••••••" value={g.passcode ?? ""} onChange={(e) => set({ passcode: e.target.value })} />
           </div>
         )}
 
