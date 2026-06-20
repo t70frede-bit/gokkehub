@@ -78,6 +78,11 @@ export interface GameSession {
   bounty_buyin?: number;
   bounty_pool?: number;
   bounty_payout?: "balance" | "stack";
+  allow_cashout?: boolean;
+  allow_chop?: boolean;
+  chop_stack_mode?: "even" | "keep";
+  chop_bounty_mode?: "even" | "own";
+  chop_agreed?: boolean;
 }
 
 export interface BountyEntry {
@@ -85,6 +90,7 @@ export interface BountyEntry {
   session_id: string;
   user_id: string;
   amount: number;
+  sealed?: number | null;
 }
 
 export interface BountyClaim {

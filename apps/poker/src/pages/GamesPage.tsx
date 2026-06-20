@@ -23,6 +23,10 @@ export default function GamesPage() {
   const [fixedBuyin, setFixedBuyin] = useState(100);
   const [bountyBuyin, setBountyBuyin] = useState(50);
   const [bountyPayout, setBountyPayout] = useState<"balance" | "stack">("balance");
+  const [allowCashout, setAllowCashout] = useState<"yes" | "no">("no");
+  const [allowChop, setAllowChop] = useState<"yes" | "no">("yes");
+  const [chopStack, setChopStack] = useState<"even" | "keep">("keep");
+  const [chopBounty, setChopBounty] = useState<"even" | "own">("even");
   const [rebuys, setRebuys] = useState<"on" | "off">("on");
   const [busy, setBusy] = useState(false);
 
@@ -39,6 +43,10 @@ export default function GamesPage() {
       p_rebuys: mode === "cash" ? rebuys === "on" : false,
       p_bounty_buyin: mode === "tournament" ? bountyBuyin : null,
       p_bounty_payout: mode === "tournament" ? bountyPayout : null,
+      p_allow_cashout: mode === "tournament" ? allowCashout === "yes" : true,
+      p_allow_chop: mode === "tournament" ? allowChop === "yes" : false,
+      p_chop_stack: mode === "tournament" ? chopStack : null,
+      p_chop_bounty: mode === "tournament" ? chopBounty : null,
     });
     setBusy(false);
     if (error) { addToast(error.message, "error"); return; }
@@ -122,6 +130,31 @@ export default function GamesPage() {
                     : "Won bounties go back onto the table as chips in play."}
                 </p>
               </div>
+
+              <div>
+                <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Cash out mid-game</p>
+                <Toggle options={[{ value: "no", label: "No" }, { value: "yes", label: "Yes" }]}
+                  value={allowCashout} onChange={setAllowCashout} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>Allow chop</p>
+                <Toggle options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]}
+                  value={allowChop} onChange={setAllowChop} />
+              </div>
+              {allowChop === "yes" && (
+                <>
+                  <div>
+                    <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>On chop — table chips</p>
+                    <Toggle options={[{ value: "keep", label: "Keep stack" }, { value: "even", label: "Even split" }]}
+                      value={chopStack} onChange={setChopStack} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>On chop — bounty pool</p>
+                    <Toggle options={[{ value: "even", label: "Split equally" }, { value: "own", label: "Claim your own" }]}
+                      value={chopBounty} onChange={setChopBounty} />
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -135,7 +168,7 @@ export default function GamesPage() {
           <Button fullWidth loading={busy} onClick={create}>Create table</Button>
           <p className="text-center text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             {mode === "tournament"
-              ? `Bounty game: everyone pays ${fixedBuyin || 0} kr buy-in + ${bountyBuyin || 0} kr bounty (auto-joined). Knock players out to win from the pool.`
+              ? `Bounty game: players register (${kr(fixedBuyin || 0)} + ${kr(bountyBuyin || 0)} bounty), then you start it — bounties are sealed and no one can join after. Knock players out to win their bounty.`
               : "Cash game: players buy in within your range. Goes live right away; ends when everyone cashes out."}
           </p>
         </div>

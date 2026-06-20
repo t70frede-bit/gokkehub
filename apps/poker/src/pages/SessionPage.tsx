@@ -46,7 +46,9 @@ export default function SessionPage() {
           <h1 className="font-display text-xl font-bold" style={{ color: "rgb(var(--text-primary-rgb))" }}>
             {name(session.host_id)}'s table
           </h1>
-          <Badge variant="host">Live</Badge>
+          <Badge variant={session.status === "lobby" ? "primary" : "host"}>
+            {session.status === "lobby" ? "Registering" : "Live"}
+          </Badge>
         </div>
         <p className="text-xs mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
           {session.bounty_enabled
@@ -85,18 +87,48 @@ export default function SessionPage() {
         )}
       </Panel>
 
-      {/* Actions — the game is live from creation; it ends when everyone cashes out */}
+      {/* Actions */}
       <div className="space-y-3">
-        {!me && (
+        {/* Join — during registration (tournament lobby) or anytime in a cash game */}
+        {!me && !(session.mode === "tournament" && session.status === "active") && (
           <Button fullWidth onClick={() => setJoinOpen(true)}>Join — buy in</Button>
         )}
 
-        {me && !me.cashed_out_at && (
+        {/* Tournament lobby: host starts, registered players wait */}
+        {session.status === "lobby" && (
+          <>
+            {(isHost || isAdmin) && (
+              <Button fullWidth disabled={players.length < 2}
+                onClick={async () => {
+                  const { error } = await supabase.rpc("poker_start_session", { p_session: session.id });
+                  if (error) addToast(error.message, "error");
+                }}>
+                Start tournament{players.length < 2 ? " (need 2+)" : ""}
+              </Button>
+            )}
+            {me && !isHost && (
+              <p className="text-center text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                Registered for {kr(me.total_buyin)} — waiting for the host to start.
+              </p>
+            )}
+          </>
+        )}
+
+        {/* Chop agreed (keep-stack): remaining players must cash out their chips */}
+        {session.chop_agreed && me && !me.cashed_out_at && (
+          <div className="p-3 rounded-md text-sm text-center" style={{ background: "rgba(var(--color-warning-rgb),0.12)", color: "rgb(var(--color-warning-rgb))", border: "1px solid rgba(var(--color-warning-rgb),0.4)" }}>
+            Chop agreed — cash out your stack to finish.
+          </div>
+        )}
+
+        {me && !me.cashed_out_at && session.status === "active" && (
           <>
             {session.rebuys_enabled && !session.bounty_enabled && (
               <Button variant="ghost" fullWidth onClick={() => setRebuyOpen(true)}>Rebuy</Button>
             )}
-            <Button fullWidth onClick={() => setCashoutOpen(true)}>Cash out</Button>
+            {(session.allow_cashout !== false || session.chop_agreed) && (
+              <Button fullWidth onClick={() => setCashoutOpen(true)}>Cash out</Button>
+            )}
           </>
         )}
 

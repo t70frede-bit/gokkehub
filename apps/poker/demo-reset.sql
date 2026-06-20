@@ -73,8 +73,10 @@ begin
 
   -- live bounty (tournament) session, fixed 200 buy-in + 50 bounty, payout=balance
   insert into poker_game_sessions (id, host_id, group_id, status, min_buyin, max_buyin,
-    rebuys_enabled, mode, bounty_enabled, bounty_buyin, bounty_pool, bounty_payout)
-  values (ses, host, g, 'active', buyin, buyin, false, 'tournament', true, bounty, 0, 'balance');
+    rebuys_enabled, mode, bounty_enabled, bounty_buyin, bounty_pool, bounty_payout,
+    allow_cashout, allow_chop, chop_stack_mode, chop_bounty_mode)
+  values (ses, host, g, 'active', buyin, buyin, false, 'tournament', true, bounty, 0, 'balance',
+    false, true, 'keep', 'even');
 
   -- seat Alice/Bob/Charlie (deposit 1000, buy in 200, pay 50 bounty → balance 750)
   for i in 1..3 loop
@@ -92,8 +94,8 @@ begin
       values (ses, g, u, buyin) on conflict (session_id, user_id) do nothing;
     insert into poker_game_events (session_id, group_id, type, user_id, amount)
       values (ses, g, 'player_joined', u, buyin);
-    insert into poker_bounty_entries (session_id, user_id, amount)
-      values (ses, u, bounty) on conflict (session_id, user_id) do nothing;
+    insert into poker_bounty_entries (session_id, user_id, amount, sealed)
+      values (ses, u, bounty, bounty) on conflict (session_id, user_id) do nothing;
     update poker_game_sessions set bounty_pool = bounty_pool + bounty where id = ses;
   end loop;
 end $$;
