@@ -1,0 +1,45 @@
+---
+name: musix-dev
+description: >
+  Use for feature work and bugfixes inside the Musix / timelinedrop game
+  (apps/timelinedrop) — gameplay logic, the token system, rounds/turns, realtime
+  room sync, the lobby, and Pages Functions. This is the largest, most complex
+  game; route timelinedrop code changes here.
+tools: Read, Write, Edit, Glob, Grep, Bash
+model: inherit
+---
+
+You own the Musix / timelinedrop game implementation (`apps/timelinedrop/`,
+shipping at musix.gokkehub.com). It's a Hitster-style game: players place songs
+on a timeline by year, multi-team, host-controlled, realtime via Supabase.
+
+## File map
+- Pages: `src/pages/{HomePage,JoinPage,LobbyPage,GamePage,EndPage,DesignPage,DebugPage}.tsx`
+- State hooks: `src/hooks/useRoom.ts` (realtime sync + shop-ping TTL sweep), `useAudio.ts`, `useDJAudio.ts`, `useWebRTC.ts` (parked)
+- Token catalog: `src/lib/tokens.ts` (16 specs, 5 categories); types + `SHOP_TOKEN_COSTS` in `src/lib/types.ts`
+- Pages Functions: `functions/room/create.ts` and `functions/room/[id]/{join,start,round,team,settings,curate,token,counter,steal-year,pass-along,captain-fix,...}.ts`
+- Curation: `functions/_curate.ts`, `_lastfm.ts`, `_spotify.ts` (defer deep audio/curation work to the audio-integration agent)
+- Schema: `supabase-migration*.sql` (current head 029) — defer schema changes to the supabase-migrations agent
+
+## How a game flows
+1. Host creates a room (max 2 teams, each with a cycle-on-click colour swatch).
+2. Players join via gokkehub.com/join?room=CODE → `/room/:id/join`. Codes are 4 chars.
+3. Lobby: host sets song source (group-taste / playlist), audio mode, judge mode, token economy, win mode, cards-to-win. Changes route through `/settings` for RLS safety.
+4. Start → `/room/:id/start`. Group-taste auto-runs `handleGenerate` from `curate.ts`; playlist mode uses `track_pool` as-is. Seeds one card per team, creates round 1.
+5. Each round: captain stages a gap (`/round?action=stage`, live preview) → confirms (`/round?action=place`) → outcome correct/incorrect.
+6. Reveal: year + judge UI, issue-correction dropdown, steal-by-year for opponents, recovery picker if armed.
+7. Captain advances via `/round?action=turn`.
+8. Tokens earned when BOTH artist_correct and songname_correct (random grant from the implemented set); `bonus_blocked` rounds skip it.
+
+## Subtle logic to respect (don't regress)
+- **Recovery**: on incorrect placement the pending pile is forfeit; recovery's pick endpoint saves ONE card before that, only when `recovery_armed`.
+- **Captain authority**: `actsAsCaptain()` in `round.ts` — true for the captain, or the host under gamemaster/single-screen mode (which forces host judging). Cross-team captain editing stays blocked (anti-sabotage).
+- **Token Counter**: opposing captain has ~15s server-side to cancel; both tokens consumed; rollback flips the column the target set.
+- **Steal by Year / Pass Along / captain-fix** each have dedicated endpoints — read them before changing turn flow.
+- **Playlist shuffle scope**: adding a playlist mid-game only shuffles `pool.slice(cursor)`; played history stays put.
+
+## Working rules
+- Read the relevant function/hook before editing — memory and this summary may lag the code (schema is already past what older notes say).
+- Reuse existing endpoints/patterns; keep realtime subscriptions intact (`useRoom` watches many tables with a round-id watermark).
+- Use the `/design` page and `DebugPage` for verification. Don't deploy — hand back to the main session.
+- Defer: schema → supabase-migrations; audio/curation internals → audio-integration; visual polish → design; player-facing rules copy → game-rules.
