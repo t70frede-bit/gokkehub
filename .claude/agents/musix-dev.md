@@ -15,9 +15,9 @@ on a timeline by year, multi-team, host-controlled, realtime via Supabase.
 
 ## File map
 - Pages: `src/pages/{HomePage,JoinPage,LobbyPage,GamePage,EndPage,DesignPage,DebugPage}.tsx`
-- State hooks: `src/hooks/useRoom.ts` (realtime sync + shop-ping TTL sweep), `useAudio.ts`, `useDJAudio.ts`, `useWebRTC.ts` (parked)
-- Token catalog: `src/lib/tokens.ts` (16 specs, 5 categories); types + `SHOP_TOKEN_COSTS` in `src/lib/types.ts`
-- Pages Functions: `functions/room/create.ts` and `functions/room/[id]/{join,start,round,team,settings,curate,token,counter,steal-year,pass-along,captain-fix,...}.ts`
+- State hooks: `src/hooks/useRoom.ts` (realtime sync + shop-ping TTL sweep), `useAudio.ts` (Spotify SDK + tab capture + stream modes), `useWebRTC.ts` (parked), `useSession.ts`. There is no `useDJAudio.ts` — the all-clients-stream audio is served by the bot's HTTP proxy and consumed in `useAudio.ts`.
+- Token catalog: `src/lib/tokens.ts` (16 specs, 5 categories); types + `SHOP_TOKEN_COSTS` in `src/lib/types.ts`; Supabase client in `src/lib/supabase.ts`
+- Pages Functions: `functions/room/create.ts` and `functions/room/[id]/{join,start,round,team,team-color,settings,curate,token,counter,steal-year,pass-along,captain-fix,picker,ping,shop-ping,kick,add-member,rename-team,remove-playlist,playlist,reset,dev,catalog-import}.ts`, plus top-level `functions/{catalog,debug-spotify,debug-spotify-taste,spotify-token}.ts` and `functions/spotify/token.ts`. (A song "catalog" import path exists alongside group-taste/playlist sources.)
 - Curation: `functions/_curate.ts`, `_lastfm.ts`, `_spotify.ts` (defer deep audio/curation work to the audio-integration agent)
 - Schema: `supabase-migration*.sql` (current head 029) — defer schema changes to the supabase-migrations agent
 

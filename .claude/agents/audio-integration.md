@@ -25,7 +25,8 @@ realtime audio pipeline.
 - Streaming has a seek constraint: all-clients-stream seeks reload with `?seek=` rather than touching `el.currentTime`. Don't "fix" this — it's intentional.
 
 ## In-game audio pipeline
-- Hooks: `apps/timelinedrop/src/hooks/useAudio.ts` (Spotify SDK + tab capture), `useDJAudio.ts` (all-clients-stream pipe), `useWebRTC.ts` (parked — do not invest here).
+- Client hook: `apps/timelinedrop/src/hooks/useAudio.ts` (Spotify SDK + tab capture + stream modes). `useWebRTC.ts` is **parked — do not invest here**. There is no `useDJAudio.ts`.
+- All-clients-stream audio is served by the bot: `bots/musix-discord/src/http-stream-server.ts` (the `/stream/:videoId` proxy) with `resolver.ts` doing the YouTube resolve; browser clients fetch from it via `useAudio.ts`.
 - **Accept the WebRTC relay as-is.** Don't polish it; remote groups use a Discord call for shared audio. The game state syncs separately and reliably.
 
 ## Working rules

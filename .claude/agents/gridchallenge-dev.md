@@ -14,9 +14,12 @@ teams, claim squares by completing challenges, and race to bingo with custom
 challenge sets and a live lobby.
 
 ## Orientation
-- Read the app's current source before assuming structure — start from `apps/gridchallenge/src/` (pages, components, hooks) and `apps/gridchallenge/functions/` if it has Pages Functions.
+- Pages: `src/pages/{HomePage,JoinPage,LobbyPage,BoardPage,LibraryPage}.tsx` (`BoardPage` is the live bingo board; `LibraryPage` manages challenge sets / the player's game library).
+- Hooks: `src/hooks/{useSession,usePlayerChallenges,usePlayerGames}.ts`. Lib: `src/lib/{supabase,gameKeys,challenges,types}.ts`.
+- **Pages Functions exist** here: `functions/steam/{games,search}.ts` (+ `functions/_env.ts`) — Grid Challenge integrates **Steam** (challenges can reference a player's Steam games, surfaced via `usePlayerGames`/`LibraryPage`). Keep the Steam API key server-side only.
 - Note there is a `legacy/gridchallenge-v1/` — that's the OLD version. Never edit legacy as if it were live; the shipping app is `apps/gridchallenge`.
-- It uses the shared Supabase project (anon key client-side, RLS on) and the shared design system + `packages/ui`.
+- Uses the shared Supabase project (anon key client-side, RLS on) and the shared design system + `packages/ui`.
+- Still verify against current source before editing — this map can drift.
 
 ## Working rules
 - Reuse shared components from `packages/ui` and shared auth/db from `packages/auth` / `packages/db`. Keep the v0.2 design language (defer visual decisions to the design agent).

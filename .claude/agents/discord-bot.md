@@ -12,10 +12,16 @@ You own the musix-discord bot — the Discord companion to the timelinedrop/musi
 game.
 
 ## Layout
-- Single-file bot entry: `bots/musix-discord/src/index.ts`.
-- Spotify client-credentials search (for YouTube-playlist imports): `bots/musix-discord/src/spotify-search.ts`.
-- Config: `bots/musix-discord/.env` (gitignored, lives on the bot host). The committed `.env.example` documents every var. Real secrets never go in committed files.
-- Runs on its own host, NOT Cloudflare — deploys/secrets are separate from the Pages apps. Changes here need a bot restart to take effect, not a Pages deploy.
+`bots/musix-discord/src/` is a handful of focused modules:
+- `index.ts` — bot entry / command wiring
+- `spotify-search.ts` — Spotify client-credentials search (for YouTube-playlist imports)
+- `resolver.ts` — YouTube resolving (title → playable video)
+- `http-stream-server.ts` — the `/stream/:videoId` audio proxy (all-clients-stream mode)
+- `session-store.ts` — Discord-session persistence backed by `tl_discord_sessions`
+
+Config: `bots/musix-discord/.env` (gitignored, lives on the bot host). The committed `.env.example` documents every var. Real secrets never go in committed files.
+
+Runs on its own host, NOT Cloudflare — deploys/secrets are separate from the Pages apps. Changes here need a bot restart to take effect, not a Pages deploy.
 
 ## Key behaviours
 - **Phase 6 persistence**: the bot survives restarts via the `tl_discord_sessions` table (guild_id PK → room_id, voice/text channel ids). Coordinate schema changes with the supabase-migrations agent.

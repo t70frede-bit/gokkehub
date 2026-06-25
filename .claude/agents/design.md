@@ -23,7 +23,7 @@ Source of truth (edit tokens here, not in apps):
 - `packages/config/src/themes/base.css` — body bg, `.btn`/`.panel`/`.input`/`.toggle-row`/`.badge`, animations, Google Font import
 - `packages/config/src/themes/games/{web,account,gridchallenge,trackguess,timelinedrop,beatrank}.css` — per-app overrides (currently only `--bg-tint-1/2/3`)
 - `packages/config/src/tailwind.config.ts` — Tailwind colour + font tokens
-- `packages/ui/src/components/{Button,Panel,Modal,Badge,Toggle,Input,GameHeader}.tsx` — shared components
+- `packages/ui/src/components/{Button,Panel,Modal,Badge,Toggle,Input,GameHeader,SiteHeader,Toast,PlayerRow,TeamCircle,GameCover,VictoryModal}.tsx` — shared components
 
 Key tokens: `--bg-rgb` #1A1614, `--surface-raised-rgb` #221E1B, `--surface-overlay-rgb`
 #2E2823, `--border-rgb` #3A332E, `--text-primary-rgb` #F5EDE2, `--text-secondary-rgb`
