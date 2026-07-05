@@ -27,3 +27,9 @@ export type { ToggleProps }       from "./components/Toggle.tsx";
 export type { ModalProps }        from "./components/Modal.tsx";
 export type { VictoryModalProps } from "./components/VictoryModal.tsx";
 export type { ToastItem }         from "./components/Toast.tsx";
+
+// Buzzer sounds (shared by account picker + jeopardy big screen)
+export {
+  BUZZER_PRESETS, DEFAULT_BUZZER, playBuzzerSound, unlockAudio,
+} from "./lib/buzzer-sounds.ts";
+export type { BuzzerPreset } from "./lib/buzzer-sounds.ts";

@@ -2,15 +2,15 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import {
-  getRoom, getGame, getTeams, getSecrets, getSubmissions,
-  updateRoom, updateTeam, logEvent,
+  getRoom, getGame, getTeams, getPlayers, getSecrets, getSubmissions, getBuzzAttempts,
+  updateRoom, updateTeam, updatePlayer, logEvent, resetRoomData, createSecrets,
 } from "../../_supabase";
-import { tileValue, getSpecial, specialPowerup, resolvePowerupChoice } from "../../_game";
+import { tileValue, getSpecial, specialPowerup, resolvePowerupChoice, assignSpecialTiles } from "../../_game";
 import type {
   HostActionRequest, JpClosestNumberConfig, JpMultipleChoiceConfig,
   JpRankingConfig, JpRoom,
 } from "../../../src/lib/types";
-import { boardCount, getBoard } from "../../../src/lib/types";
+import { boardCount, getBoard, INITIAL_BOARD_STATE } from "../../../src/lib/types";
 
 // All host-driven state transitions run through here so board_state moves
 // through one server-side state machine instead of ad-hoc client writes.
@@ -31,7 +31,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     const room = await getRoom(env, roomId);
     if (!room) return json({ error: "Room not found" }, 404, req);
     if (room.host_id !== player_id) return json({ error: "Host only" }, 403, req);
-    if (room.status === "finished") return json({ error: "Game already ended" }, 409, req);
+    // Rematch is the only action allowed on a finished room.
+    if (room.status === "finished" && action.type !== "rematch") {
+      return json({ error: "Game already ended" }, 409, req);
+    }
 
     const state   = room.board_state;
     const updates: Partial<JpRoom> = {};
@@ -194,17 +197,55 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
               loss = Math.max(0, loss - reduction);
             }
             await updateTeam(env, team.id, { score: team.score - loss });
-            // Buzzers stay closed until the host reopens — their call when
-            // everyone has had a look at the still-open question.
-            updates.board_state = {
-              ...state,
-              buzzersOpen: false,
-              activeQuestion: { ...q, buzzedBy: null, buzzedPlayerId: null, timerStart: null },
-            };
             await logEvent(env, roomId, "answer_wrong", {
               team_id: team.id, player_id: q.buzzedPlayerId,
               payload: { tileKey: q.tileKey, pointsDelta: -loss },
             });
+
+            const lockedOut = [...(q.lockedOutTeamIds ?? []), team.id];
+
+            // Queue Lock-In: the next team that buzzed (initial race losers
+            // count as queued) is called automatically, in arrival order.
+            let next: { team_id: number; player_id: string } | undefined;
+            if (game.config.buzzer.queueMode === "lockIn") {
+              const attempts = await getBuzzAttempts(env, roomId, q.tileKey, state.buzzRound);
+              next = attempts.find(a => a.team_id !== team.id && !lockedOut.includes(a.team_id));
+            }
+
+            if (next) {
+              updates.board_state = {
+                ...state,
+                buzzersOpen: false,
+                activeQuestion: {
+                  ...q,
+                  buzzedBy:         next.team_id,
+                  buzzedPlayerId:   next.player_id,
+                  timerStart:       Date.now(),
+                  secondChanceUsed: false,
+                  lockedOutTeamIds: lockedOut,
+                },
+              };
+              await logEvent(env, roomId, "buzz_win", {
+                team_id: next.team_id, player_id: next.player_id,
+                payload: { tileKey: q.tileKey, buzzRound: state.buzzRound, fromQueue: true },
+              });
+            } else {
+              // Buzzers stay closed until the host reopens — their call when
+              // everyone has had a look at the still-open question.
+              // secondChanceUsed resets: it described THIS team's buzz.
+              updates.board_state = {
+                ...state,
+                buzzersOpen: false,
+                activeQuestion: {
+                  ...q,
+                  buzzedBy:         null,
+                  buzzedPlayerId:   null,
+                  timerStart:       null,
+                  secondChanceUsed: false,
+                  lockedOutTeamIds: lockedOut,
+                },
+              };
+            }
           }
         }
         break;
@@ -244,27 +285,48 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         } else if (q.mode === "closestNumber") {
           const cn = cfg as JpClosestNumberConfig;
           const valid = subs.filter(s => typeof s.payload.value === "number");
-          // Ties break on submission order — subs are ordered by created_at.
-          const winner = [...valid].sort((a, b) =>
-            Math.abs((a.payload.value as number) - cn.correct) -
-            Math.abs((b.payload.value as number) - cn.correct))[0];
+          const dist  = (s: typeof subs[number]) => Math.abs((s.payload.value as number) - cn.correct);
+          const best  = valid.length ? Math.min(...valid.map(dist)) : null;
+          const winners = best === null ? [] : valid.filter(s => dist(s) === best);
+          // House rule: ties split the points evenly, each share rounded UP
+          // to the nearest 100 (300 two ways → 200 each).
+          const share = winners.length <= 1
+            ? value
+            : Math.ceil(value / winners.length / 100) * 100;
           for (const s of subs) {
-            const won = winner && s.team_id === winner.team_id;
-            if (won) awards.push({ teamId: s.team_id, delta: value });
-            lines.push(`${name(s.team_id)}: ${s.payload.value} ${cn.unit} ${won ? `+${value}` : ""}`.trim());
+            const won = winners.some(w => w.team_id === s.team_id);
+            if (won) awards.push({ teamId: s.team_id, delta: share });
+            lines.push(`${name(s.team_id)}: ${s.payload.value} ${cn.unit} ${won ? `+${share}` : ""}`.trim());
           }
           lines.push(`Answer: ${cn.correct} ${cn.unit}`);
         } else if (q.mode === "ranking") {
           const rk = cfg as JpRankingConfig;
           const n  = rk.items.length;
-          for (const s of subs) {
-            const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
-            const correctCount = order.filter((v, i) => v === i).length;
-            const delta = rk.scoring === "exact"
-              ? (correctCount === n ? value : 0)
-              : Math.floor((value * correctCount) / n);
-            if (delta > 0) awards.push({ teamId: s.team_id, delta });
-            lines.push(`${name(s.team_id)}: ${correctCount}/${n} in place ${delta > 0 ? `+${delta}` : ""}`.trim());
+          if (rk.scoring === "exact") {
+            // All-or-nothing: perfect orders "win the round"; multiple
+            // perfects tie and split under the same round-up-to-100 rule.
+            const perfect = subs.filter(s => {
+              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
+              return order.length === n && order.every((v, i) => v === i);
+            });
+            const share = perfect.length <= 1
+              ? value
+              : Math.ceil(value / perfect.length / 100) * 100;
+            for (const s of subs) {
+              const won = perfect.some(w => w.team_id === s.team_id);
+              if (won) awards.push({ teamId: s.team_id, delta: share });
+              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
+              const correctCount = order.filter((v, i) => v === i).length;
+              lines.push(`${name(s.team_id)}: ${correctCount}/${n} in place ${won ? `+${share}` : ""}`.trim());
+            }
+          } else {
+            for (const s of subs) {
+              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
+              const correctCount = order.filter((v, i) => v === i).length;
+              const delta = Math.floor((value * correctCount) / n);
+              if (delta > 0) awards.push({ teamId: s.team_id, delta });
+              lines.push(`${name(s.team_id)}: ${correctCount}/${n} in place ${delta > 0 ? `+${delta}` : ""}`.trim());
+            }
           }
         }
 
@@ -298,13 +360,19 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           });
         }
 
+        // Winner list drives the big screen's reveal audio (house rule: the
+        // winning team's buzzer sound plays as the answer is revealed).
+        const winnerTeamIds = [
+          ...(prompt ? [prompt.teamId] : []),
+          ...awards.filter(a => a.delta > 0).map(a => a.teamId),
+        ];
         updates.board_state = {
           ...state,
           buzzersOpen:    false,
           spentTiles:     [...state.spentTiles, q.tileKey],
           activeQuestion: null,
           powerupPrompt:  prompt,
-          lastResolution: { tileKey: q.tileKey, mode: q.mode ?? "standard", lines },
+          lastResolution: { tileKey: q.tileKey, mode: q.mode ?? "standard", lines, winnerTeamIds },
         };
         break;
       }
@@ -427,6 +495,63 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         break;
       }
 
+      case "assign_player": {
+        const players = await getPlayers(env, roomId);
+        const teams   = await getTeams(env, roomId);
+        const target  = players.find(p => p.id === action.playerId);
+        const team    = teams.find(t => t.id === action.teamId);
+        if (!target || !team) return json({ error: "Player or team not found" }, 404, req);
+
+        const oldTeamId = target.team_id;
+        await updatePlayer(env, target.id, { team_id: team.id });
+        if (!team.captain_id) await updateTeam(env, team.id, { captain_id: target.id });
+        // If they captained their old team, promote another member (or clear).
+        if (oldTeamId !== null && oldTeamId !== team.id) {
+          const oldTeam = teams.find(t => t.id === oldTeamId);
+          if (oldTeam?.captain_id === target.id) {
+            const successor = players.find(p => p.team_id === oldTeamId && p.id !== target.id);
+            await updateTeam(env, oldTeamId, { captain_id: successor?.id ?? null });
+          }
+        }
+        break;
+      }
+
+      case "set_captain": {
+        const players = await getPlayers(env, roomId);
+        const target  = players.find(p => p.id === action.playerId);
+        if (!target || target.team_id === null) return json({ error: "Player not on a team" }, 404, req);
+        await updateTeam(env, target.team_id, { captain_id: target.id });
+        break;
+      }
+
+      case "shuffle_teams": {
+        if (room.status !== "lobby") return json({ error: "Lobby only" }, 409, req);
+        const players = (await getPlayers(env, roomId)).filter(p => p.id !== room.host_id);
+        const teams   = await getTeams(env, roomId);
+        if (teams.length < 2) return json({ error: "Nothing to shuffle" }, 409, req);
+
+        const shuffled = [...players].sort(() => Math.random() - 0.5);
+        const captains = new Map<number, string>();
+        for (let i = 0; i < shuffled.length; i++) {
+          const team = teams[i % teams.length];
+          await updatePlayer(env, shuffled[i].id, { team_id: team.id });
+          if (!captains.has(team.id)) captains.set(team.id, shuffled[i].id);
+        }
+        for (const t of teams) {
+          await updateTeam(env, t.id, { captain_id: captains.get(t.id) ?? null });
+        }
+        break;
+      }
+
+      case "rename_team": {
+        const name = action.name?.trim().slice(0, 30);
+        if (!name) return json({ error: "Name required" }, 400, req);
+        const teams = await getTeams(env, roomId);
+        if (!teams.some(t => t.id === action.teamId)) return json({ error: "Team not found" }, 404, req);
+        await updateTeam(env, action.teamId, { name });
+        break;
+      }
+
       case "set_score": {
         const teams = await getTeams(env, roomId);
         const team  = teams.find(t => t.id === action.teamId);
@@ -450,6 +575,25 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           interlude: false,
         };
         await logEvent(env, roomId, "game_end");
+        break;
+      }
+
+      case "rematch": {
+        // Same room, same players — scores, board, special tiles, and the
+        // event/attempt/submission logs all start over. Back to the lobby.
+        if (room.status !== "finished") return json({ error: "Game still running" }, 409, req);
+        const game = await getGame(env, room.game_id);
+        if (!game) return json({ error: "Game config missing" }, 500, req);
+
+        const teams = await getTeams(env, roomId);
+        for (const t of teams) {
+          await updateTeam(env, t.id, { score: 0, powerup: null });
+        }
+        await resetRoomData(env, roomId);
+        await createSecrets(env, roomId, assignSpecialTiles(game.config));
+
+        updates.status      = "lobby";
+        updates.board_state = INITIAL_BOARD_STATE;
         break;
       }
 

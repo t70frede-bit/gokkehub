@@ -29,7 +29,10 @@ export default function PlayerPage() {
   const me       = useMemo(() => players.find(p => p.id === playerId) ?? null, [players, playerId]);
   const myTeam   = useMemo(() => teams.find(t => t.id === me?.team_id) ?? null, [teams, me]);
 
-  const { phase, buzz, inFlight } = useBuzzer(room, playerId, me?.team_id ?? null);
+  const { phase, buzz, inFlight } = useBuzzer(
+    room, playerId, me?.team_id ?? null,
+    game?.config.buzzer.queueMode ?? "rebuzz",
+  );
 
   const [busy, setBusy]           = useState(false);
   const [wager, setWager]         = useState("");
@@ -101,6 +104,20 @@ export default function PlayerPage() {
   const mySubmitted = (q?.submittedTeamIds ?? []).includes(myTeam.id);
   const myFinalSubmitted = (final?.submittedTeamIds ?? []).includes(myTeam.id);
 
+  const teamMode    = game.config.teams?.mode === "teams";
+  const isCaptain   = myTeam.captain_id === me.id;
+  const captainName = players.find(p => p.id === myTeam.captain_id)?.name ?? "your captain";
+  const captainOnlyBuzz = teamMode && game.config.teams?.buzzerMode === "captain" && !isCaptain;
+
+  // Device questions and Final Jeopardy always run on the captain's phone —
+  // the team gathers around it. Everyone else gets a pointer, not inputs.
+  const gatherAround = (
+    <p className="text-center py-6" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+      ⭐ Gather around <span className="font-bold">{captainName}</span>'s phone —
+      your team answers there!
+    </p>
+  );
+
   const header = (
     <div className="flex justify-between items-center rounded-lg px-4 py-3"
       style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
@@ -139,7 +156,14 @@ export default function PlayerPage() {
             style={{ color: "rgb(var(--text-secondary-rgb))" }}>
             Final Jeopardy — {final.category}
           </p>
-          {final.stage === "wager" && (
+          {(final.stage === "wager" || final.stage === "question") && teamMode && !isCaptain ? (
+            myFinalSubmitted
+              ? <p className="text-center font-bold py-6" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                  Your team is locked in ✓
+                </p>
+              : gatherAround
+          ) : null}
+          {(!teamMode || isCaptain) && final.stage === "wager" && (
             myFinalSubmitted ? (
               <p className="text-center font-bold py-6" style={{ color: "rgb(var(--color-primary-rgb))" }}>
                 Wager locked in ✓
@@ -161,7 +185,7 @@ export default function PlayerPage() {
               </div>
             )
           )}
-          {final.stage === "question" && (
+          {(!teamMode || isCaptain) && final.stage === "question" && (
             myFinalSubmitted ? (
               <p className="text-center font-bold py-6" style={{ color: "rgb(var(--color-primary-rgb))" }}>
                 Answer locked in ✓
@@ -202,7 +226,13 @@ export default function PlayerPage() {
             b.type === "text"
               ? <p key={b.id} className="font-bold text-lg mb-2">{b.text}</p>
               : <img key={b.id} src={b.url} alt="" className="rounded-md mb-2 max-h-48 object-contain" />)}
-          {!state.buzzersOpen && !mySubmitted ? (
+          {teamMode && !isCaptain ? (
+            mySubmitted
+              ? <p className="text-center font-bold py-6" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                  Your team is locked in ✓
+                </p>
+              : gatherAround
+          ) : !state.buzzersOpen && !mySubmitted ? (
             <p className="text-center py-4" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
               Waiting for the host to open answers…
             </p>
@@ -229,7 +259,18 @@ export default function PlayerPage() {
   return (
     <div className="flex-1 w-full max-w-md mx-auto p-4 flex flex-col gap-4">
       {header}
-      <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} />
+      {captainOnlyBuzz && q ? (
+        <div className="jp-buzzer w-full flex-1 min-h-64 rounded-2xl flex items-center justify-center font-bold text-xl text-center p-6"
+          style={{
+            background: "rgb(var(--surface-input-rgb))",
+            border:     "1px solid rgb(var(--border-rgb))",
+            color:      "rgba(var(--text-secondary-rgb), 0.8)",
+          }}>
+          ⭐ {captainName} buzzes for your team
+        </div>
+      ) : (
+        <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} />
+      )}
       {phase === "you-buzzed" && (
         <div className="text-center">
           <p className="font-bold mb-1">

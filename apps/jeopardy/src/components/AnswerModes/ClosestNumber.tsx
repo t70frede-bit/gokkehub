@@ -54,7 +54,7 @@ export default function ClosestNumber({ cfg, submitted, busy, onSubmit }: Closes
         Lock in
       </Button>
       <p className="text-center text-xs" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-        Closest answer wins — ties go to whoever locked in first.
+        Closest answer wins — ties split the points.
       </p>
     </div>
   );

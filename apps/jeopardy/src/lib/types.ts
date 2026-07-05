@@ -112,7 +112,18 @@ export interface JpFinalJeopardyConfig {
   answerBlocks:   JpBlock[];
 }
 
+export interface JpTeamsConfig {
+  /** "solo" = every player is their own one-member team (the original mode). */
+  mode:  "solo" | "teams";
+  count: number;                       // 2–8; UI warns above 4
+  /** Who may buzz on standard questions. Device questions (MC/closest/
+   *  ranking/final) are ALWAYS captain-only — the team gathers around the
+   *  captain's phone. That's a house rule, not a setting. */
+  buzzerMode: "anyone" | "captain";
+}
+
 export interface JpGameConfig {
+  teams?: JpTeamsConfig;
   boards: JpBoardConfig[];
   buzzer: {
     queueMode:              JpQueueMode;  // MVP: "rebuzz"
@@ -131,6 +142,7 @@ export interface JpGameConfig {
 }
 
 export const DEFAULT_JP_CONFIG: JpGameConfig = {
+  teams: { mode: "solo", count: 2, buzzerMode: "anyone" },
   boards: [
     {
       categories:  ["Category 1", "Category 2", "Category 3", "Category 4", "Category 5"],
@@ -209,6 +221,8 @@ export interface JpActiveQuestion {
   special?:       "buzzed";
   /** Teams that have locked in a submission (submission modes only). */
   submittedTeamIds?: number[];
+  /** Queue Lock-In: teams that answered this tile wrong and can't rebuzz it. */
+  lockedOutTeamIds?: number[];
 }
 
 export interface JpPowerupPrompt {
@@ -224,6 +238,8 @@ export interface JpResolutionSummary {
   mode:    JpAnswerMode;
   /** Display-ready lines for the big screen, e.g. "Alice +300". */
   lines:   string[];
+  /** Teams that scored — the first one's buzzer audio plays at the reveal. */
+  winnerTeamIds?: number[];
 }
 
 export type JpFinalStage = "wager" | "question" | "judging";
@@ -289,6 +305,8 @@ export interface JpPlayer {
   team_id:   number | null;
   name:      string;
   user_id:   string | null;
+  /** Profile buzzer sound snapshot: "preset:<id>" or an uploaded-clip URL. */
+  buzzer_sound?: string | null;
   connected: boolean;
   joined_at: string;
 }
@@ -322,7 +340,7 @@ export interface UpdateGameRequest {
 export interface LaunchGameRequest  { host_name: string }
 export interface LaunchGameResponse { room_id: string; player_id: string }
 
-export interface JoinRoomRequest  { name: string }
+export interface JoinRoomRequest  { name: string; team_id?: number | null }
 export interface JoinRoomResponse { player_id: string; team_id: number }
 
 export type HostAction =
@@ -342,7 +360,22 @@ export type HostAction =
   | { type: "final_reveal_question" }
   | { type: "final_judge"; teamId: number; correct: boolean }
   | { type: "set_score"; teamId: number; score: number }
-  | { type: "end_game" };
+  | { type: "assign_player"; playerId: string; teamId: number }
+  | { type: "set_captain"; playerId: string }
+  | { type: "shuffle_teams" }
+  | { type: "rename_team"; teamId: number; name: string }
+  | { type: "end_game" }
+  | { type: "rematch" };                  // finished room → back to lobby, fresh state
+
+export interface JpGameEvent {
+  id:         number;
+  room_id:    string;
+  event_type: JpEventType;
+  team_id:    number | null;
+  player_id:  string | null;
+  payload:    Record<string, unknown> | null;
+  created_at: string;
+}
 
 export interface HostActionRequest {
   player_id: string;                      // must match jp_rooms.host_id

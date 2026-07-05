@@ -112,6 +112,10 @@ export async function createPlayer(env: Env, data: Partial<JpPlayer>): Promise<J
   return rows[0];
 }
 
+export async function updatePlayer(env: Env, playerId: string, data: Partial<JpPlayer>): Promise<void> {
+  await req(env, "PATCH", "jp_players", `id=eq.${playerId}`, data);
+}
+
 // ── Room secrets (special tiles — service-role only, no anon read) ───────────
 
 export async function getSecrets(env: Env, roomId: string): Promise<JpSpecialTiles> {
@@ -122,6 +126,33 @@ export async function getSecrets(env: Env, roomId: string): Promise<JpSpecialTil
 
 export async function createSecrets(env: Env, roomId: string, specialTiles: JpSpecialTiles): Promise<void> {
   await req(env, "POST", "jp_room_secrets", "", { room_id: roomId, special_tiles: specialTiles });
+}
+
+/** Rematch: wipe a room's per-game rows so the next round starts clean. */
+export async function resetRoomData(env: Env, roomId: string): Promise<void> {
+  await Promise.all([
+    req(env, "DELETE", "jp_room_secrets",  `room_id=eq.${roomId}`),
+    req(env, "DELETE", "jp_buzz_attempts", `room_id=eq.${roomId}`),
+    req(env, "DELETE", "jp_submissions",   `room_id=eq.${roomId}`),
+    req(env, "DELETE", "jp_game_events",   `room_id=eq.${roomId}`),
+  ]);
+}
+
+// ── Buzz attempts (Queue Lock-In reads the race results back) ────────────────
+
+export interface JpBuzzAttemptRow {
+  team_id:    number;
+  player_id:  string;
+  created_at: string;
+}
+
+export async function getBuzzAttempts(
+  env: Env, roomId: string, tileKey: string, buzzRound: number
+): Promise<JpBuzzAttemptRow[]> {
+  return req<JpBuzzAttemptRow>(
+    env, "GET", "jp_buzz_attempts",
+    `room_id=eq.${roomId}&tile_key=eq.${encodeURIComponent(tileKey)}&buzz_round=eq.${buzzRound}` +
+    `&select=team_id,player_id,created_at&order=created_at.asc,id.asc`);
 }
 
 // ── Submissions (answer modes + Final Jeopardy — service-role only) ──────────

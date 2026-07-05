@@ -33,6 +33,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!player || player.room_id !== roomId) return json({ error: "Player not in room" }, 403, req);
     if (player.team_id === null)              return json({ error: "Not on a team" }, 403, req);
 
+    // House rule: device questions and Final Jeopardy are ALWAYS answered
+    // from the captain's phone — the team gathers around it. In solo mode
+    // every player captains their own team, so this check is a no-op there.
+    const allTeams = await getTeams(env, roomId);
+    const myTeam   = allTeams.find(t => t.id === player.team_id);
+    if (myTeam?.captain_id !== player.id) {
+      return json({ error: "Answers go in on your captain's phone" }, 403, req);
+    }
+
     const state = room.board_state;
 
     if (kind === "final_wager" || kind === "final_answer") {
@@ -41,9 +50,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
       if (kind === "final_wager") {
         if (final.stage !== "wager") return json({ error: "Wagering is closed" }, 409, req);
-        const teams = await getTeams(env, roomId);
-        const team  = teams.find(t => t.id === player.team_id);
-        const max   = Math.max(0, team?.score ?? 0);
+        const max = Math.max(0, myTeam?.score ?? 0);
         const wager = Math.round(Number(value));
         if (!Number.isFinite(wager) || wager < 0 || wager > max) {
           return json({ error: `Wager must be 0–${max}` }, 400, req);

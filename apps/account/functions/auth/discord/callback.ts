@@ -95,6 +95,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     discord: discordData,
   });
 
+  // Restore the buzzer sound chosen before logging out
+  const storedBuzzer = await env.SESSIONS.get(`buzzer_sound:${discordUser.id}`);
+  if (storedBuzzer) {
+    await updateSession(env.SESSIONS, sessionId, { buzzerSound: storedBuzzer });
+  }
+
   // Restore Last.fm connection if the user had it linked before logging out
   const storedLastfm = await env.SESSIONS.get(`lastfm_link:${discordUser.id}`);
   if (storedLastfm) {

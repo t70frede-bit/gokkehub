@@ -13,6 +13,8 @@ export interface SessionData {
   displayName: string | null;
   avatarUrl:   string | null;
   steamId?:    string | null; // manually-entered Steam ID for library import
+  /** Buzzer sound played on game buzz-ins: "preset:<id>" or an uploaded-file URL. */
+  buzzerSound?: string | null;
 
   // Linked third-party accounts (populated after OAuth)
   spotify?: {
@@ -54,6 +56,7 @@ export interface PublicSessionData {
   displayName:      string | null;
   avatarUrl:        string | null;
   steamId?:         string | null;
+  buzzerSound?:     string | null;
   spotifyScopes?:   string;  // scopes granted at last Spotify auth (space-separated)
   lastfmUsername?:  string | null;
   linked: {

@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { playBuzzerSound, unlockAudio } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import BoardGrid from "../components/Board/BoardGrid";
 import QuestionOverlay from "../components/Board/QuestionOverlay";
@@ -21,10 +22,54 @@ export default function BigScreenPage() {
     if (room?.status === "finished" && roomId) navigate(`/end/${roomId}`, { replace: true });
   }, [room?.status, roomId]);
 
+  // ── Buzzer audio ────────────────────────────────────────────────────
+  // Browsers block audio until a user gesture, so the TV shows a one-time
+  // "enable sound" chip. After that: the buzz winner's sound plays on
+  // buzz-in, and a device-round winner's sound plays at the reveal.
+  const [soundOn, setSoundOn] = useState(false);
+  const lastBuzzPlayer = useRef<string | null>(null);
+  const lastReveal     = useRef<string | null>(null);
+
+  const buzzedPlayerId = room?.board_state.activeQuestion?.buzzedPlayerId ?? null;
+  useEffect(() => {
+    if (buzzedPlayerId === lastBuzzPlayer.current) return;
+    lastBuzzPlayer.current = buzzedPlayerId;
+    if (!soundOn || !buzzedPlayerId) return;
+    const p = players.find(pl => pl.id === buzzedPlayerId);
+    playBuzzerSound(p?.buzzer_sound);
+  }, [buzzedPlayerId, soundOn, players]);
+
+  const resolution = room?.board_state.lastResolution ?? null;
+  useEffect(() => {
+    const key = resolution ? `${resolution.tileKey}` : null;
+    if (key === lastReveal.current) return;
+    lastReveal.current = key;
+    const winner = resolution?.winnerTeamIds?.[0];
+    if (!soundOn || winner === undefined) return;
+    const captainId = teams.find(t => t.id === winner)?.captain_id;
+    const captain   = players.find(pl => pl.id === captainId);
+    playBuzzerSound(captain?.buzzer_sound);
+  }, [resolution, soundOn, teams, players]);
+
   if (loading) return <div className="flex-1 flex items-center justify-center opacity-60">Loading…</div>;
   if (error || !room || !game) {
     return <div className="flex-1 flex items-center justify-center">{error ?? "Room not found"}</div>;
   }
+
+  const soundChip = !soundOn && (
+    <button
+      type="button"
+      onClick={() => { unlockAudio(); setSoundOn(true); }}
+      className="fixed top-3 right-3 z-30 rounded-full px-4 py-2 font-bold text-sm"
+      style={{
+        background: "rgb(var(--surface-raised-rgb))",
+        border:     "1px solid rgb(var(--color-primary-rgb))",
+        color:      "rgb(var(--color-primary-rgb))",
+      }}
+    >
+      🔊 Click to enable buzzer sounds
+    </button>
+  );
 
   const state = room.board_state;
   const board = getBoard(game.config, state.currentBoard);
@@ -42,6 +87,7 @@ export default function BigScreenPage() {
   if (room.status === "lobby") {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-10">
+        {soundChip}
         <h1 className="text-3xl font-bold" style={secondary}>{game.title}</h1>
         <div className="text-center">
           <p className="text-xl uppercase tracking-widest" style={secondary}>
@@ -67,6 +113,7 @@ export default function BigScreenPage() {
   if (state.interlude) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-10">
+        {soundChip}
         <h1 className="text-4xl font-black uppercase tracking-widest" style={secondary}>
           Halfway scores
         </h1>
@@ -98,6 +145,7 @@ export default function BigScreenPage() {
   if (final) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-10">
+        {soundChip}
         <h1 className="text-3xl font-black uppercase tracking-widest" style={secondary}>
           Final Jeopardy
         </h1>
@@ -163,6 +211,7 @@ export default function BigScreenPage() {
   // ── Board play ──────────────────────────────────────────────────────
   return (
     <div className="flex-1 relative flex flex-col gap-4 p-4 sm:p-8">
+      {soundChip}
       {game.config.board2Mode !== "off" && (
         <p className="text-center text-sm font-bold uppercase tracking-widest" style={secondary}>
           Board {state.currentBoard + 1}

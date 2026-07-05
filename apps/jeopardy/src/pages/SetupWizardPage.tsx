@@ -131,6 +131,7 @@ export default function SetupWizardPage() {
   }
 
   const filledCount = Object.keys(config.boards[0].tiles).length;
+  const teamsCfg    = config.teams ?? DEFAULT_JP_CONFIG.teams!;
   const powerups    = config.powerups ?? DEFAULT_JP_CONFIG.powerups!;
   const dangerous   = config.dangerous ?? DEFAULT_JP_CONFIG.dangerous!;
   const final       = config.finalJeopardy ?? DEFAULT_JP_CONFIG.finalJeopardy!;
@@ -169,6 +170,54 @@ export default function SetupWizardPage() {
           {filledCount} tiles with questions on board 1
           {board2Mode === "custom" ? `, ${Object.keys(config.boards[1]?.tiles ?? {}).length} on board 2` : ""}.
         </p>
+      </Panel>
+
+      {/* ── Teams ──────────────────────────────────────────────────────── */}
+      <Panel>
+        <h2 className="text-lg font-bold mb-1">Teams</h2>
+        <div className="flex flex-wrap items-center gap-4 mt-3">
+          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
+            Mode
+            <select value={teamsCfg.mode}
+              onChange={e => patch({ teams: { ...teamsCfg, mode: e.target.value as "solo" | "teams" } })}
+              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
+              <option value="solo">Solo — everyone plays for themselves</option>
+              <option value="teams">Teams</option>
+            </select>
+          </label>
+          {teamsCfg.mode === "teams" && (
+            <>
+              <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
+                Teams
+                <input type="number" min={2} max={8} value={teamsCfg.count}
+                  onChange={e => patch({ teams: { ...teamsCfg, count: Math.min(8, Math.max(2, Number(e.target.value) || 2)) } })}
+                  className="w-16 px-2 py-1.5 rounded-md text-sm outline-none" style={inputStyle} />
+              </label>
+              <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
+                Buzzing
+                <select value={teamsCfg.buzzerMode}
+                  onChange={e => patch({ teams: { ...teamsCfg, buzzerMode: e.target.value as "anyone" | "captain" } })}
+                  className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
+                  <option value="anyone">Anyone on the team</option>
+                  <option value="captain">Captain only</option>
+                </select>
+              </label>
+            </>
+          )}
+        </div>
+        {teamsCfg.mode === "teams" && (
+          <>
+            {teamsCfg.count > 4 && (
+              <p className="text-sm mt-2" style={{ color: "rgb(var(--color-danger-rgb))" }}>
+                More than 4 teams gets chaotic — recommended max is 4.
+              </p>
+            )}
+            <p className="text-xs mt-2" style={labelStyle}>
+              Multiple choice, closest number, ranking, and Final Jeopardy are always answered on the
+              captain's phone — the team gathers around it.
+            </p>
+          </>
+        )}
       </Panel>
 
       {/* ── Boards ─────────────────────────────────────────────────────── */}
@@ -306,16 +355,27 @@ export default function SetupWizardPage() {
           )}
         </div>
 
-        <label className="flex items-center gap-2 mt-5 text-sm font-semibold" style={labelStyle}>
-          Default on-buzz display
-          <select value={config.buzzer.defaultBuzzDisplayMode}
-            onChange={e => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: e.target.value as JpBuzzDisplayMode } })}
-            className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-            <option value="stay">Stay visible</option>
-            <option value="disappear">Disappear on buzz</option>
-            <option value="typewriter">Typewriter (freezes on buzz)</option>
-          </select>
-        </label>
+        <div className="flex flex-wrap gap-5 mt-5">
+          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
+            Default on-buzz display
+            <select value={config.buzzer.defaultBuzzDisplayMode}
+              onChange={e => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: e.target.value as JpBuzzDisplayMode } })}
+              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
+              <option value="stay">Stay visible</option>
+              <option value="disappear">Disappear on buzz</option>
+              <option value="typewriter">Typewriter (freezes on buzz)</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
+            After a wrong answer
+            <select value={config.buzzer.queueMode}
+              onChange={e => patch({ buzzer: { ...config.buzzer, queueMode: e.target.value as JpGameConfig["buzzer"]["queueMode"] } })}
+              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
+              <option value="rebuzz">Must Re-Buzz — everyone competes fresh</option>
+              <option value="lockIn">Queue Lock-In — next in queue is called</option>
+            </select>
+          </label>
+        </div>
       </Panel>
 
       {/* ── Power-ups & dangerous tiles ────────────────────────────────── */}

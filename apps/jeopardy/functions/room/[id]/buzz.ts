@@ -1,7 +1,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getRoom, getGame, getPlayer, rpc } from "../../_supabase";
+import { getRoom, getGame, getPlayer, getTeams, rpc } from "../../_supabase";
 import type { BuzzRequest, BuzzResponse } from "../../../src/lib/types";
 
 // The authoritative buzz handler. Pages Functions are stateless, so the
@@ -34,8 +34,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
     const state = room.board_state;
     const q     = state.activeQuestion;
-    // Fast pre-checks; the resolve RPC re-checks all of this atomically.
-    if (room.status !== "playing" || !state.buzzersOpen || !q || q.buzzedBy !== null) {
+    if (room.status !== "playing" || !q) {
       return json({ error: "Buzzers are closed" }, 409, req);
     }
     if ((q.mode ?? "standard") !== "standard") {
@@ -48,6 +47,37 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     ]);
     if (!player || player.room_id !== roomId) return json({ error: "Player not in room" }, 403, req);
     if (player.team_id === null)              return json({ error: "Not on a team" }, 403, req);
+
+    const queueMode = game?.config.buzzer.queueMode ?? "rebuzz";
+    const answering = q.buzzedBy !== null;
+
+    // Captain-only buzzing (team mode option). Standard questions only —
+    // device questions never reach this endpoint.
+    if (game?.config.teams?.mode === "teams" && game.config.teams.buzzerMode === "captain") {
+      const teams = await getTeams(env, roomId);
+      const team  = teams.find(t => t.id === player.team_id);
+      if (team?.captain_id !== player.id) {
+        return json({ error: "Only your captain can buzz in this game" }, 403, req);
+      }
+    }
+
+    // Fast pre-checks; the resolve RPC re-checks the race case atomically.
+    // A fresh race needs open buzzers. Buzzing while someone is answering is
+    // only allowed in Queue Lock-In — it queues you for the wrong-answer case.
+    if (!answering && !state.buzzersOpen) {
+      return json({ error: "Buzzers are closed" }, 409, req);
+    }
+    if (answering && queueMode !== "lockIn") {
+      return json({ error: "Buzzers are closed" }, 409, req);
+    }
+    if (q.buzzedBy === player.team_id) {
+      return json({ error: "You're already in" }, 409, req);
+    }
+    // Lock-outs only exist in Queue Lock-In; Must Re-Buzz lets everyone
+    // compete fresh each time the host reopens.
+    if (queueMode === "lockIn" && (q.lockedOutTeamIds ?? []).includes(player.team_id)) {
+      return json({ error: "Your team already answered this one" }, 409, req);
+    }
 
     const windowMs = game?.config.buzzer.collectionWindowMs ?? 300;
     const sniper   = game?.config.powerups?.sniper;
@@ -62,8 +92,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     });
 
     if (rank === 0) {
-      // Duplicate tap — they're already in this race.
+      // Duplicate tap — they're already in this race / queue.
       return json({ winner_team_id: null, winner_player_id: null } as BuzzResponse, 200, req);
+    }
+
+    // Queued behind the current answerer (Queue Lock-In): no race to resolve —
+    // the reject handler promotes the queue in arrival order.
+    if (answering) {
+      return json({ winner_team_id: q.buzzedBy, winner_player_id: q.buzzedPlayerId } as BuzzResponse, 200, req);
     }
 
     // Rank 1 owns the window; everyone else is only a backstop resolver.

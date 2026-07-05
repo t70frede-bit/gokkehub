@@ -135,6 +135,7 @@ export function toPublicSession(data: SessionData): PublicSessionData {
     displayName:     data.displayName,
     avatarUrl:       data.avatarUrl,
     steamId:         data.steamId ?? data.steam?.steamId ?? null,
+    buzzerSound:     data.buzzerSound ?? null,
     spotifyScopes:   data.spotify?.scope,
     lastfmUsername:  data.lastfm?.username ?? null,
     linked: {

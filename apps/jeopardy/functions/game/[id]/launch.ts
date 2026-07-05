@@ -2,7 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getGame, createRoom, createPlayer, createSecrets } from "../../_supabase";
+import { getGame, createRoom, createPlayer, createSecrets, createTeam } from "../../_supabase";
 import { assignSpecialTiles } from "../../_game";
 import type { LaunchGameRequest, LaunchGameResponse } from "../../../src/lib/types";
 import { INITIAL_BOARD_STATE } from "../../../src/lib/types";
@@ -47,14 +47,32 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     // board_state is world-readable, so the map must not live there.
     await createSecrets(env, roomId, assignSpecialTiles(game.config));
 
+    // Team mode: the configured teams exist from the start so joiners can
+    // pick one. Solo mode keeps the original team-per-player join flow.
+    const teamsCfg = game.config.teams;
+    if (teamsCfg?.mode === "teams") {
+      const count = Math.min(8, Math.max(2, teamsCfg.count));
+      for (let i = 0; i < count; i++) {
+        await createTeam(env, {
+          room_id:    roomId,
+          name:       `Team ${i + 1}`,
+          score:      0,
+          powerup:    null,
+          captain_id: null,
+          sort_order: i,
+        });
+      }
+    }
+
     // The host is a player row (so the lobby lists them) but never on a team —
     // they run the controller, they don't answer.
     await createPlayer(env, {
-      id:      hostPlayerId,
-      room_id: roomId,
-      team_id: null,
-      name:    hostName.slice(0, 30),
-      user_id: session.userId,
+      id:           hostPlayerId,
+      room_id:      roomId,
+      team_id:      null,
+      name:         hostName.slice(0, 30),
+      user_id:      session.userId,
+      buzzer_sound: session.buzzerSound ?? null,
     });
 
     return json({ room_id: roomId, player_id: hostPlayerId } as LaunchGameResponse, 201, req);
