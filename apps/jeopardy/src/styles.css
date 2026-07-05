@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Board tiles ────────────────────────────────────────────────────────────── */
+.jp-tile {
+  transition: transform 0.2s ease, opacity 0.3s ease, box-shadow 0.2s ease;
+}
+.jp-tile-spent {
+  opacity: 0.25;
+  pointer-events: none;
+}
+.jp-tile-selectable:hover {
+  transform: scale(1.03);
+  box-shadow: 0 0 12px rgba(var(--color-primary-rgb), 0.35);
+}
+
+/* ── Question overlay slide-up ─────────────────────────────────────────────── */
+@keyframes jp-overlay-in {
+  from { transform: translateY(2rem); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.jp-overlay {
+  animation: jp-overlay-in 0.25s ease-out;
+}
+
+/* ── Podium buzz glow ──────────────────────────────────────────────────────── */
+@keyframes jp-buzz-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(var(--color-primary-rgb), 0.5); }
+  50%      { box-shadow: 0 0 24px rgba(var(--color-primary-rgb), 0.9); }
+}
+.jp-podium-buzzed {
+  animation: jp-buzz-glow 1s ease-in-out infinite;
+}
+
+/* ── Buzzer button ─────────────────────────────────────────────────────────── */
+.jp-buzzer {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.jp-buzzer:active:not(:disabled) {
+  transform: scale(0.96);
+}

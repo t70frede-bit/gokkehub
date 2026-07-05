@@ -1,0 +1,11 @@
+/**
+ * jeopardy (jeopardy.gokkehub.com)
+ * Inherits the platform v0.2 "vinyl liner notes" defaults.
+ * Slightly cooler, deeper tint — a nod to the classic quiz-show blue
+ * without leaving the warm-charcoal family.
+ */
+:root {
+  --bg-tint-1: #161619;
+  --bg-tint-2: #101013;
+  --bg-tint-3: #1D1D22;
+}

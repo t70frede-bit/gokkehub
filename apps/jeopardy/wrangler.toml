@@ -1,0 +1,13 @@
+# Cloudflare Pages config for the jeopardy app (jeopardy.gokkehub.com).
+# Mirrors timelinedrop: SPA in ./dist + Pages Functions in ./functions.
+name = "jeopardy"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-10-22"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "5c6e3465296c41e986c086727c8459e7"
+
+[vars]
+SUPABASE_URL = "https://verbxfbfurachhxztkob.supabase.co"
+# SUPABASE_SERVICE_ROLE_KEY set as an encrypted secret

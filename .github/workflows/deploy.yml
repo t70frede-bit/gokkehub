@@ -196,4 +196,36 @@ jobs:
           workingDirectory: apps/poker
           command: pages deploy dist --project-name=poker --branch=main
 
+  # ── Deploy jeopardy (jeopardy.gokkehub.com) ─────────────────────────────────
+  # Mirrors the timelinedrop/poker pattern.
+  deploy-jeopardy:
+    name: Deploy jeopardy
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build jeopardy app
+        run: npm run build --workspace=apps/jeopardy
+        env:
+          VITE_SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/jeopardy
+          command: pages deploy dist --project-name=jeopardy --branch=main
+
   # trackguess, beatrank deploy jobs will be added once those apps are built

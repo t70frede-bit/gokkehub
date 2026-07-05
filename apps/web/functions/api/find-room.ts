@@ -10,6 +10,7 @@ interface Env {
 const GAMES = [
   { table: "tl_rooms", url: "https://musix.gokkehub.com",      label: "musix"        },
   { table: "lobbies",  url: "https://partybingo.gokkehub.com", label: "gridchallenge"},
+  { table: "jp_rooms", url: "https://jeopardy.gokkehub.com",   label: "jeopardy"     },
 ] as const;
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {

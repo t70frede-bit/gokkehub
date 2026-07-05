@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- GokkeHub favicon — bold amber G on a warm-charcoal backplate, per the
+       v0.2 "vinyl liner notes" design system. Drawn as a stroked path (arc +
+       spur) so it's font-independent and reads cleanly at every favicon
+       size, including 16×16. -->
+  <rect width="64" height="64" rx="12" fill="#221E1B"/>
+  <!-- M 47,22 : start at the top-right opening of the G
+       A 18,18 …,1,0 47,42 : ~280° arc anti-clockwise around to bottom-right
+       L 36,42  : bottom spur going inward
+       L 36,34  : spur tip rising into the G's bowl -->
+  <path d="M 47 22 A 18 18 0 1 0 47 42 L 36 42 L 36 34"
+        fill="none"
+        stroke="#D4A04A"
+        stroke-width="8"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>
