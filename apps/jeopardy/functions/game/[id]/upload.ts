@@ -5,15 +5,27 @@ import { json, handlePreflight } from "../../_cors";
 import { getGame } from "../../_supabase";
 import type { UploadResponse } from "../../../src/lib/types";
 
-// Question-image upload → Supabase Storage jp-media bucket (public read).
+// Question-media upload → Supabase Storage jp-media bucket (public read).
 // Host-checked; the anon key has no storage write access.
 
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BY_KIND: Record<string, number> = {
+  image: 8  * 1024 * 1024,
+  audio: 15 * 1024 * 1024,
+  video: 60 * 1024 * 1024,
+};
 const ALLOWED: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png":  "png",
   "image/webp": "webp",
   "image/gif":  "gif",
+  "audio/mpeg": "mp3",
+  "audio/mp4":  "m4a",
+  "audio/ogg":  "ogg",
+  "audio/webm": "weba",
+  "audio/wav":  "wav",
+  "audio/x-wav": "wav",
+  "video/mp4":  "mp4",
+  "video/webm": "webm",
 };
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
@@ -34,10 +46,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
     const contentType = req.headers.get("Content-Type") ?? "";
     const ext = ALLOWED[contentType];
-    if (!ext) return json({ error: "Only jpeg/png/webp/gif images" }, 415, req);
+    if (!ext) return json({ error: "Unsupported file type (images, mp3/m4a/ogg/wav audio, mp4/webm video)" }, 415, req);
 
+    const kind = contentType.split("/")[0];
+    const max  = MAX_BY_KIND[kind] ?? MAX_BY_KIND.image;
     const length = Number(req.headers.get("Content-Length") ?? 0);
-    if (length > MAX_BYTES) return json({ error: "Image too large (max 8MB)" }, 413, req);
+    if (length > max) {
+      return json({ error: `File too large (max ${Math.round(max / 1024 / 1024)}MB)` }, 413, req);
+    }
 
     const path = `${gameId}/${crypto.randomUUID()}.${ext}`;
     const res  = await fetch(`${env.SUPABASE_URL}/storage/v1/object/jp-media/${path}`, {

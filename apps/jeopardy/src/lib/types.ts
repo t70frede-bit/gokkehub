@@ -24,7 +24,32 @@ export interface JpImageBlock {
   revealMode?: JpRevealMode;  // question-side only
 }
 
-export type JpBlock = JpTextBlock | JpImageBlock;
+export interface JpAudioBlock {
+  id:   string;
+  type: "audio";
+  url:  string;
+  /** Playback window in seconds; trims applied at play time, file untouched. */
+  trimStart?: number;
+  trimEnd?:   number;
+  fadeIn?:    boolean;
+  fadeOut?:   boolean;
+  onBuzz?:    "stop" | "fadeOut" | "continue";   // default stop
+}
+
+export interface JpVideoBlock {
+  id:   string;
+  type: "video";
+  url:  string;
+  trimStart?: number;
+  trimEnd?:   number;
+  fadeIn?:    boolean;
+  fadeOut?:   boolean;
+  onBuzz?:    "stop" | "freeze" | "continue";    // default freeze
+  muted?:     boolean;                           // pair with an audio block for fine control
+}
+
+export type JpBlock = JpTextBlock | JpImageBlock | JpAudioBlock | JpVideoBlock;
+export type JpMediaBlock = JpAudioBlock | JpVideoBlock;
 
 // ── Answer modes ──────────────────────────────────────────────────────────────
 
@@ -223,6 +248,8 @@ export interface JpActiveQuestion {
   submittedTeamIds?: number[];
   /** Queue Lock-In: teams that answered this tile wrong and can't rebuzz it. */
   lockedOutTeamIds?: number[];
+  /** Bumped by the host's replay_media action — big screen restarts clips. */
+  mediaNonce?: number;
 }
 
 export interface JpPowerupPrompt {
@@ -349,6 +376,7 @@ export type HostAction =
   | { type: "reveal_all_categories" }
   | { type: "select_tile"; tileKey: string; pickerTeamId?: number }
   | { type: "open_buzzers" }              // every open starts a fresh buzz round
+  | { type: "replay_media" }              // restart the question's audio/video clip
   | { type: "accept_answer" }
   | { type: "reject_answer" }
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)

@@ -334,6 +334,8 @@ export default function SetupWizardPage() {
               const tile   = board.tiles[key];
               const badge  = tile && tile.answerMode !== "standard"
                 ? { multipleChoice: "abc", closestNumber: "123", ranking: "1→8" }[tile.answerMode]
+                : tile?.questionBlocks.some(b => b.type === "video") ? "🎬"
+                : tile?.questionBlocks.some(b => b.type === "audio") ? "🎵"
                 : tile?.questionBlocks.some(b => b.type === "image") ? "🖼" : null;
               return (
                 <button key={key} type="button" onClick={() => setEditKey(key)}

@@ -254,6 +254,8 @@ export default function BigScreenPage() {
           blocks={tile.questionBlocks}
           displayMode={mode === "standard" ? displayMode : "stay"}
           buzzed={q.buzzedBy !== null}
+          mediaNonce={q.mediaNonce ?? 0}
+          soundOn={soundOn}
         >
           <div className="min-h-20 flex flex-col items-center justify-center gap-2">
             {q.special === "buzzed" && (

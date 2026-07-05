@@ -1,9 +1,10 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Button, Modal } from "@gokkehub/ui";
+import MediaBlockEditor from "./MediaBlockEditor";
 import type {
   JpAnswerMode, JpBlock, JpBuzzDisplayMode, JpClosestNumberConfig,
-  JpImageBlock, JpMultipleChoiceConfig, JpRankingConfig, JpRevealMode,
-  JpTileConfig, UploadResponse,
+  JpImageBlock, JpMediaBlock, JpMultipleChoiceConfig, JpRankingConfig,
+  JpRevealMode, JpTileConfig, UploadResponse,
 } from "../lib/types";
 
 interface TileEditorModalProps {
@@ -29,12 +30,17 @@ function firstText(blocks: JpBlock[] | undefined): string {
 function firstImage(blocks: JpBlock[] | undefined): JpImageBlock | null {
   return ((blocks ?? []).find(b => b.type === "image") as JpImageBlock | undefined) ?? null;
 }
+function firstMedia(blocks: JpBlock[] | undefined): JpMediaBlock | null {
+  return ((blocks ?? []).find(b => b.type === "audio" || b.type === "video") as JpMediaBlock | undefined) ?? null;
+}
 
 export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, onClose }: TileEditorModalProps) {
   const [qText, setQText] = useState(firstText(tile?.questionBlocks));
   const [aText, setAText] = useState(firstText(tile?.answerBlocks));
   const [qImage, setQImage] = useState<JpImageBlock | null>(firstImage(tile?.questionBlocks));
   const [aImage, setAImage] = useState<JpImageBlock | null>(firstImage(tile?.answerBlocks));
+  const [qMedia, setQMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.questionBlocks));
+  const [aMedia, setAMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.answerBlocks));
   const [reveal, setReveal] = useState<JpRevealMode>(qImage?.revealMode ?? "off");
   const [display, setDisplay] = useState<JpBuzzDisplayMode | "">(tile?.buzzDisplayMode ?? "");
   const [mode, setMode] = useState<JpAnswerMode>(tile?.answerMode ?? "standard");
@@ -86,7 +92,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   };
 
   const save = () => {
-    const hasContent = qText.trim() || qImage;
+    const hasContent = qText.trim() || qImage || qMedia;
     if (!hasContent) { onSave(null); return; }   // clearing the tile
 
     if (mode === "multipleChoice") {
@@ -104,9 +110,11 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     const questionBlocks: JpBlock[] = [];
     if (qText.trim()) questionBlocks.push({ id: `${tileKey}-q`, type: "text", text: qText.trim() });
     if (qImage)       questionBlocks.push({ ...qImage, revealMode: reveal });
+    if (qMedia)       questionBlocks.push(qMedia);
     const answerBlocks: JpBlock[] = [];
     if (aText.trim()) answerBlocks.push({ id: `${tileKey}-a`, type: "text", text: aText.trim() });
     if (aImage)       answerBlocks.push(aImage);
+    if (aMedia)       answerBlocks.push(aMedia);
 
     const out: JpTileConfig = { questionBlocks, answerBlocks, answerMode: mode };
     if (display) out.buzzDisplayMode = display as JpBuzzDisplayMode;
@@ -196,6 +204,9 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
             </label>
           )}
         </div>
+
+        <MediaBlockEditor gameId={gameId} blockId={`${tileKey}-qmedia`}
+          block={qMedia} onChange={setQMedia} />
 
         {/* ── Answer mode ───────────────────────────────────────────── */}
         <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>
@@ -312,6 +323,8 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
           <input ref={aFileRef} type="file" accept="image/*" className="hidden"
             onChange={e => e.target.files?.[0] && upload("a", e.target.files[0])} />
         </div>
+        <MediaBlockEditor gameId={gameId} blockId={`${tileKey}-amedia`}
+          block={aMedia} onChange={setAMedia} />
 
         {error && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
 

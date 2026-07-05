@@ -225,7 +225,11 @@ export default function PlayerPage() {
           {tile.questionBlocks.map(b =>
             b.type === "text"
               ? <p key={b.id} className="font-bold text-lg mb-2">{b.text}</p>
-              : <img key={b.id} src={b.url} alt="" className="rounded-md mb-2 max-h-48 object-contain" />)}
+              : b.type === "image"
+                ? <img key={b.id} src={b.url} alt="" className="rounded-md mb-2 max-h-48 object-contain" />
+                : <p key={b.id} className="text-sm mb-2" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                    {b.type === "audio" ? "🎵 Listen on the big screen" : "🎬 Watch the big screen"}
+                  </p>)}
           {teamMode && !isCaptain ? (
             mySubmitted
               ? <p className="text-center font-bold py-6" style={{ color: "rgb(var(--color-primary-rgb))" }}>

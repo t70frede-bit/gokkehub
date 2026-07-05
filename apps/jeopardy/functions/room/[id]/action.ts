@@ -129,6 +129,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         break;
       }
 
+      case "replay_media": {
+        const q = state.activeQuestion;
+        if (!q) return json({ error: "No active question" }, 409, req);
+        updates.board_state = {
+          ...state,
+          activeQuestion: { ...q, mediaNonce: (q.mediaNonce ?? 0) + 1 },
+        };
+        break;
+      }
+
       case "accept_answer":
       case "reject_answer": {
         const q = state.activeQuestion;

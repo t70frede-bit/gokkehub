@@ -82,6 +82,8 @@ export default function HostControllerPage() {
     else void dispatch({ type: "select_tile", tileKey });
   };
 
+  const hasMedia = !!tile?.questionBlocks.some(b => b.type === "audio" || b.type === "video");
+
   const hostAnswerPanel = tile && (
     <div className="mt-3 rounded-md px-3 py-2"
       style={{ background: "rgba(var(--color-primary-rgb), 0.12)", border: "1px solid rgba(var(--color-primary-rgb), 0.4)" }}>
@@ -89,7 +91,11 @@ export default function HostControllerPage() {
       {tile.answerBlocks.map(b =>
         b.type === "text"
           ? <p key={b.id} className="font-bold" style={{ color: "rgb(var(--color-primary-rgb))" }}>{b.text}</p>
-          : <img key={b.id} src={b.url} alt="" className="rounded-md mt-1 max-h-32 object-contain" />)}
+          : b.type === "image"
+            ? <img key={b.id} src={b.url} alt="" className="rounded-md mt-1 max-h-32 object-contain" />
+            : b.type === "audio"
+              ? <audio key={b.id} src={b.url} controls className="w-full mt-1" />
+              : <video key={b.id} src={b.url} controls className="rounded-md mt-1 max-h-32" />)}
       {mode === "multipleChoice" && (
         <p className="font-bold" style={{ color: "rgb(var(--color-primary-rgb))" }}>
           ✓ {(tile.answerModeConfig as JpMultipleChoiceConfig).options[(tile.answerModeConfig as JpMultipleChoiceConfig).correctIndex]}
@@ -234,7 +240,17 @@ export default function HostControllerPage() {
             {tile.questionBlocks.map(b =>
               b.type === "text"
                 ? <p key={b.id} className="font-bold text-lg leading-snug">{b.text}</p>
-                : <img key={b.id} src={b.url} alt="" className="rounded-md mt-1 max-h-40 object-contain" />)}
+                : b.type === "image"
+                  ? <img key={b.id} src={b.url} alt="" className="rounded-md mt-1 max-h-40 object-contain" />
+                  : <p key={b.id} className="text-sm mt-1" style={secondary}>
+                      {b.type === "audio" ? "🎵 Audio clip plays on the big screen" : "🎬 Video clip plays on the big screen"}
+                    </p>)}
+            {hasMedia && (
+              <Button variant="ghost" size="sm" className="mt-2" loading={busy}
+                onClick={() => dispatch({ type: "replay_media" })}>
+                🔁 Replay clip on big screen
+              </Button>
+            )}
             {hostAnswerPanel}
           </Panel>
 
