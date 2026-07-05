@@ -2,7 +2,8 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
-import { getGame, createRoom, createPlayer } from "../../_supabase";
+import { getGame, createRoom, createPlayer, createSecrets } from "../../_supabase";
+import { assignSpecialTiles } from "../../_game";
 import type { LaunchGameRequest, LaunchGameResponse } from "../../../src/lib/types";
 import { INITIAL_BOARD_STATE } from "../../../src/lib/types";
 
@@ -41,6 +42,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       status:      "lobby",
       board_state: INITIAL_BOARD_STATE,
     });
+
+    // Special tiles are rolled once at launch and stored server-side only —
+    // board_state is world-readable, so the map must not live there.
+    await createSecrets(env, roomId, assignSpecialTiles(game.config));
 
     // The host is a player row (so the lobby lists them) but never on a team —
     // they run the controller, they don't answer.

@@ -1,5 +1,8 @@
 import type { Env } from "./_env";
-import type { JpGame, JpRoom, JpTeam, JpPlayer, JpEventType } from "../src/lib/types";
+import type {
+  JpGame, JpRoom, JpTeam, JpPlayer, JpEventType,
+  JpSpecialTiles, JpSubmissionKind, JpSubmissionRow,
+} from "../src/lib/types";
 
 // Minimal Supabase REST client for use in Cloudflare Functions (no Node deps).
 // Same pattern as timelinedrop/functions/_supabase.ts.
@@ -41,7 +44,9 @@ export async function rpc<T>(env: Env, fn: string, args: Record<string, unknown>
     const text = await res.text();
     throw new Error(`Supabase RPC ${fn}: ${res.status} ${text}`);
   }
-  return res.json() as Promise<T>;
+  // VOID functions come back with an empty body — don't choke on it.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 // ── Games ─────────────────────────────────────────────────────────────────────
@@ -105,6 +110,48 @@ export async function getPlayer(env: Env, playerId: string): Promise<JpPlayer | 
 export async function createPlayer(env: Env, data: Partial<JpPlayer>): Promise<JpPlayer> {
   const rows = await req<JpPlayer>(env, "POST", "jp_players", "", data);
   return rows[0];
+}
+
+// ── Room secrets (special tiles — service-role only, no anon read) ───────────
+
+export async function getSecrets(env: Env, roomId: string): Promise<JpSpecialTiles> {
+  const rows = await req<{ special_tiles: JpSpecialTiles }>(
+    env, "GET", "jp_room_secrets", `room_id=eq.${roomId}&select=special_tiles`);
+  return rows[0]?.special_tiles ?? {};
+}
+
+export async function createSecrets(env: Env, roomId: string, specialTiles: JpSpecialTiles): Promise<void> {
+  await req(env, "POST", "jp_room_secrets", "", { room_id: roomId, special_tiles: specialTiles });
+}
+
+// ── Submissions (answer modes + Final Jeopardy — service-role only) ──────────
+
+export async function getSubmissions(
+  env: Env, roomId: string, tileKey: string, kind?: JpSubmissionKind
+): Promise<JpSubmissionRow[]> {
+  const kindFilter = kind ? `&kind=eq.${kind}` : "";
+  return req<JpSubmissionRow>(
+    env, "GET", "jp_submissions",
+    `room_id=eq.${roomId}&tile_key=eq.${encodeURIComponent(tileKey)}${kindFilter}` +
+    `&select=team_id,player_id,kind,payload,created_at&order=created_at.asc`);
+}
+
+/** Returns false when this team already submitted (unique index conflict). */
+export async function createSubmission(
+  env: Env, roomId: string, tileKey: string, kind: JpSubmissionKind,
+  teamId: number, playerId: string, value: unknown
+): Promise<boolean> {
+  try {
+    await req(env, "POST", "jp_submissions", "", {
+      room_id: roomId, tile_key: tileKey, kind,
+      team_id: teamId, player_id: playerId, payload: { value },
+    });
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/duplicate key|409|23505/.test(msg)) return false;
+    throw err;
+  }
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────

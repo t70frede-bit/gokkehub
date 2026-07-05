@@ -1,4 +1,5 @@
 import type { JpPlayer, JpTeam } from "../../lib/types";
+import { POWERUP_META } from "../../lib/types";
 
 interface PodiumStripProps {
   teams:        JpTeam[];
@@ -27,6 +28,11 @@ export default function PodiumStrip({ teams, players, buzzedTeamId }: PodiumStri
             <div className="font-bold text-sm sm:text-lg truncate max-w-40"
               style={{ color: "rgb(var(--text-primary-rgb))" }}
             >
+              {team.powerup && (
+                <span className="mr-1" title={POWERUP_META[team.powerup].name}>
+                  {POWERUP_META[team.powerup].icon}
+                </span>
+              )}
               {team.name}
             </div>
             <div className="font-black text-xl sm:text-3xl tabular-nums"

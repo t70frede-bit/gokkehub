@@ -38,6 +38,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (room.status !== "playing" || !state.buzzersOpen || !q || q.buzzedBy !== null) {
       return json({ error: "Buzzers are closed" }, 409, req);
     }
+    if ((q.mode ?? "standard") !== "standard") {
+      return json({ error: "This question uses answers, not buzzers" }, 409, req);
+    }
 
     const [player, game] = await Promise.all([
       getPlayer(env, body.player_id),
@@ -47,6 +50,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (player.team_id === null)              return json({ error: "Not on a team" }, 403, req);
 
     const windowMs = game?.config.buzzer.collectionWindowMs ?? 300;
+    const sniper   = game?.config.powerups?.sniper;
+    const sniperMs = sniper?.enabled ? (sniper.advantageMs ?? 0) : 0;
 
     const rank = await rpc<number>(env, "jp_buzz_insert", {
       p_room_id:    roomId,
@@ -68,7 +73,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       p_room_id:    roomId,
       p_tile_key:   q.tileKey,
       p_buzz_round: state.buzzRound,
-      p_sniper_ms:  0, // power-ups are a later pass; the plumbing is ready
+      p_sniper_ms:  sniperMs, // applied only to teams holding the Sniper power-up
     });
     const winner = rows[0] ?? { winner_team_id: null, winner_player_id: null };
 

@@ -33,6 +33,17 @@
   animation: jp-buzz-glow 1s ease-in-out infinite;
 }
 
+/* ── Image reveal modes ────────────────────────────────────────────────────── */
+.jp-img-silhouette { filter: brightness(0); }
+.jp-img-pixelated  { filter: blur(16px); }
+@keyframes jp-sharpen {
+  from { filter: blur(20px); }
+  to   { filter: blur(0); }
+}
+.jp-img-animated { animation: jp-sharpen 20s linear forwards; }
+.jp-img-frozen   { animation-play-state: paused; }
+.jp-img-revealed { filter: none !important; animation: none !important; }
+
 /* ── Buzzer button ─────────────────────────────────────────────────────────── */
 .jp-buzzer {
   touch-action: manipulation;

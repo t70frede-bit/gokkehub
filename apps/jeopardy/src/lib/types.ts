@@ -8,8 +8,8 @@ export interface GokkeHubSession {
 }
 
 // ── Question blocks ───────────────────────────────────────────────────────────
-// MVP ships text blocks only; the union is the extension point for
-// image/audio/video blocks in later passes.
+
+export type JpRevealMode = "off" | "silhouette" | "pixelated" | "animated";
 
 export interface JpTextBlock {
   id:   string;
@@ -17,20 +17,82 @@ export interface JpTextBlock {
   text: string;
 }
 
-export type JpBlock = JpTextBlock;
+export interface JpImageBlock {
+  id:   string;
+  type: "image";
+  url:  string;               // public URL in the jp-media storage bucket
+  revealMode?: JpRevealMode;  // question-side only
+}
 
-// ── Game config (setup wizard output, stored on jp_games.config) ─────────────
+export type JpBlock = JpTextBlock | JpImageBlock;
+
+// ── Answer modes ──────────────────────────────────────────────────────────────
 
 export type JpAnswerMode      = "standard" | "multipleChoice" | "closestNumber" | "ranking";
 export type JpBuzzDisplayMode = "disappear" | "typewriter" | "stay";
 export type JpQueueMode       = "rebuzz" | "lockIn";
 
+export interface JpMultipleChoiceConfig {
+  options:      string[];   // up to 8
+  correctIndex: number;
+  /** true → only the fastest correct submission scores; false → all correct score. */
+  firstCorrectOnly: boolean;
+}
+
+export interface JpClosestNumberConfig {
+  input:   "field" | "slider";
+  min?:    number;          // slider only
+  max?:    number;          // slider only
+  unit:    string;          // free text: Kr., %, km, …
+  correct: number;
+}
+
+export interface JpRankingConfig {
+  /** Items stored in the CORRECT order; shuffled on player phones. */
+  items:   string[];        // up to 8
+  scoring: "exact" | "partial";
+}
+
+export type JpAnswerModeConfig = JpMultipleChoiceConfig | JpClosestNumberConfig | JpRankingConfig;
+
+// ── Power-ups & dangerous tiles ───────────────────────────────────────────────
+
+export type JpPowerupType = "sniper" | "buffer" | "secondChance";
+
+export const POWERUP_META: Record<JpPowerupType, { icon: string; name: string; desc: string }> = {
+  sniper:       { icon: "⚡", name: "Sniper",        desc: "Permanent buzz head-start" },
+  buffer:       { icon: "🛡️", name: "Buffer",        desc: "Flat reduction on wrong-answer loss" },
+  secondChance: { icon: "🎯", name: "Second Chance", desc: "Answer twice per buzz" },
+};
+
+export interface JpPowerupConfig {
+  enabled:   boolean;
+  /** Random placement picks a filled tile within these rows (0-based, inclusive). */
+  rowRange:  [number, number];
+  advantageMs?:     number;  // sniper
+  reductionAmount?: number;  // buffer
+}
+
+export interface JpDangerousConfig {
+  buzzed: {
+    enabled:  boolean;
+    count:    number;              // how many Buzzed tiles per board
+    rowRange: [number, number];
+  };
+}
+
+/** Secret per-board tile assignments, stored server-side only (jp_room_secrets). */
+export type JpSpecialTile = "powerup_sniper" | "powerup_buffer" | "powerup_secondChance" | "buzzed";
+export type JpSpecialTiles = Record<string, Record<string, JpSpecialTile>>; // "board0" → tileKey → special
+
+// ── Game config (setup wizard output, stored on jp_games.config) ─────────────
+
 export interface JpTileConfig {
   questionBlocks: JpBlock[];
   answerBlocks:   JpBlock[];
-  answerMode:     JpAnswerMode;          // MVP: always "standard"
+  answerMode:     JpAnswerMode;
+  answerModeConfig?: JpAnswerModeConfig;
   buzzDisplayMode?: JpBuzzDisplayMode;   // overrides board default
-  specialTile?:   string | null;         // MVP: always null
 }
 
 export interface JpBoardConfig {
@@ -41,6 +103,15 @@ export interface JpBoardConfig {
   tiles: Record<string, JpTileConfig>;
 }
 
+export type JpBoard2Mode = "off" | "doubleUp" | "custom";
+
+export interface JpFinalJeopardyConfig {
+  enabled:        boolean;
+  category:       string;
+  questionBlocks: JpBlock[];
+  answerBlocks:   JpBlock[];
+}
+
 export interface JpGameConfig {
   boards: JpBoardConfig[];
   buzzer: {
@@ -48,6 +119,15 @@ export interface JpGameConfig {
     defaultBuzzDisplayMode: JpBuzzDisplayMode;
     collectionWindowMs:     number;
   };
+  powerups?: {
+    sniper:       JpPowerupConfig;
+    buffer:       JpPowerupConfig;
+    secondChance: JpPowerupConfig;
+  };
+  dangerous?:        JpDangerousConfig;
+  board2Mode?:       JpBoard2Mode;
+  powerupCarryover?: "persist" | "reset";
+  finalJeopardy?:    JpFinalJeopardyConfig;
 }
 
 export const DEFAULT_JP_CONFIG: JpGameConfig = {
@@ -64,7 +144,43 @@ export const DEFAULT_JP_CONFIG: JpGameConfig = {
     defaultBuzzDisplayMode: "stay",
     collectionWindowMs:     300,
   },
+  powerups: {
+    sniper:       { enabled: false, rowRange: [0, 1], advantageMs: 200 },
+    buffer:       { enabled: false, rowRange: [2, 3], reductionAmount: 100 },
+    secondChance: { enabled: false, rowRange: [3, 4] },
+  },
+  dangerous: {
+    buzzed: { enabled: false, count: 1, rowRange: [2, 4] },
+  },
+  board2Mode:       "off",
+  powerupCarryover: "persist",
+  finalJeopardy: {
+    enabled:        false,
+    category:       "",
+    questionBlocks: [],
+    answerBlocks:   [],
+  },
 };
+
+/**
+ * Resolve a board by index. Board 1 in doubleUp mode is derived from board 0
+ * with doubled point values (never stored). Shared by client and functions.
+ */
+export function getBoard(config: JpGameConfig, index: number): JpBoardConfig | null {
+  if (index === 0) return config.boards[0] ?? null;
+  if (index !== 1) return null;
+  const mode = config.board2Mode ?? "off";
+  if (mode === "custom")   return config.boards[1] ?? null;
+  if (mode === "doubleUp") {
+    const b = config.boards[0];
+    return b ? { ...b, pointValues: b.pointValues.map(v => v * 2) } : null;
+  }
+  return null;
+}
+
+export function boardCount(config: JpGameConfig): number {
+  return (config.board2Mode ?? "off") === "off" ? 1 : 2;
+}
 
 // ── Rows ──────────────────────────────────────────────────────────────────────
 
@@ -83,19 +199,55 @@ export interface JpGame {
 
 export interface JpActiveQuestion {
   tileKey:        string;
+  /** Defaults to "standard" for rooms created before answer modes shipped. */
+  mode?:          JpAnswerMode;
   buzzedBy:       number | null;   // jp_teams.id
   buzzedPlayerId: string | null;
   timerStart:     number | null;   // ms epoch, set server-side on buzz resolve
   secondChanceUsed: boolean;
+  /** Set when this tile was a Buzzed dangerous tile (display drama). */
+  special?:       "buzzed";
+  /** Teams that have locked in a submission (submission modes only). */
+  submittedTeamIds?: number[];
+}
+
+export interface JpPowerupPrompt {
+  teamId:         number;
+  powerupType:    JpPowerupType;
+  tileKey:        string;
+  value:          number;                 // points forfeited if they claim the power-up
+  currentPowerup: JpPowerupType | null;   // non-null → claiming is a swap
+}
+
+export interface JpResolutionSummary {
+  tileKey: string;
+  mode:    JpAnswerMode;
+  /** Display-ready lines for the big screen, e.g. "Alice +300". */
+  lines:   string[];
+}
+
+export type JpFinalStage = "wager" | "question" | "judging";
+
+export interface JpFinalState {
+  stage:            JpFinalStage;
+  category:         string;
+  submittedTeamIds: number[];
+  /** Filled as the host judges — drives the big-screen reveal. */
+  revealed: Record<number, { answer: string; wager: number; correct: boolean }>;
 }
 
 export interface JpBoardState {
   currentBoard:       number;
   spentTiles:         string[];
   revealedCategories: number[];
-  buzzersOpen:        boolean;
+  buzzersOpen:        boolean;   // doubles as "submissions open" in submission modes
   buzzRound:          number;
   activeQuestion:     JpActiveQuestion | null;
+  powerupPrompt?:     JpPowerupPrompt | null;
+  lastResolution?:    JpResolutionSummary | null;
+  /** Between-boards scoreboard is showing. */
+  interlude?:         boolean;
+  final?:             JpFinalState | null;
 }
 
 export const INITIAL_BOARD_STATE: JpBoardState = {
@@ -105,6 +257,10 @@ export const INITIAL_BOARD_STATE: JpBoardState = {
   buzzersOpen:        false,
   buzzRound:          0,
   activeQuestion:     null,
+  powerupPrompt:      null,
+  lastResolution:     null,
+  interlude:          false,
+  final:              null,
 };
 
 export interface JpRoom {
@@ -122,7 +278,7 @@ export interface JpTeam {
   room_id:    string;
   name:       string;
   score:      number;
-  powerup:    string | null;
+  powerup:    JpPowerupType | null;
   captain_id: string | null;
   sort_order: number;
 }
@@ -142,7 +298,13 @@ export type JpEventType =
   | "buzz_win"
   | "answer_correct"
   | "answer_wrong"
+  | "powerup_claimed"
+  | "powerup_swapped"
+  | "powerup_declined"
   | "score_edit"
+  | "board_advance"
+  | "final_started"
+  | "final_judged"
   | "game_start"
   | "game_end";
 
@@ -167,11 +329,18 @@ export type HostAction =
   | { type: "start" }
   | { type: "reveal_category"; categoryIndex: number }
   | { type: "reveal_all_categories" }
-  | { type: "select_tile"; tileKey: string }
+  | { type: "select_tile"; tileKey: string; pickerTeamId?: number }
   | { type: "open_buzzers" }              // every open starts a fresh buzz round
   | { type: "accept_answer" }
   | { type: "reject_answer" }
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)
+  | { type: "resolve_submissions" }       // grade MC / closest / ranking submissions
+  | { type: "force_powerup_choice"; choice: "points" | "powerup" }
+  | { type: "advance_board" }             // show interlude scoreboard, move to board 2
+  | { type: "continue_board" }            // dismiss interlude
+  | { type: "start_final" }
+  | { type: "final_reveal_question" }
+  | { type: "final_judge"; teamId: number; correct: boolean }
   | { type: "set_score"; teamId: number; score: number }
   | { type: "end_game" };
 
@@ -182,3 +351,25 @@ export interface HostActionRequest {
 
 export interface BuzzRequest  { player_id: string }
 export interface BuzzResponse { winner_team_id: number | null; winner_player_id: string | null }
+
+/** Submissions: tile answers and Final Jeopardy wagers/answers. */
+export type JpSubmissionKind = "answer" | "final_wager" | "final_answer";
+
+export interface SubmitRequest {
+  player_id: string;
+  kind:      JpSubmissionKind;
+  /** MC: option index (original order). Closest: number. Ranking: item indices in chosen order. Final: wager number / answer string. */
+  value:     number | number[] | string;
+}
+
+export interface PowerupChoiceRequest { player_id: string; choice: "points" | "powerup" }
+
+export interface JpSubmissionRow {
+  team_id:    number;
+  player_id:  string;
+  kind:       JpSubmissionKind;
+  payload:    { value: number | number[] | string };
+  created_at: string;
+}
+
+export interface UploadResponse { url: string }
