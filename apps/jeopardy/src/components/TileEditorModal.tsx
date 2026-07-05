@@ -14,6 +14,8 @@ interface TileEditorModalProps {
   tile:     JpTileConfig | undefined;
   onSave:   (tile: JpTileConfig | null) => void;
   onClose:  () => void;
+  /** Final Jeopardy: blocks only — no answer modes or buzz-display options. */
+  simple?:  boolean;
 }
 
 const inputStyle = {
@@ -34,7 +36,7 @@ function firstMedia(blocks: JpBlock[] | undefined): JpMediaBlock | null {
   return ((blocks ?? []).find(b => b.type === "audio" || b.type === "video") as JpMediaBlock | undefined) ?? null;
 }
 
-export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, onClose }: TileEditorModalProps) {
+export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, onClose, simple = false }: TileEditorModalProps) {
   const [qText, setQText] = useState(firstText(tile?.questionBlocks));
   const [aText, setAText] = useState(firstText(tile?.answerBlocks));
   const [qImage, setQImage] = useState<JpImageBlock | null>(firstImage(tile?.questionBlocks));
@@ -209,6 +211,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
           block={qMedia} onChange={setQMedia} />
 
         {/* ── Answer mode ───────────────────────────────────────────── */}
+        {!simple && (
         <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>
           Answer mode
           <select value={mode} onChange={e => setMode(e.target.value as JpAnswerMode)}
@@ -219,6 +222,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
             <option value="ranking">Ranking</option>
           </select>
         </label>
+        )}
 
         {mode === "multipleChoice" && (
           <div className="flex flex-col gap-2">
@@ -290,7 +294,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
         )}
 
         {/* ── Display + answer side ─────────────────────────────────── */}
-        {mode === "standard" && (
+        {!simple && mode === "standard" && (
           <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
             On-buzz display
             <select value={display} onChange={e => setDisplay(e.target.value as JpBuzzDisplayMode | "")}

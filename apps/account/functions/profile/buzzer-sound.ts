@@ -4,14 +4,21 @@ import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
 // Buzzer sound setting — carried across all GokkeHub games.
-//   PUT   binary audio  → upload clip to the avatars R2 bucket
-//   PATCH { preset }    → pick a built-in ("preset:<id>")
-//   PATCH { clear }     → back to the default
-// The value lives in the session (for /auth/me) AND a permanent KV key
-// (buzzer_sound:<userId>) restored at login — same pattern as lastfm_link.
+//   GET                     → { current, library }
+//   PUT   binary audio      → add a clip to the custom library (and select it)
+//   PATCH { preset }        → pick a built-in ("preset:<id>")
+//   PATCH { select: id }    → pick a library clip
+//   PATCH { update: {id, name?, emoji?} } → rename / re-emoji a library clip
+//   PATCH { remove: id }    → delete a library clip (R2 object included)
+//   PATCH { clear: true }   → back to the default
+//
+// The ACTIVE sound stays a plain string ("preset:<id>" or a URL) in the
+// session + permanent KV buzzer_sound:<userId> — games never see the library.
+// The library itself lives in KV buzzer_library:<userId> as JSON.
 
-const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB ≈ plenty for a 3-second clip
-const PUBLIC_URL = "https://avatars.gokkehub.com";
+const MAX_SIZE_BYTES  = 2 * 1024 * 1024; // 2 MB ≈ plenty for a 3-second clip
+const MAX_LIBRARY     = 10;
+const PUBLIC_URL      = "https://avatars.gokkehub.com";
 const ALLOWED_TYPES: Record<string, string> = {
   "audio/mpeg": "mp3",
   "audio/mp4":  "m4a",
@@ -21,13 +28,40 @@ const ALLOWED_TYPES: Record<string, string> = {
   "audio/x-wav": "wav",
 };
 
-async function persist(env: Env, request: Request, userId: string, value: string | null) {
+export interface BuzzerLibraryEntry {
+  id:    string;
+  url:   string;
+  name:  string;
+  emoji: string;
+}
+
+const libKey = (userId: string) => `buzzer_library:${userId}`;
+
+async function getLibrary(env: Env, userId: string): Promise<BuzzerLibraryEntry[]> {
+  const raw = await env.SESSIONS.get(libKey(userId));
+  if (!raw) return [];
+  try { return JSON.parse(raw) as BuzzerLibraryEntry[]; } catch { return []; }
+}
+
+async function saveLibrary(env: Env, userId: string, lib: BuzzerLibraryEntry[]) {
+  await env.SESSIONS.put(libKey(userId), JSON.stringify(lib));
+}
+
+async function setCurrent(env: Env, request: Request, userId: string, value: string | null) {
   const kvKey = `buzzer_sound:${userId}`;
   if (value) await env.SESSIONS.put(kvKey, value);
   else       await env.SESSIONS.delete(kvKey);
   const sessionId = getSessionId(request);
   if (sessionId) await updateSession(env.SESSIONS, sessionId, { buzzerSound: value });
 }
+
+export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  const req = request as unknown as Request;
+  const { session, response } = await requireAuth(env.SESSIONS, req);
+  if (response) return response;
+  const library = await getLibrary(env, session!.userId);
+  return Response.json({ current: session!.buzzerSound ?? null, library });
+};
 
 export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
   const req = request as unknown as Request;
@@ -38,6 +72,12 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
 
   const { session, response } = await requireAuth(env.SESSIONS, req);
   if (response) return response;
+  const userId = session!.userId;
+
+  const library = await getLibrary(env, userId);
+  if (library.length >= MAX_LIBRARY) {
+    return Response.json({ error: `Library is full (max ${MAX_LIBRARY} clips) — delete one first.` }, { status: 409 });
+  }
 
   const contentType = req.headers.get("Content-Type") ?? "";
   const ext = ALLOWED_TYPES[contentType];
@@ -50,25 +90,36 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
     return Response.json({ error: "File too large. Keep it under 2 MB (~3 seconds)." }, { status: 413 });
   }
 
-  const key = `buzzer-sounds/${session!.userId}.${ext}`;
+  const id  = crypto.randomUUID();
+  const key = `buzzer-sounds/${userId}/${id}.${ext}`;
   await env.AVATARS.put(key, body, {
     httpMetadata:   { contentType },
-    customMetadata: { userId: session!.userId },
+    customMetadata: { userId },
   });
 
-  // Cache-bust so a re-recorded clip replaces the old one immediately.
-  const url = `${PUBLIC_URL}/${key}?v=${Date.now()}`;
-  await persist(env, req, session!.userId, url);
+  const entry: BuzzerLibraryEntry = {
+    id,
+    url:   `${PUBLIC_URL}/${key}`,
+    name:  `My sound ${library.length + 1}`,
+    emoji: "🎤",
+  };
+  const nextLib = [...library, entry];
+  await saveLibrary(env, userId, nextLib);
+  await setCurrent(env, req, userId, entry.url);
 
-  return Response.json({ buzzerSound: url });
+  return Response.json({ buzzerSound: entry.url, entry, library: nextLib });
 };
 
 export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const req = request as unknown as Request;
   const { session, response } = await requireAuth(env.SESSIONS, req);
   if (response) return response;
+  const userId = session!.userId;
 
-  let body: { preset?: unknown; clear?: unknown };
+  let body: {
+    preset?: unknown; select?: unknown; remove?: unknown; clear?: unknown;
+    update?: { id?: unknown; name?: unknown; emoji?: unknown };
+  };
   try {
     body = await req.json() as typeof body;
   } catch {
@@ -76,15 +127,52 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   if (body.clear === true) {
-    await persist(env, req, session!.userId, null);
+    await setCurrent(env, req, userId, null);
     return Response.json({ buzzerSound: null });
   }
 
   if (typeof body.preset === "string" && /^[a-z]{2,20}$/.test(body.preset)) {
     const value = `preset:${body.preset}`;
-    await persist(env, req, session!.userId, value);
+    await setCurrent(env, req, userId, value);
     return Response.json({ buzzerSound: value });
   }
 
-  return Response.json({ error: "Send { preset } or { clear: true }" }, { status: 400 });
+  const library = await getLibrary(env, userId);
+
+  if (typeof body.select === "string") {
+    const entry = library.find(e => e.id === body.select);
+    if (!entry) return Response.json({ error: "Clip not found" }, { status: 404 });
+    await setCurrent(env, req, userId, entry.url);
+    return Response.json({ buzzerSound: entry.url });
+  }
+
+  if (body.update && typeof body.update.id === "string") {
+    const entry = library.find(e => e.id === body.update!.id);
+    if (!entry) return Response.json({ error: "Clip not found" }, { status: 404 });
+    if (typeof body.update.name === "string" && body.update.name.trim()) {
+      entry.name = body.update.name.trim().slice(0, 30);
+    }
+    if (typeof body.update.emoji === "string" && body.update.emoji.trim()) {
+      entry.emoji = body.update.emoji.trim().slice(0, 4);
+    }
+    await saveLibrary(env, userId, library);
+    return Response.json({ library });
+  }
+
+  if (typeof body.remove === "string") {
+    const entry = library.find(e => e.id === body.remove);
+    if (!entry) return Response.json({ error: "Clip not found" }, { status: 404 });
+    const nextLib = library.filter(e => e.id !== entry.id);
+    await saveLibrary(env, userId, nextLib);
+    // Delete the file too — the URL path after the domain is the R2 key.
+    const key = new URL(entry.url).pathname.slice(1);
+    await env.AVATARS.delete(key);
+    // If they were using this clip, fall back to the default.
+    if ((session!.buzzerSound ?? "").split("?")[0] === entry.url.split("?")[0]) {
+      await setCurrent(env, req, userId, null);
+    }
+    return Response.json({ library: nextLib });
+  }
+
+  return Response.json({ error: "Send { preset }, { select }, { update }, { remove }, or { clear }" }, { status: 400 });
 };

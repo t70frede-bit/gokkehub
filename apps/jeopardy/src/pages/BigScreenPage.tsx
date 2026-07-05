@@ -7,6 +7,7 @@ import QuestionOverlay from "../components/Board/QuestionOverlay";
 import PodiumStrip from "../components/Podium/PodiumStrip";
 import AnswerTimer from "../components/AnswerTimer";
 import PowerUpPrompt from "../components/PowerUpPrompt";
+import MediaPlayer from "../components/MediaPlayer";
 import { POWERUP_META, getBoard } from "../lib/types";
 
 const secondary = { color: "rgb(var(--text-secondary-rgb))" } as const;
@@ -163,7 +164,9 @@ export default function BigScreenPage() {
               {(game.config.finalJeopardy?.questionBlocks ?? []).map(b =>
                 b.type === "text"
                   ? <p key={b.id} className="text-3xl sm:text-5xl font-bold leading-snug">{b.text}</p>
-                  : <img key={b.id} src={b.url} alt="" className="max-h-[40vh] rounded-lg object-contain" />)}
+                  : b.type === "image"
+                    ? <img key={b.id} src={b.url} alt="" className="max-h-[40vh] rounded-lg object-contain" />
+                    : <MediaPlayer key={b.id} block={b} buzzed={false} nonce={0} soundOn={soundOn} />)}
             </div>
             <p className="text-2xl animate-pulse" style={secondary}>
               Answers in: {final.submittedTeamIds.length}/{teams.length}

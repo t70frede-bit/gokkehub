@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Input, Panel } from "@gokkehub/ui";
+import { Button, Input, Modal, Panel, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
-import { storePlayerId } from "../hooks/useRoom";
+import { getStoredPlayerId, storePlayerId } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import type { CreateGameResponse, JpGame, JpRoom, LaunchGameResponse } from "../lib/types";
 
@@ -10,12 +10,14 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const { session, loading: sessionLoading } = useSession();
 
+  const { addToast } = useToast();
   const [games,    setGames]    = useState<JpGame[]>([]);
   const [rooms,    setRooms]    = useState<JpRoom[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [title,    setTitle]    = useState("");
   const [busy,     setBusy]     = useState(false);
   const [error,    setError]    = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<JpGame | null>(null);
 
   useEffect(() => {
     if (!session) { setLoading(false); return; }
@@ -75,6 +77,43 @@ export default function DashboardPage() {
     }
     storePlayerId(body.room_id, body.player_id);
     navigate(`/lobby/${body.room_id}`);
+  };
+
+  // Resume a live room on THIS device. If it doesn't hold the host player id
+  // (e.g. the game was launched from the laptop and this is the phone), pull
+  // host control over via the owner-authenticated claim endpoint.
+  const resumeRoom = async (room: JpRoom) => {
+    if (!getStoredPlayerId(room.id)) {
+      setBusy(true);
+      const res  = await fetch(`/room/${room.id}/claim-host`, { method: "POST", credentials: "include" });
+      const body = await res.json().catch(() => null) as { player_id?: string; error?: string } | null;
+      setBusy(false);
+      if (!res.ok || !body?.player_id) {
+        setError(body?.error ?? "Could not take over hosting");
+        return;
+      }
+      storePlayerId(room.id, body.player_id);
+      addToast("Host control moved to this device");
+    }
+    navigate(room.status === "lobby" ? `/lobby/${room.id}` : `/host/${room.id}`);
+  };
+
+  const deleteGame = async (game: JpGame) => {
+    setBusy(true);
+    const res = await fetch(`/game/${game.id}/update`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body:    JSON.stringify({ status: "archived" }),
+    });
+    setBusy(false);
+    setConfirmDelete(null);
+    if (!res.ok) {
+      addToast("Could not delete game");
+      return;
+    }
+    setGames(gs => gs.filter(g => g.id !== game.id));
+    addToast("Game deleted");
   };
 
   if (sessionLoading || loading) {
@@ -140,21 +179,39 @@ export default function DashboardPage() {
                   Edit
                 </Button>
                 {liveRoom ? (
-                  <Button size="sm" onClick={() =>
-                    navigate(liveRoom.status === "lobby" ? `/lobby/${liveRoom.id}` : `/host/${liveRoom.id}`)
-                  }>
-                    Resume ({liveRoom.id})
+                  <Button size="sm" loading={busy} onClick={() => resumeRoom(liveRoom)}>
+                    {getStoredPlayerId(liveRoom.id) ? `Resume (${liveRoom.id})` : `Host here (${liveRoom.id})`}
                   </Button>
                 ) : (
                   <Button size="sm" onClick={() => launchGame(game.id)} loading={busy}>
                     Launch
                   </Button>
                 )}
+                <Button variant="danger" size="sm" onClick={() => setConfirmDelete(game)}>
+                  🗑
+                </Button>
               </li>
             );
           })}
         </ul>
       </Panel>
+
+      <Modal open={confirmDelete !== null} onClose={() => setConfirmDelete(null)}>
+        {confirmDelete && (
+          <div className="flex flex-col gap-4">
+            <h3 className="text-lg font-bold">Delete "{confirmDelete.title}"?</h3>
+            <p style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              The game disappears from your dashboard. Finished rooms and their results are kept.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+              <Button variant="danger" loading={busy} onClick={() => deleteGame(confirmDelete)}>
+                Delete game
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

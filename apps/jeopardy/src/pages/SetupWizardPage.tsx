@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button, Input, Panel, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
@@ -9,7 +9,7 @@ import type {
   JpBoardConfig, JpBuzzDisplayMode, JpGame, JpGameConfig, JpPowerupType,
   JpTileConfig, LaunchGameResponse,
 } from "../lib/types";
-import { DEFAULT_JP_CONFIG, POWERUP_META } from "../lib/types";
+import { DEFAULT_JP_CONFIG, POWERUP_META, getBoard } from "../lib/types";
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -24,14 +24,14 @@ export default function SetupWizardPage() {
   const { session }  = useSession();
   const { addToast } = useToast();
 
-  const [game,     setGame]     = useState<JpGame | null>(null);
-  const [title,    setTitle]    = useState("");
-  const [config,   setConfig]   = useState<JpGameConfig | null>(null);
-  const [boardIdx, setBoardIdx] = useState(0);
-  const [dirty,    setDirty]    = useState(false);
-  const [busy,     setBusy]     = useState(false);
-  const [loadErr,  setLoadErr]  = useState<string | null>(null);
-  const [editKey,  setEditKey]  = useState<string | null>(null);
+  const [game,      setGame]      = useState<JpGame | null>(null);
+  const [title,     setTitle]     = useState("");
+  const [config,    setConfig]    = useState<JpGameConfig | null>(null);
+  const [dirty,     setDirty]     = useState(false);
+  const [busy,      setBusy]      = useState(false);
+  const [loadErr,   setLoadErr]   = useState<string | null>(null);
+  const [editTile,  setEditTile]  = useState<{ boardIdx: number; key: string } | null>(null);
+  const [finalEdit, setFinalEdit] = useState(false);
 
   useEffect(() => {
     if (!gameId) return;
@@ -49,20 +49,16 @@ export default function SetupWizardPage() {
     return () => { cancelled = true; };
   }, [gameId]);
 
-  const board2Mode = config?.board2Mode ?? "off";
-  const editingBoard2 = boardIdx === 1 && board2Mode === "custom";
-  const board = editingBoard2 ? config?.boards[1] : config?.boards[0];
-
   const patch = (updates: Partial<JpGameConfig>) => {
     if (!config) return;
     setConfig({ ...config, ...updates });
     setDirty(true);
   };
 
-  const patchBoard = (bp: Partial<JpBoardConfig>) => {
-    if (!config || !board) return;
+  const patchBoard = (idx: number, bp: Partial<JpBoardConfig>) => {
+    if (!config) return;
     const boards = [...config.boards];
-    boards[editingBoard2 ? 1 : 0] = { ...board, ...bp };
+    boards[idx] = { ...boards[idx], ...bp };
     patch({ boards });
   };
 
@@ -73,16 +69,17 @@ export default function SetupWizardPage() {
       const b0 = boards[0];
       boards[1] = { categories: [...b0.categories], rows: b0.rows, pointValues: [...b0.pointValues], tiles: {} };
     }
-    if (mode !== "custom") setBoardIdx(0);
     patch({ board2Mode: mode, boards });
   };
 
   const saveTile = (tile: JpTileConfig | null) => {
-    if (!board || !editKey) return;
+    if (!config || !editTile) return;
+    const board = config.boards[editTile.boardIdx];
+    if (!board) return;
     const tiles = { ...board.tiles };
-    if (tile) tiles[editKey] = tile; else delete tiles[editKey];
-    patchBoard({ tiles });
-    setEditKey(null);
+    if (tile) tiles[editTile.key] = tile; else delete tiles[editTile.key];
+    patchBoard(editTile.boardIdx, { tiles });
+    setEditTile(null);
   };
 
   const save = async (): Promise<boolean> => {
@@ -126,15 +123,17 @@ export default function SetupWizardPage() {
   };
 
   if (loadErr) return <div className="flex-1 flex items-center justify-center">{loadErr}</div>;
-  if (!game || !config || !board) {
+  if (!game || !config) {
     return <div className="flex-1 flex items-center justify-center opacity-60">Loading…</div>;
   }
 
+  const board2Mode  = config.board2Mode ?? "off";
   const filledCount = Object.keys(config.boards[0].tiles).length;
   const teamsCfg    = config.teams ?? DEFAULT_JP_CONFIG.teams!;
   const powerups    = config.powerups ?? DEFAULT_JP_CONFIG.powerups!;
   const dangerous   = config.dangerous ?? DEFAULT_JP_CONFIG.dangerous!;
   const final       = config.finalJeopardy ?? DEFAULT_JP_CONFIG.finalJeopardy!;
+  const finalQText  = final.questionBlocks.find(b => b.type === "text")?.text ?? "";
 
   const rowRangeEditor = (
     range: [number, number], maxRows: number, onChange: (r: [number, number]) => void
@@ -150,6 +149,123 @@ export default function SetupWizardPage() {
         className="w-14 px-2 py-1 rounded-md text-sm outline-none" style={inputStyle} />
     </span>
   );
+
+  // ── One full board editor (categories + rows + question grid) ────────
+  const boardEditor = (idx: number): ReactNode => {
+    const board = config.boards[idx];
+    if (!board) return null;
+    return (
+      <>
+        <h3 className="text-sm font-bold uppercase tracking-widest mb-2" style={labelStyle}>Categories</h3>
+        <div className="flex flex-col gap-2">
+          {board.categories.map((cat, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <div className="flex-1">
+                <Input value={cat} onChange={e => {
+                  const categories = [...board.categories];
+                  categories[i] = e.target.value;
+                  patchBoard(idx, { categories });
+                }} />
+              </div>
+              <Button variant="danger" size="sm" disabled={board.categories.length <= 1}
+                onClick={() => {
+                  const tiles: typeof board.tiles = {};
+                  for (const [key, tile] of Object.entries(board.tiles)) {
+                    const [col, row] = key.split("-").map(Number);
+                    if (col === i) continue;
+                    tiles[`${col > i ? col - 1 : col}-${row}`] = tile;
+                  }
+                  patchBoard(idx, { categories: board.categories.filter((_, c) => c !== i), tiles });
+                }}>
+                ✕
+              </Button>
+            </div>
+          ))}
+          <Button variant="ghost" size="sm" disabled={board.categories.length >= 8}
+            onClick={() => patchBoard(idx, { categories: [...board.categories, `Category ${board.categories.length + 1}`] })}>
+            + Add category
+          </Button>
+        </div>
+
+        <h3 className="text-sm font-bold uppercase tracking-widest mt-6 mb-2" style={labelStyle}>Rows & point values</h3>
+        <div className="flex flex-col gap-2">
+          {board.pointValues.map((v, row) => (
+            <div key={row} className="flex gap-2 items-center">
+              <span className="w-14 text-sm" style={labelStyle}>Row {row + 1}</span>
+              <Input type="number" value={v} className="max-w-32" onChange={e => {
+                const pointValues = [...board.pointValues];
+                pointValues[row] = Number(e.target.value) || 0;
+                patchBoard(idx, { pointValues });
+              }} />
+              <Button variant="danger" size="sm" disabled={board.rows <= 1}
+                onClick={() => {
+                  const tiles: typeof board.tiles = {};
+                  for (const [key, tile] of Object.entries(board.tiles)) {
+                    const [col, r] = key.split("-").map(Number);
+                    if (r === row) continue;
+                    tiles[`${col}-${r > row ? r - 1 : r}`] = tile;
+                  }
+                  patchBoard(idx, {
+                    rows:        board.rows - 1,
+                    pointValues: board.pointValues.filter((_, r) => r !== row),
+                    tiles,
+                  });
+                }}>
+                ✕
+              </Button>
+            </div>
+          ))}
+          <Button variant="ghost" size="sm" disabled={board.rows >= 8}
+            onClick={() => patchBoard(idx, {
+              rows:        board.rows + 1,
+              pointValues: [...board.pointValues, (board.pointValues[board.pointValues.length - 1] ?? 100) + 100],
+            })}>
+            + Add row
+          </Button>
+        </div>
+
+        <h3 className="text-sm font-bold uppercase tracking-widest mt-6 mb-2" style={labelStyle}>Questions</h3>
+        <p className="text-sm mb-3" style={labelStyle}>Click a tile to edit its question, answer, media, and answer mode.</p>
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${board.categories.length}, minmax(0, 1fr))` }}>
+          {board.categories.map((cat, col) => (
+            <div key={`h-${col}`} className="text-[10px] sm:text-xs font-bold text-center uppercase truncate py-1">
+              {cat}
+            </div>
+          ))}
+          {Array.from({ length: board.rows }, (_, row) =>
+            board.categories.map((_, col) => {
+              const key    = `${col}-${row}`;
+              const tile   = board.tiles[key];
+              const badge  = tile && tile.answerMode !== "standard"
+                ? { multipleChoice: "abc", closestNumber: "123", ranking: "1→8" }[tile.answerMode]
+                : tile?.questionBlocks.some(b => b.type === "video") ? "🎬"
+                : tile?.questionBlocks.some(b => b.type === "audio") ? "🎵"
+                : tile?.questionBlocks.some(b => b.type === "image") ? "🖼" : null;
+              return (
+                <button key={key} type="button" onClick={() => setEditTile({ boardIdx: idx, key })}
+                  className="relative rounded-md py-3 font-bold text-sm sm:text-base transition-colors"
+                  style={{
+                    background: tile ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
+                    border: tile
+                      ? "1px solid rgba(var(--color-primary-rgb), 0.6)"
+                      : "1px dashed rgb(var(--border-rgb))",
+                    color: tile ? "rgb(var(--color-primary-rgb))" : "rgba(var(--text-secondary-rgb), 0.6)",
+                  }}>
+                  {board.pointValues[row]}
+                  {badge && (
+                    <span className="absolute top-0.5 right-1 text-[9px] opacity-80">{badge}</span>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </>
+    );
+  };
+
+  const editingBoard = editTile ? config.boards[editTile.boardIdx] : null;
+  const derivedBoard2 = board2Mode === "doubleUp" ? getBoard(config, 1) : null;
 
   return (
     <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 flex flex-col gap-5">
@@ -220,10 +336,12 @@ export default function SetupWizardPage() {
         )}
       </Panel>
 
-      {/* ── Boards ─────────────────────────────────────────────────────── */}
+      {/* ── Board 1 ────────────────────────────────────────────────────── */}
       <Panel>
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <h2 className="text-lg font-bold flex-1">Board setup</h2>
+          <h2 className="text-lg font-bold flex-1">
+            {board2Mode === "off" ? "Board" : "Board 1"}
+          </h2>
           <select value={board2Mode} onChange={e => setBoard2Mode(e.target.value as JpGameConfig["board2Mode"])}
             className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
             <option value="off">Single board</option>
@@ -231,131 +349,7 @@ export default function SetupWizardPage() {
             <option value="custom">Board 2 = custom (own questions)</option>
           </select>
         </div>
-
-        {board2Mode === "custom" && (
-          <div className="flex gap-2 mb-4">
-            {[0, 1].map(i => (
-              <button key={i} type="button" onClick={() => setBoardIdx(i)}
-                className="px-4 py-1.5 rounded-md font-bold text-sm"
-                style={{
-                  background: boardIdx === i ? "rgba(var(--color-primary-rgb), 0.18)" : "transparent",
-                  border: boardIdx === i
-                    ? "1px solid rgb(var(--color-primary-rgb))"
-                    : "1px solid rgb(var(--border-rgb))",
-                  color: boardIdx === i ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-secondary-rgb))",
-                }}>
-                Board {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <h3 className="text-sm font-bold uppercase tracking-widest mb-2" style={labelStyle}>Categories</h3>
-        <div className="flex flex-col gap-2">
-          {board.categories.map((cat, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <div className="flex-1">
-                <Input value={cat} onChange={e => {
-                  const categories = [...board.categories];
-                  categories[i] = e.target.value;
-                  patchBoard({ categories });
-                }} />
-              </div>
-              <Button variant="danger" size="sm" disabled={board.categories.length <= 1}
-                onClick={() => {
-                  const tiles: typeof board.tiles = {};
-                  for (const [key, tile] of Object.entries(board.tiles)) {
-                    const [col, row] = key.split("-").map(Number);
-                    if (col === i) continue;
-                    tiles[`${col > i ? col - 1 : col}-${row}`] = tile;
-                  }
-                  patchBoard({ categories: board.categories.filter((_, c) => c !== i), tiles });
-                }}>
-                ✕
-              </Button>
-            </div>
-          ))}
-          <Button variant="ghost" size="sm" disabled={board.categories.length >= 8}
-            onClick={() => patchBoard({ categories: [...board.categories, `Category ${board.categories.length + 1}`] })}>
-            + Add category
-          </Button>
-        </div>
-
-        <h3 className="text-sm font-bold uppercase tracking-widest mt-6 mb-2" style={labelStyle}>Rows & point values</h3>
-        <div className="flex flex-col gap-2">
-          {board.pointValues.map((v, row) => (
-            <div key={row} className="flex gap-2 items-center">
-              <span className="w-14 text-sm" style={labelStyle}>Row {row + 1}</span>
-              <Input type="number" value={v} className="max-w-32" onChange={e => {
-                const pointValues = [...board.pointValues];
-                pointValues[row] = Number(e.target.value) || 0;
-                patchBoard({ pointValues });
-              }} />
-              <Button variant="danger" size="sm" disabled={board.rows <= 1}
-                onClick={() => {
-                  const tiles: typeof board.tiles = {};
-                  for (const [key, tile] of Object.entries(board.tiles)) {
-                    const [col, r] = key.split("-").map(Number);
-                    if (r === row) continue;
-                    tiles[`${col}-${r > row ? r - 1 : r}`] = tile;
-                  }
-                  patchBoard({
-                    rows:        board.rows - 1,
-                    pointValues: board.pointValues.filter((_, r) => r !== row),
-                    tiles,
-                  });
-                }}>
-                ✕
-              </Button>
-            </div>
-          ))}
-          <Button variant="ghost" size="sm" disabled={board.rows >= 8}
-            onClick={() => patchBoard({
-              rows:        board.rows + 1,
-              pointValues: [...board.pointValues, (board.pointValues[board.pointValues.length - 1] ?? 100) + 100],
-            })}>
-            + Add row
-          </Button>
-        </div>
-
-        <h3 className="text-sm font-bold uppercase tracking-widest mt-6 mb-2" style={labelStyle}>
-          Questions {board2Mode === "custom" ? `— board ${boardIdx + 1}` : ""}
-        </h3>
-        <p className="text-sm mb-3" style={labelStyle}>Click a tile to edit its question, answer, images, and answer mode.</p>
-        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${board.categories.length}, minmax(0, 1fr))` }}>
-          {board.categories.map((cat, col) => (
-            <div key={`h-${col}`} className="text-[10px] sm:text-xs font-bold text-center uppercase truncate py-1">
-              {cat}
-            </div>
-          ))}
-          {Array.from({ length: board.rows }, (_, row) =>
-            board.categories.map((_, col) => {
-              const key    = `${col}-${row}`;
-              const tile   = board.tiles[key];
-              const badge  = tile && tile.answerMode !== "standard"
-                ? { multipleChoice: "abc", closestNumber: "123", ranking: "1→8" }[tile.answerMode]
-                : tile?.questionBlocks.some(b => b.type === "video") ? "🎬"
-                : tile?.questionBlocks.some(b => b.type === "audio") ? "🎵"
-                : tile?.questionBlocks.some(b => b.type === "image") ? "🖼" : null;
-              return (
-                <button key={key} type="button" onClick={() => setEditKey(key)}
-                  className="relative rounded-md py-3 font-bold text-sm sm:text-base transition-colors"
-                  style={{
-                    background: tile ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
-                    border: tile
-                      ? "1px solid rgba(var(--color-primary-rgb), 0.6)"
-                      : "1px dashed rgb(var(--border-rgb))",
-                    color: tile ? "rgb(var(--color-primary-rgb))" : "rgba(var(--text-secondary-rgb), 0.6)",
-                  }}>
-                  {board.pointValues[row]}
-                  {badge && (
-                    <span className="absolute top-0.5 right-1 text-[9px] opacity-80">{badge}</span>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
+        {boardEditor(0)}
 
         <div className="flex flex-wrap gap-5 mt-5">
           <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
@@ -379,6 +373,48 @@ export default function SetupWizardPage() {
           </label>
         </div>
       </Panel>
+
+      {/* ── Board 2 ────────────────────────────────────────────────────── */}
+      {board2Mode === "custom" && (
+        <Panel>
+          <h2 className="text-lg font-bold mb-4">Board 2</h2>
+          {boardEditor(1)}
+        </Panel>
+      )}
+      {board2Mode === "doubleUp" && derivedBoard2 && (
+        <Panel>
+          <h2 className="text-lg font-bold mb-1">Board 2 — double-up</h2>
+          <p className="text-sm mb-3" style={labelStyle}>
+            Mirrors board 1 with the same questions at double points. Edit board 1 above; this preview updates with it.
+          </p>
+          <div className="grid gap-1.5 opacity-70 pointer-events-none"
+            style={{ gridTemplateColumns: `repeat(${derivedBoard2.categories.length}, minmax(0, 1fr))` }}>
+            {derivedBoard2.categories.map((cat, col) => (
+              <div key={`h2-${col}`} className="text-[10px] sm:text-xs font-bold text-center uppercase truncate py-1">
+                {cat}
+              </div>
+            ))}
+            {Array.from({ length: derivedBoard2.rows }, (_, row) =>
+              derivedBoard2.categories.map((_, col) => {
+                const filled = !!derivedBoard2.tiles[`${col}-${row}`];
+                return (
+                  <div key={`p-${col}-${row}`}
+                    className="rounded-md py-3 font-bold text-sm sm:text-base text-center"
+                    style={{
+                      background: filled ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
+                      border: filled
+                        ? "1px solid rgba(var(--color-primary-rgb), 0.6)"
+                        : "1px dashed rgb(var(--border-rgb))",
+                      color: filled ? "rgb(var(--color-primary-rgb))" : "rgba(var(--text-secondary-rgb), 0.6)",
+                    }}>
+                    {derivedBoard2.pointValues[row]}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+      )}
 
       {/* ── Power-ups & dangerous tiles ────────────────────────────────── */}
       <Panel>
@@ -418,7 +454,7 @@ export default function SetupWizardPage() {
                         pts less loss
                       </span>
                     )}
-                    {rowRangeEditor(cfg.rowRange, board.rows, r =>
+                    {rowRangeEditor(cfg.rowRange, config.boards[0].rows, r =>
                       patch({ powerups: { ...powerups, [type]: { ...cfg, rowRange: r } } }))}
                   </>
                 )}
@@ -444,7 +480,7 @@ export default function SetupWizardPage() {
                     className="w-14 px-2 py-1 rounded-md text-sm outline-none" style={inputStyle} />
                   per board
                 </span>
-                {rowRangeEditor(dangerous.buzzed.rowRange, board.rows, r =>
+                {rowRangeEditor(dangerous.buzzed.rowRange, config.boards[0].rows, r =>
                   patch({ dangerous: { buzzed: { ...dangerous.buzzed, rowRange: r } } }))}
               </>
             )}
@@ -478,46 +514,54 @@ export default function SetupWizardPage() {
           <div className="flex flex-col gap-3 mt-4">
             <Input label="Category (shown before wagering)" value={final.category}
               onChange={e => patch({ finalJeopardy: { ...final, category: e.target.value } })} />
-            <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>
-              Question
-              <textarea rows={3}
-                value={final.questionBlocks.find(b => b.type === "text")?.text ?? ""}
-                onChange={e => patch({
-                  finalJeopardy: {
-                    ...final,
-                    questionBlocks: e.target.value.trim()
-                      ? [{ id: "final-q", type: "text", text: e.target.value }]
-                      : [],
-                  },
-                })}
-                className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-            </label>
-            <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>
-              Answer (host only)
-              <textarea rows={2}
-                value={final.answerBlocks.find(b => b.type === "text")?.text ?? ""}
-                onChange={e => patch({
-                  finalJeopardy: {
-                    ...final,
-                    answerBlocks: e.target.value.trim()
-                      ? [{ id: "final-a", type: "text", text: e.target.value }]
-                      : [],
-                  },
-                })}
-                className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="ghost" onClick={() => setFinalEdit(true)}>
+                {final.questionBlocks.length ? "✎ Edit question & answer" : "+ Write the question"}
+              </Button>
+              {finalQText && (
+                <span className="text-sm truncate max-w-md" style={labelStyle}>"{finalQText}"</span>
+              )}
+              {final.questionBlocks.some(b => b.type === "image") && <span>🖼</span>}
+              {final.questionBlocks.some(b => b.type === "audio") && <span>🎵</span>}
+              {final.questionBlocks.some(b => b.type === "video") && <span>🎬</span>}
+            </div>
           </div>
         )}
       </Panel>
 
-      {editKey !== null && (
+      {editTile !== null && editingBoard && (
         <TileEditorModal
           gameId={game.id}
-          tileKey={editKey}
-          title={`${board.categories[Number(editKey.split("-")[0])]} — ${board.pointValues[Number(editKey.split("-")[1])]}`}
-          tile={board.tiles[editKey]}
+          tileKey={`b${editTile.boardIdx}-${editTile.key}`}
+          title={`Board ${editTile.boardIdx + 1}: ${editingBoard.categories[Number(editTile.key.split("-")[0])]} — ${editingBoard.pointValues[Number(editTile.key.split("-")[1])]}`}
+          tile={editingBoard.tiles[editTile.key]}
           onSave={saveTile}
-          onClose={() => setEditKey(null)}
+          onClose={() => setEditTile(null)}
+        />
+      )}
+
+      {finalEdit && (
+        <TileEditorModal
+          simple
+          gameId={game.id}
+          tileKey="final"
+          title="Final Jeopardy question"
+          tile={{
+            questionBlocks: final.questionBlocks,
+            answerBlocks:   final.answerBlocks,
+            answerMode:     "standard",
+          }}
+          onSave={tile => {
+            patch({
+              finalJeopardy: {
+                ...final,
+                questionBlocks: tile?.questionBlocks ?? [],
+                answerBlocks:   tile?.answerBlocks ?? [],
+              },
+            });
+            setFinalEdit(false);
+          }}
+          onClose={() => setFinalEdit(false)}
         />
       )}
     </div>

@@ -574,9 +574,13 @@ function SteamIcon() {
   );
 }
 
+
 /* ── Buzzer sound picker ─────────────────────────────────────────────────── */
 // The chosen sound plays on the big screen whenever this player buzzes in
-// (all GokkeHub games). "preset:<id>" = built-in synth, URL = uploaded clip.
+// (all GokkeHub games). "preset:<id>" = built-in synth; uploads live in a
+// personal library (name + emoji editable) and the active one is a URL.
+
+interface BuzzerLibraryEntry { id: string; url: string; name: string; emoji: string }
 
 function BuzzerSoundSection({ session, onSessionRefresh }: {
   session: PublicSessionData;
@@ -584,28 +588,45 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
 }) {
   const { addToast } = useToast();
   const [current, setCurrent]     = useState(session.buzzerSound ?? null);
+  const [library, setLibrary]     = useState<BuzzerLibraryEntry[]>([]);
   const [saving, setSaving]       = useState(false);
   const [recording, setRecording] = useState(false);
+  const [editing, setEditing]     = useState<{ id: string; name: string; emoji: string } | null>(null);
   const uploadRef   = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
-  const isCustom = !!current && !current.startsWith("preset:");
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/profile/buzzer-sound", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { current: string | null; library: BuzzerLibraryEntry[] } | null) => {
+        if (cancelled || !body) return;
+        setCurrent(body.current);
+        setLibrary(body.library ?? []);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
-  const savePreset = async (presetId: string) => {
-    unlockAudio();
-    playBuzzerSound(`preset:${presetId}`);
+  const patch = async (payload: Record<string, unknown>, okMsg?: string) => {
     setSaving(true);
     try {
       const res = await fetch("/profile/buzzer-sound", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ preset: presetId }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) { addToast("Failed to save buzzer sound", "error"); return; }
-      setCurrent(`preset:${presetId}`);
+      const body = (await res.json().catch(() => null)) as {
+        buzzerSound?: string | null; library?: BuzzerLibraryEntry[]; error?: string;
+      } | null;
+      if (!res.ok) { addToast(body?.error ?? "Failed to save", "error"); return null; }
+      if (body?.library) setLibrary(body.library);
+      if (body && "buzzerSound" in body) setCurrent(body.buzzerSound ?? null);
       onSessionRefresh();
-    } catch { addToast("Failed to save buzzer sound", "error"); }
+      if (okMsg) addToast(okMsg, "success");
+      return body;
+    } catch { addToast("Failed to save", "error"); return null; }
     finally { setSaving(false); }
   };
 
@@ -618,15 +639,18 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
         credentials: "include",
         body: blob,
       });
-      const body = (await res.json().catch(() => null)) as { buzzerSound?: string; error?: string } | null;
+      const body = (await res.json().catch(() => null)) as {
+        buzzerSound?: string; library?: BuzzerLibraryEntry[]; error?: string;
+      } | null;
       if (!res.ok || !body?.buzzerSound) {
         addToast(body?.error ?? "Upload failed", "error");
         return;
       }
       setCurrent(body.buzzerSound);
+      if (body.library) setLibrary(body.library);
       onSessionRefresh();
       playBuzzerSound(body.buzzerSound);
-      addToast("Buzzer sound saved", "success");
+      addToast("Added to your custom sounds", "success");
     } catch { addToast("Upload failed", "error"); }
     finally { setSaving(false); }
   };
@@ -657,11 +681,14 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
     }
   };
 
+  const activeUrl = (current ?? "").split("?")[0];
+
   return (
     <Panel>
       <p className="text-sm mb-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
         Plays on the big screen when you buzz in — in every GokkeHub game.
       </p>
+
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {BUZZER_PRESETS.map((p) => {
           const active = (current ?? DEFAULT_BUZZER) === `preset:${p.id}`;
@@ -670,7 +697,7 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
               key={p.id}
               type="button"
               disabled={saving}
-              onClick={() => savePreset(p.id)}
+              onClick={() => { unlockAudio(); playBuzzerSound(`preset:${p.id}`); void patch({ preset: p.id }); }}
               className="rounded-md px-3 py-2 text-sm font-semibold text-left transition-all"
               style={{
                 background: active ? "rgba(var(--color-primary-rgb), 0.15)" : "rgb(var(--surface-input-rgb))",
@@ -685,6 +712,76 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
           );
         })}
       </div>
+
+      {/* ── Custom sounds library ── */}
+      {library.length > 0 && (
+        <>
+          <p className="text-xs font-bold uppercase tracking-widest mt-4 mb-2"
+            style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            Custom sounds
+          </p>
+          <div className="space-y-2">
+            {library.map((entry) => {
+              const active = activeUrl === entry.url.split("?")[0];
+              const isEditing = editing?.id === entry.id;
+              return (
+                <div key={entry.id} className="rounded-md px-3 py-2"
+                  style={{
+                    background: active ? "rgba(var(--color-primary-rgb), 0.15)" : "rgb(var(--surface-input-rgb))",
+                    border: active
+                      ? "1px solid rgb(var(--color-primary-rgb))"
+                      : "1px solid rgb(var(--border-rgb))",
+                  }}
+                >
+                  {isEditing ? (
+                    <div className="flex items-center gap-2">
+                      <input value={editing.emoji} maxLength={4} aria-label="Emoji"
+                        onChange={(e) => setEditing({ ...editing, emoji: e.target.value })}
+                        className="input w-14 text-center" />
+                      <input value={editing.name} maxLength={30} autoFocus aria-label="Name"
+                        onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            void patch({ update: { id: entry.id, name: editing.name, emoji: editing.emoji } }, "Saved");
+                            setEditing(null);
+                          }
+                          if (e.key === "Escape") setEditing(null);
+                        }}
+                        className="input flex-1" />
+                      <ChipButton loading={saving} onClick={() => {
+                        void patch({ update: { id: entry.id, name: editing.name, emoji: editing.emoji } }, "Saved");
+                        setEditing(null);
+                      }}>
+                        Save
+                      </ChipButton>
+                      <ChipButton onClick={() => setEditing(null)}>Cancel</ChipButton>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => { unlockAudio(); playBuzzerSound(entry.url); void patch({ select: entry.id }); }}
+                        className="flex-1 flex items-center gap-2 text-left text-sm font-semibold min-w-0"
+                        style={{ color: active ? "rgb(var(--color-primary-rgb))" : "rgb(var(--text-primary-rgb))" }}
+                        title="Use this sound"
+                      >
+                        <span className="text-lg">{entry.emoji}</span>
+                        <span className="truncate">{entry.name}</span>
+                        {active && <span className="text-xs font-bold">✓ active</span>}
+                      </button>
+                      <ChipButton onClick={() => { unlockAudio(); playBuzzerSound(entry.url); }}>▶</ChipButton>
+                      <ChipButton onClick={() => setEditing({ id: entry.id, name: entry.name, emoji: entry.emoji })}>✎</ChipButton>
+                      <ChipButton danger loading={saving} onClick={() => void patch({ remove: entry.id }, "Clip deleted")}>🗑</ChipButton>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 mt-3">
         <ChipButton onClick={record} loading={saving && !recording}>
           {recording ? "⏹ Stop (3s max)" : "🎙 Record your own"}
@@ -692,25 +789,6 @@ function BuzzerSoundSection({ session, onSessionRefresh }: {
         <ChipButton onClick={() => uploadRef.current?.click()} loading={saving}>
           📁 Upload audio
         </ChipButton>
-        {isCustom && (
-          <>
-            <ChipButton onClick={() => { unlockAudio(); playBuzzerSound(current); }}>▶ Preview</ChipButton>
-            <ChipButton danger loading={saving} onClick={async () => {
-              setSaving(true);
-              try {
-                const res = await fetch("/profile/buzzer-sound", {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ clear: true }),
-                });
-                if (res.ok) { setCurrent(null); onSessionRefresh(); }
-              } finally { setSaving(false); }
-            }}>
-              Remove custom
-            </ChipButton>
-          </>
-        )}
         <input
           ref={uploadRef}
           type="file"
