@@ -16,7 +16,11 @@ export function getCorsOrigin(request: Request): string | null {
 
 export function corsHeaders(request: Request): Record<string, string> {
   const origin = getCorsOrigin(request);
-  if (!origin) return {};
+  // Vary: Origin must be sent on EVERY response — including same-origin ones
+  // with no CORS headers. Without it, a browser can cache the same-origin
+  // flavour of /auth/me and replay it for a cross-origin fetch from a game
+  // app, which then dies on the missing Access-Control-Allow-Origin header.
+  if (!origin) return { "Vary": "Origin" };
   return {
     "Access-Control-Allow-Origin":      origin,
     "Access-Control-Allow-Credentials": "true",
