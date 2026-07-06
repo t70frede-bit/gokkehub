@@ -1,10 +1,10 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Button, Modal } from "@gokkehub/ui";
+import { Button, Modal, Toggle } from "@gokkehub/ui";
 import MediaBlockEditor from "./MediaBlockEditor";
 import type {
   JpAnswerMode, JpBlock, JpBuzzDisplayMode, JpClosestNumberConfig,
   JpImageBlock, JpMediaBlock, JpMultipleChoiceConfig, JpRankingConfig,
-  JpRevealMode, JpTileConfig, UploadResponse,
+  JpRevealMode, JpRevealOrder, JpTileConfig, UploadResponse,
 } from "../lib/types";
 
 interface TileEditorModalProps {
@@ -44,7 +44,8 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   const [qMedia, setQMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.questionBlocks));
   const [aMedia, setAMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.answerBlocks));
   const [reveal, setReveal] = useState<JpRevealMode>(qImage?.revealMode ?? "off");
-  const [display, setDisplay] = useState<JpBuzzDisplayMode | "">(tile?.buzzDisplayMode ?? "");
+  const [display, setDisplay] = useState<JpBuzzDisplayMode | "default">(tile?.buzzDisplayMode ?? "default");
+  const [order, setOrder] = useState<JpRevealOrder>(tile?.revealOrder ?? "together");
   const [mode, setMode] = useState<JpAnswerMode>(tile?.answerMode ?? "standard");
 
   const mcInit = tile?.answerMode === "multipleChoice" ? tile.answerModeConfig as JpMultipleChoiceConfig : null;
@@ -119,7 +120,8 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     if (aMedia)       answerBlocks.push(aMedia);
 
     const out: JpTileConfig = { questionBlocks, answerBlocks, answerMode: mode };
-    if (display) out.buzzDisplayMode = display as JpBuzzDisplayMode;
+    if (display !== "default") out.buzzDisplayMode = display;
+    if (order !== "together" && (qImage || qMedia)) out.revealOrder = order;
     if (mode === "multipleChoice") {
       out.answerModeConfig = {
         options:          mcOptions.map(o => o.trim()).filter(Boolean),
@@ -143,7 +145,6 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     onSave(out);
   };
 
-  const selectClass = "w-full px-3 py-2 rounded-md text-sm outline-none";
   const listEditor = (
     items: string[], setItems: (v: string[]) => void, max: number,
     extra?: (i: number) => ReactNode
@@ -193,35 +194,61 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
           )}
           <input ref={qFileRef} type="file" accept="image/*" className="hidden"
             onChange={e => e.target.files?.[0] && upload("q", e.target.files[0])} />
-          {qImage && (
-            <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-              Reveal
-              <select value={reveal} onChange={e => setReveal(e.target.value as JpRevealMode)}
-                className={selectClass} style={{ ...inputStyle, width: "auto" }}>
-                <option value="off">Normal</option>
-                <option value="silhouette">Silhouette</option>
-                <option value="pixelated">Blurred</option>
-                <option value="animated">Slowly sharpen</option>
-              </select>
-            </label>
-          )}
         </div>
+        {qImage && (
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Image reveal</p>
+            <Toggle
+              options={[
+                { value: "off",        label: "Normal" },
+                { value: "silhouette", label: "Silhouette" },
+                { value: "pixelated",  label: "Blurred" },
+                { value: "animated",   label: "Slow sharpen" },
+              ]}
+              value={reveal}
+              onChange={v => setReveal(v as JpRevealMode)}
+            />
+          </div>
+        )}
+
+        {(qImage || qMedia) && (
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order on the big screen</p>
+            <Toggle
+              options={[
+                { value: "together",   label: "All at once" },
+                { value: "textFirst",  label: "Text first" },
+                { value: "mediaFirst", label: "Media first" },
+              ]}
+              value={order}
+              onChange={v => setOrder(v as JpRevealOrder)}
+            />
+            {order !== "together" && (
+              <p className="text-xs mt-1" style={labelStyle}>
+                You reveal the held-back part from your host controller when you're ready.
+              </p>
+            )}
+          </div>
+        )}
 
         <MediaBlockEditor gameId={gameId} blockId={`${tileKey}-qmedia`}
           block={qMedia} onChange={setQMedia} />
 
         {/* ── Answer mode ───────────────────────────────────────────── */}
         {!simple && (
-        <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>
-          Answer mode
-          <select value={mode} onChange={e => setMode(e.target.value as JpAnswerMode)}
-            className={selectClass} style={inputStyle}>
-            <option value="standard">Buzz to answer</option>
-            <option value="multipleChoice">Multiple choice</option>
-            <option value="closestNumber">Closest number</option>
-            <option value="ranking">Ranking</option>
-          </select>
-        </label>
+        <div>
+          <p className="text-sm font-medium mb-2" style={labelStyle}>Answer mode</p>
+          <Toggle
+            options={[
+              { value: "standard",       label: "🔴 Buzz" },
+              { value: "multipleChoice", label: "abc Choice" },
+              { value: "closestNumber",  label: "123 Closest" },
+              { value: "ranking",        label: "1→8 Ranking" },
+            ]}
+            value={mode}
+            onChange={v => setMode(v as JpAnswerMode)}
+          />
+        </div>
         )}
 
         {mode === "multipleChoice" && (
@@ -252,14 +279,17 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
                 <input value={cnUnit} onChange={e => setCnUnit(e.target.value)} placeholder="Kr., %, km…"
                   className="w-28 px-3 py-1.5 rounded-md text-sm outline-none" style={inputStyle} />
               </label>
-              <label className="flex flex-col gap-1 text-sm font-semibold" style={labelStyle}>
-                Input
-                <select value={cnInput} onChange={e => setCnInput(e.target.value as "field" | "slider")}
-                  className={selectClass} style={{ ...inputStyle, width: "auto" }}>
-                  <option value="field">Free number</option>
-                  <option value="slider">Slider</option>
-                </select>
-              </label>
+              <div>
+                <p className="text-sm font-medium mb-1" style={labelStyle}>Input</p>
+                <Toggle
+                  options={[
+                    { value: "field",  label: "Free number" },
+                    { value: "slider", label: "Slider" },
+                  ]}
+                  value={cnInput}
+                  onChange={v => setCnInput(v as "field" | "slider")}
+                />
+              </div>
             </div>
             {cnInput === "slider" && (
               <div className="flex gap-3">
@@ -282,29 +312,35 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
           <div className="flex flex-col gap-2">
             <p className="text-sm font-semibold" style={labelStyle}>Items in the CORRECT order (top first)</p>
             {listEditor(rkItems, setRkItems, 8)}
-            <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-              Scoring
-              <select value={rkScoring} onChange={e => setRkScoring(e.target.value as "exact" | "partial")}
-                className={selectClass} style={{ ...inputStyle, width: "auto" }}>
-                <option value="partial">Partial credit per correct position</option>
-                <option value="exact">All-or-nothing</option>
-              </select>
-            </label>
+            <div>
+              <p className="text-sm font-medium mb-1" style={labelStyle}>Scoring</p>
+              <Toggle
+                options={[
+                  { value: "partial", label: "Partial credit" },
+                  { value: "exact",   label: "All-or-nothing" },
+                ]}
+                value={rkScoring}
+                onChange={v => setRkScoring(v as "exact" | "partial")}
+              />
+            </div>
           </div>
         )}
 
         {/* ── Display + answer side ─────────────────────────────────── */}
         {!simple && mode === "standard" && (
-          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-            On-buzz display
-            <select value={display} onChange={e => setDisplay(e.target.value as JpBuzzDisplayMode | "")}
-              className={selectClass} style={{ ...inputStyle, width: "auto" }}>
-              <option value="">Board default</option>
-              <option value="stay">Stay visible</option>
-              <option value="disappear">Disappear on buzz</option>
-              <option value="typewriter">Typewriter (freezes on buzz)</option>
-            </select>
-          </label>
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>On-buzz display</p>
+            <Toggle
+              options={[
+                { value: "default",    label: "Board default" },
+                { value: "stay",       label: "Stay" },
+                { value: "disappear",  label: "Disappear" },
+                { value: "typewriter", label: "Typewriter" },
+              ]}
+              value={display}
+              onChange={v => setDisplay(v as JpBuzzDisplayMode | "default")}
+            />
+          </div>
         )}
 
         <label className="flex flex-col gap-2 text-sm font-semibold" style={labelStyle}>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, Input, Panel, useToast } from "@gokkehub/ui";
+import { Button, Input, Panel, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
 import { storePlayerId } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
@@ -291,34 +291,35 @@ export default function SetupWizardPage() {
       {/* ── Teams ──────────────────────────────────────────────────────── */}
       <Panel>
         <h2 className="text-lg font-bold mb-1">Teams</h2>
-        <div className="flex flex-wrap items-center gap-4 mt-3">
-          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-            Mode
-            <select value={teamsCfg.mode}
-              onChange={e => patch({ teams: { ...teamsCfg, mode: e.target.value as "solo" | "teams" } })}
-              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-              <option value="solo">Solo — everyone plays for themselves</option>
-              <option value="teams">Teams</option>
-            </select>
-          </label>
+        <div className="flex flex-col gap-4 mt-3">
+          <Toggle
+            options={[
+              { value: "solo",  label: "🙋 Solo — everyone for themselves" },
+              { value: "teams", label: "👥 Teams" },
+            ]}
+            value={teamsCfg.mode}
+            onChange={v => patch({ teams: { ...teamsCfg, mode: v as "solo" | "teams" } })}
+          />
           {teamsCfg.mode === "teams" && (
-            <>
+            <div className="flex flex-wrap items-end gap-4">
               <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
                 Teams
                 <input type="number" min={2} max={8} value={teamsCfg.count}
                   onChange={e => patch({ teams: { ...teamsCfg, count: Math.min(8, Math.max(2, Number(e.target.value) || 2)) } })}
                   className="w-16 px-2 py-1.5 rounded-md text-sm outline-none" style={inputStyle} />
               </label>
-              <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-                Buzzing
-                <select value={teamsCfg.buzzerMode}
-                  onChange={e => patch({ teams: { ...teamsCfg, buzzerMode: e.target.value as "anyone" | "captain" } })}
-                  className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-                  <option value="anyone">Anyone on the team</option>
-                  <option value="captain">Captain only</option>
-                </select>
-              </label>
-            </>
+              <div className="flex-1 min-w-56">
+                <p className="text-sm font-medium mb-2" style={labelStyle}>Who can buzz</p>
+                <Toggle
+                  options={[
+                    { value: "anyone",  label: "Anyone on the team" },
+                    { value: "captain", label: "⭐ Captain only" },
+                  ]}
+                  value={teamsCfg.buzzerMode}
+                  onChange={v => patch({ teams: { ...teamsCfg, buzzerMode: v as "anyone" | "captain" } })}
+                />
+              </div>
+            </div>
           )}
         </div>
         {teamsCfg.mode === "teams" && (
@@ -338,39 +339,46 @@ export default function SetupWizardPage() {
 
       {/* ── Board 1 ────────────────────────────────────────────────────── */}
       <Panel>
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <h2 className="text-lg font-bold flex-1">
+        <div className="mb-4">
+          <h2 className="text-lg font-bold mb-2">
             {board2Mode === "off" ? "Board" : "Board 1"}
           </h2>
-          <select value={board2Mode} onChange={e => setBoard2Mode(e.target.value as JpGameConfig["board2Mode"])}
-            className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-            <option value="off">Single board</option>
-            <option value="doubleUp">Board 2 = double-up (same questions, 2× points)</option>
-            <option value="custom">Board 2 = custom (own questions)</option>
-          </select>
+          <Toggle
+            options={[
+              { value: "off",      label: "Single board" },
+              { value: "doubleUp", label: "＋ Double-up board 2 (2× points)" },
+              { value: "custom",   label: "＋ Custom board 2" },
+            ]}
+            value={board2Mode}
+            onChange={v => setBoard2Mode(v as JpGameConfig["board2Mode"])}
+          />
         </div>
         {boardEditor(0)}
 
-        <div className="flex flex-wrap gap-5 mt-5">
-          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-            Default on-buzz display
-            <select value={config.buzzer.defaultBuzzDisplayMode}
-              onChange={e => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: e.target.value as JpBuzzDisplayMode } })}
-              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-              <option value="stay">Stay visible</option>
-              <option value="disappear">Disappear on buzz</option>
-              <option value="typewriter">Typewriter (freezes on buzz)</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-            After a wrong answer
-            <select value={config.buzzer.queueMode}
-              onChange={e => patch({ buzzer: { ...config.buzzer, queueMode: e.target.value as JpGameConfig["buzzer"]["queueMode"] } })}
-              className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-              <option value="rebuzz">Must Re-Buzz — everyone competes fresh</option>
-              <option value="lockIn">Queue Lock-In — next in queue is called</option>
-            </select>
-          </label>
+        <div className="flex flex-col gap-4 mt-5">
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Default on-buzz display</p>
+            <Toggle
+              options={[
+                { value: "stay",       label: "Stay visible" },
+                { value: "disappear",  label: "Disappear" },
+                { value: "typewriter", label: "⌨ Typewriter" },
+              ]}
+              value={config.buzzer.defaultBuzzDisplayMode}
+              onChange={v => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: v as JpBuzzDisplayMode } })}
+            />
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>After a wrong answer</p>
+            <Toggle
+              options={[
+                { value: "rebuzz", label: "🔄 Must Re-Buzz — fresh race" },
+                { value: "lockIn", label: "📋 Queue Lock-In — next is called" },
+              ]}
+              value={config.buzzer.queueMode}
+              onChange={v => patch({ buzzer: { ...config.buzzer, queueMode: v as JpGameConfig["buzzer"]["queueMode"] } })}
+            />
+          </div>
         </div>
       </Panel>
 
@@ -487,15 +495,17 @@ export default function SetupWizardPage() {
           </div>
 
           {board2Mode !== "off" && (
-            <label className="flex items-center gap-2 text-sm font-semibold" style={labelStyle}>
-              Power-ups between boards
-              <select value={config.powerupCarryover ?? "persist"}
-                onChange={e => patch({ powerupCarryover: e.target.value as "persist" | "reset" })}
-                className="px-3 py-2 rounded-md text-sm outline-none" style={inputStyle}>
-                <option value="persist">Carry over to board 2</option>
-                <option value="reset">Reset — earn fresh ones</option>
-              </select>
-            </label>
+            <div>
+              <p className="text-sm font-medium mb-2" style={labelStyle}>Power-ups between boards</p>
+              <Toggle
+                options={[
+                  { value: "persist", label: "Carry over to board 2" },
+                  { value: "reset",   label: "Reset — earn fresh ones" },
+                ]}
+                value={config.powerupCarryover ?? "persist"}
+                onChange={v => patch({ powerupCarryover: v as "persist" | "reset" })}
+              />
+            </div>
           )}
         </div>
       </Panel>

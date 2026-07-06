@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { JpBlock, JpBuzzDisplayMode, JpMediaBlock } from "../../lib/types";
+import type { JpBlock, JpBuzzDisplayMode, JpMediaBlock, JpRevealOrder } from "../../lib/types";
 import TypewriterText from "../TypewriterText";
 import ImageReveal from "../ImageReveal";
 import MediaPlayer from "../MediaPlayer";
@@ -14,16 +14,27 @@ interface QuestionOverlayProps {
   /** Replay counter + audio unlock, for audio/video blocks. */
   mediaNonce:  number;
   soundOn:     boolean;
+  /** Staged reveal: which group shows first, and how far along we are. */
+  revealOrder?: JpRevealOrder;
+  revealStage?: number;
   /** Buzz banner / timer etc., rendered under the question. */
   children?: ReactNode;
 }
 
 export default function QuestionOverlay({
-  category, value, blocks, displayMode, buzzed, mediaNonce, soundOn, children,
+  category, value, blocks, displayMode, buzzed, mediaNonce, soundOn,
+  revealOrder = "together", revealStage, children,
 }: QuestionOverlayProps) {
   const hidden = displayMode === "disappear" && buzzed;
-  const media  = blocks.filter(b => b.type === "audio" || b.type === "video") as JpMediaBlock[];
-  const visual = blocks.filter(b => b.type === "text" || b.type === "image");
+  // Staged reveal groups: text vs everything visual/audible (image/audio/video).
+  const stageDone = (revealStage ?? 1) >= 1;
+  const showText  = stageDone || revealOrder !== "mediaFirst";
+  const showMedia = stageDone || revealOrder !== "textFirst";
+  const media  = showMedia
+    ? blocks.filter(b => b.type === "audio" || b.type === "video") as JpMediaBlock[]
+    : [];
+  const visual = blocks.filter(b =>
+    (b.type === "text" && showText) || (b.type === "image" && showMedia));
 
   return (
     <div className="jp-overlay absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 p-6 sm:p-12"

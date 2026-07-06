@@ -112,12 +112,17 @@ export type JpSpecialTiles = Record<string, Record<string, JpSpecialTile>>; // "
 
 // ── Game config (setup wizard output, stored on jp_games.config) ─────────────
 
+/** What shows first on the big screen: everything, text before media, or media before text. */
+export type JpRevealOrder = "together" | "textFirst" | "mediaFirst";
+
 export interface JpTileConfig {
   questionBlocks: JpBlock[];
   answerBlocks:   JpBlock[];
   answerMode:     JpAnswerMode;
   answerModeConfig?: JpAnswerModeConfig;
   buzzDisplayMode?: JpBuzzDisplayMode;   // overrides board default
+  /** Staged reveal: the host triggers the second part manually. Default together. */
+  revealOrder?:   JpRevealOrder;
 }
 
 export interface JpBoardConfig {
@@ -250,6 +255,8 @@ export interface JpActiveQuestion {
   lockedOutTeamIds?: number[];
   /** Bumped by the host's replay_media action — big screen restarts clips. */
   mediaNonce?: number;
+  /** Staged reveal progress: 0 = first part only, 1 = everything. */
+  revealStage?: number;
 }
 
 export interface JpPowerupPrompt {
@@ -377,6 +384,7 @@ export type HostAction =
   | { type: "select_tile"; tileKey: string; pickerTeamId?: number }
   | { type: "open_buzzers" }              // every open starts a fresh buzz round
   | { type: "replay_media" }              // restart the question's audio/video clip
+  | { type: "reveal_rest" }               // staged reveal: show the held-back part
   | { type: "accept_answer" }
   | { type: "reject_answer" }
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)

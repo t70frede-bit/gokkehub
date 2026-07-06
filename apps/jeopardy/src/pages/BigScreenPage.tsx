@@ -259,6 +259,8 @@ export default function BigScreenPage() {
           buzzed={q.buzzedBy !== null}
           mediaNonce={q.mediaNonce ?? 0}
           soundOn={soundOn}
+          revealOrder={tile.revealOrder}
+          revealStage={q.revealStage}
         >
           <div className="min-h-20 flex flex-col items-center justify-center gap-2">
             {q.special === "buzzed" && (

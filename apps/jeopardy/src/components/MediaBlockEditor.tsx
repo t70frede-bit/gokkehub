@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@gokkehub/ui";
+import { Button, Toggle } from "@gokkehub/ui";
 import type { JpMediaBlock, UploadResponse } from "../lib/types";
 
 interface MediaBlockEditorProps {
@@ -9,11 +9,6 @@ interface MediaBlockEditorProps {
   onChange: (block: JpMediaBlock | null) => void;
 }
 
-const inputStyle = {
-  background: "rgb(var(--surface-input-rgb))",
-  border:     "1px solid rgb(var(--border-rgb))",
-  color:      "rgb(var(--text-primary-rgb))",
-} as const;
 const labelStyle = { color: "rgb(var(--text-secondary-rgb))" } as const;
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -143,26 +138,30 @@ export default function MediaBlockEditor({ gameId, blockId, block, onChange }: M
             Mute video
           </label>
         )}
-        <label className="flex items-center gap-1.5">
-          On buzz
-          {block.type === "video" ? (
-            <select value={block.onBuzz ?? "freeze"}
-              onChange={e => patch({ onBuzz: e.target.value as "stop" | "freeze" | "continue" })}
-              className="px-2 py-1 rounded-md text-sm outline-none" style={inputStyle}>
-              <option value="freeze">Freeze frame</option>
-              <option value="stop">Stop</option>
-              <option value="continue">Keep playing</option>
-            </select>
-          ) : (
-            <select value={block.onBuzz ?? "stop"}
-              onChange={e => patch({ onBuzz: e.target.value as "stop" | "fadeOut" | "continue" })}
-              className="px-2 py-1 rounded-md text-sm outline-none" style={inputStyle}>
-              <option value="stop">Stop immediately</option>
-              <option value="fadeOut">Fade out</option>
-              <option value="continue">Keep playing</option>
-            </select>
-          )}
-        </label>
+      </div>
+      <div>
+        <p className="text-sm font-medium mb-1" style={labelStyle}>When someone buzzes</p>
+        {block.type === "video" ? (
+          <Toggle
+            options={[
+              { value: "freeze",   label: "Freeze frame" },
+              { value: "stop",     label: "Stop" },
+              { value: "continue", label: "Keep playing" },
+            ]}
+            value={block.onBuzz ?? "freeze"}
+            onChange={v => patch({ onBuzz: v as "stop" | "freeze" | "continue" })}
+          />
+        ) : (
+          <Toggle
+            options={[
+              { value: "stop",     label: "Stop" },
+              { value: "fadeOut",  label: "Fade out" },
+              { value: "continue", label: "Keep playing" },
+            ]}
+            value={block.onBuzz ?? "stop"}
+            onChange={v => patch({ onBuzz: v as "stop" | "fadeOut" | "continue" })}
+          />
+        )}
       </div>
       {error && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
     </div>

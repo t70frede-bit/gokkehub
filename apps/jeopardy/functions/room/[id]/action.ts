@@ -93,6 +93,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           buzzedPlayerId = teams.find(t => t.id === action.pickerTeamId)?.captain_id ?? null;
         }
 
+        // Staged reveal: hold back text or media until the host triggers it.
+        const staged = (tile.revealOrder ?? "together") !== "together";
+
         updates.board_state = {
           ...state,
           buzzersOpen:    false,
@@ -106,6 +109,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             secondChanceUsed: false,
             ...(buzzed ? { special: "buzzed" as const } : {}),
             ...(mode !== "standard" ? { submittedTeamIds: [] } : {}),
+            ...(staged ? { revealStage: 0 } : {}),
           },
         };
         await logEvent(env, roomId, "tile_selected", {
@@ -135,6 +139,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         updates.board_state = {
           ...state,
           activeQuestion: { ...q, mediaNonce: (q.mediaNonce ?? 0) + 1 },
+        };
+        break;
+      }
+
+      case "reveal_rest": {
+        const q = state.activeQuestion;
+        if (!q) return json({ error: "No active question" }, 409, req);
+        updates.board_state = {
+          ...state,
+          activeQuestion: { ...q, revealStage: 1 },
         };
         break;
       }

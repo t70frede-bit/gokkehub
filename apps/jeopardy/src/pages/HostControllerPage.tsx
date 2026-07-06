@@ -245,6 +245,12 @@ export default function HostControllerPage() {
                   : <p key={b.id} className="text-sm mt-1" style={secondary}>
                       {b.type === "audio" ? "🎵 Audio clip plays on the big screen" : "🎬 Video clip plays on the big screen"}
                     </p>)}
+            {(q.revealStage ?? 1) < 1 && (
+              <Button size="sm" className="mt-2 mr-2" loading={busy}
+                onClick={() => dispatch({ type: "reveal_rest" })}>
+                👁 Reveal the {tile.revealOrder === "mediaFirst" ? "question text" : "media"}
+              </Button>
+            )}
             {hasMedia && (
               <Button variant="ghost" size="sm" className="mt-2" loading={busy}
                 onClick={() => dispatch({ type: "replay_media" })}>
