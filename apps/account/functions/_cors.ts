@@ -6,7 +6,8 @@
  * echo back the exact requesting origin when it's on the allowlist.
  */
 
-const ALLOWED_ORIGIN_RE = /^https?:\/\/(localhost(:\d+)?|[\w-]+\.gokkehub\.com)$/;
+// Any *.gokkehub.com subdomain AND the apex — the hub counts too.
+const ALLOWED_ORIGIN_RE = /^https?:\/\/(localhost(:\d+)?|([\w-]+\.)?gokkehub\.com)$/;
 
 export function getCorsOrigin(request: Request): string | null {
   const origin = request.headers.get("Origin");
