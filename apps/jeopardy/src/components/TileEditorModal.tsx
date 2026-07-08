@@ -128,7 +128,13 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
     const answerBlocks: JpBlock[] = [];
     if (aText.trim())                        answerBlocks.push({ id: `${tileKey}-a`, type: "text", text: aText.trim() });
-    if (aExtra === "image" && aImage)        answerBlocks.push(aImage);
+    if (aExtra === "image" && aImage) {
+      answerBlocks.push(aImage);
+    } else if (aExtra === "none" && qExtra === "image" && qImage && reveal !== "off") {
+      // Question image has a visual effect (blur/silhouette/sharpen) — auto-add the
+      // same image to the answer side without any effect so the host sees it clearly.
+      answerBlocks.push({ ...qImage, id: `${tileKey}-a-img`, revealMode: "off" });
+    }
     if (aExtra === "media" && aMedia)        answerBlocks.push(aMedia);
 
     const out: JpTileConfig = { questionBlocks, answerBlocks, answerMode: mode };
