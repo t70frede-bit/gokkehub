@@ -42,6 +42,7 @@ export default function BoardGrid({ board, state, onTileSelect, compact = false 
               key={key}
               type="button"
               disabled={!canPick}
+              title={onTileSelect && !hasQ && !spent ? "No question set" : undefined}
               onClick={() => canPick && onTileSelect(key)}
               className={`jp-tile rounded-md font-black text-center flex items-center justify-center
                 ${compact ? "text-sm py-2 min-h-9" : "text-xl sm:text-3xl py-4 min-h-16 sm:min-h-20"}

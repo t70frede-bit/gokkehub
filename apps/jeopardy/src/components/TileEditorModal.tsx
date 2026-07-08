@@ -106,9 +106,21 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     }
   };
 
+  const clearTile = () => {
+    if (window.confirm("Clear this tile and remove the question?")) onSave(null);
+  };
+
+  const hasQuestion = qText.trim() || (qExtra === "image" && qImage) || (qExtra === "media" && qMedia);
+
+  const handleClose = () => {
+    const hasEdits = hasQuestion || aText.trim() || aImage || aMedia || mode !== "standard";
+    if (hasEdits && !window.confirm("Discard unsaved changes?")) return;
+    onClose();
+  };
+
   const save = () => {
-    if (!qText.trim() && !(qExtra === "image" && qImage) && !(qExtra === "media" && qMedia)) {
-      onSave(null); return;
+    if (!hasQuestion) {
+      setError("Add at least a question text or media before saving."); return;
     }
 
     if (mode === "multipleChoice") {
@@ -193,7 +205,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   const showAMedia = aExtra === "media";
 
   return (
-    <Modal open onClose={onClose} maxWidth="560px">
+    <Modal open onClose={handleClose} maxWidth="560px">
       <div className="flex flex-col gap-4">
         <h3 className="text-lg font-bold">{title}</h3>
 
@@ -460,12 +472,14 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {error && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
 
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>
-            {qText.trim() || (qExtra === "image" && qImage) || (qExtra === "media" && qMedia)
-              ? "Save tile" : "Clear tile"}
-          </Button>
+        <div className="flex justify-between gap-2">
+          {tile && (
+            <Button variant="danger" onClick={clearTile}>Clear tile</Button>
+          )}
+          <div className="flex gap-2 ml-auto">
+            <Button variant="ghost" onClick={handleClose}>Cancel</Button>
+            <Button onClick={save}>Save tile</Button>
+          </div>
         </div>
       </div>
     </Modal>

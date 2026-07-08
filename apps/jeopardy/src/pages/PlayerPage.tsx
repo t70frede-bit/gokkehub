@@ -49,6 +49,7 @@ export default function PlayerPage() {
     if (!roomId || !playerId) return;
     setBusy(true);
     setSubmitErr(null);
+    setSubmitErr(null);
     try {
       const res = await fetch(`/room/${roomId}/submit`, {
         method:  "POST",
@@ -245,7 +246,7 @@ export default function PlayerPage() {
                 </p>
               ) : (
                 <p className="font-bold text-lg" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-                  Gather around <span className="font-black">{captainName}</span>'s phone!
+                  Get ready — <span className="font-black">{captainName}</span>'s phone will show the question shortly!
                 </p>
               )}
             </>

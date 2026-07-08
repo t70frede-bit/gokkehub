@@ -41,6 +41,14 @@ export default function SetupWizardPage() {
   const [inviteBusy,    setInviteBusy]    = useState(false);
   const [editingCollab, setEditingCollab] = useState<string | null>(null); // userId being edited
 
+  // Warn before navigating away with unsaved changes.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   const inviteToken = searchParams.get("invite");
 
   const acceptInvite = async () => {
@@ -76,6 +84,8 @@ export default function SetupWizardPage() {
 
   const removeCollab = async (userId: string) => {
     if (!gameId) return;
+    const name = collabs.find(c => c.userId === userId)?.userId ?? "this collaborator";
+    if (!window.confirm(`Remove ${name} from this game?`)) return;
     const res = await fetch(`/game/${gameId}/collaborators`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -178,6 +188,10 @@ export default function SetupWizardPage() {
   const launch = async () => {
     if (dirty && !(await save())) return;
     if (!gameId) return;
+    if (final.enabled && !finalQText.trim()) {
+      addToast("Final Jeopardy is enabled but has no question — write a question or disable it.");
+      return;
+    }
     setBusy(true);
     const res  = await fetch(`/game/${gameId}/launch`, {
       method:  "POST",
@@ -243,6 +257,10 @@ export default function SetupWizardPage() {
               </div>
               <Button variant="danger" size="sm" disabled={board.categories.length <= 1}
                 onClick={() => {
+                  const tilesInCol = Object.keys(board.tiles).filter(k => k.startsWith(`${i}-`)).length;
+                  if (tilesInCol > 0 && !window.confirm(
+                    `Delete "${board.categories[i]}"? It has ${tilesInCol} question${tilesInCol > 1 ? "s" : ""} that will be removed.`
+                  )) return;
                   const tiles: typeof board.tiles = {};
                   for (const [key, tile] of Object.entries(board.tiles)) {
                     const [col, row] = key.split("-").map(Number);
@@ -675,6 +693,7 @@ export default function SetupWizardPage() {
               {inviteUrl && (
                 <>
                   <code className="text-xs px-2 py-1 rounded flex-1 min-w-0 truncate"
+                    title={inviteUrl}
                     style={{ background: "rgb(var(--surface-rgb))", color: "rgb(var(--text-secondary-rgb))" }}>
                     {inviteUrl}
                   </code>

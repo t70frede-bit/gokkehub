@@ -25,9 +25,11 @@ export default function HostControllerPage() {
   const playerId = roomId ? getStoredPlayerId(roomId) : null;
   const { dispatch, busy, error: actionError } = useHostController(roomId, playerId);
 
-  const [scoreEdit, setScoreEdit]   = useState<{ teamId: number; value: string } | null>(null);
-  const [confirmEnd, setConfirmEnd] = useState(false);
-  const [pickerTile, setPickerTile] = useState<string | null>(null);
+  const [scoreEdit,      setScoreEdit]      = useState<{ teamId: number; value: string } | null>(null);
+  const [confirmEnd,     setConfirmEnd]     = useState(false);
+  const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const [confirmFinal,   setConfirmFinal]   = useState(false);
+  const [pickerTile,     setPickerTile]     = useState<string | null>(null);
   const [finalSubs, setFinalSubs]   = useState<JpSubmissionRow[]>([]);
 
   useEffect(() => {
@@ -365,7 +367,7 @@ export default function HostControllerPage() {
                   </Button>
                 )}
                 <Button fullWidth variant="ghost" loading={busy}
-                  onClick={() => dispatch({ type: "dismiss_question" })}>
+                  onClick={() => setConfirmDismiss(true)}>
                   Nobody knows it — close question
                 </Button>
               </div>
@@ -429,7 +431,7 @@ export default function HostControllerPage() {
               </Button>
             )}
             {finalOn && (
-              <Button loading={busy} onClick={() => dispatch({ type: "start_final" })}>
+              <Button loading={busy} onClick={() => setConfirmFinal(true)}>
                 Start Final Jeopardy
               </Button>
             )}
@@ -498,6 +500,38 @@ export default function HostControllerPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={confirmDismiss} onClose={() => setConfirmDismiss(false)}>
+        <div className="flex flex-col gap-4">
+          <h3 className="text-lg font-bold">Close this question?</h3>
+          <p style={secondary}>Nobody scores — the tile is marked as spent and the board returns.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmDismiss(false)}>Cancel</Button>
+            <Button variant="danger" loading={busy} onClick={async () => {
+              await dispatch({ type: "dismiss_question" });
+              setConfirmDismiss(false);
+            }}>
+              Close question
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={confirmFinal} onClose={() => setConfirmFinal(false)}>
+        <div className="flex flex-col gap-4">
+          <h3 className="text-lg font-bold">Start Final Jeopardy?</h3>
+          <p style={secondary}>All normal questions end and the final round begins immediately.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmFinal(false)}>Cancel</Button>
+            <Button loading={busy} onClick={async () => {
+              await dispatch({ type: "start_final" });
+              setConfirmFinal(false);
+            }}>
+              Start Final Jeopardy
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={confirmEnd} onClose={() => setConfirmEnd(false)}>

@@ -49,9 +49,15 @@ export default function LobbyPage() {
         >
           {room.id}
         </p>
-        <p className="text-sm" style={secondary}>
+        <p className="text-sm mb-2" style={secondary}>
           Join at <span className="font-bold">gokkehub.com/join</span>
         </p>
+        <button type="button"
+          className="text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full"
+          style={{ border: "1px solid rgb(var(--border-rgb))", color: "rgb(var(--text-secondary-rgb))" }}
+          onClick={() => navigator.clipboard.writeText(room.id)}>
+          📋 Copy code
+        </button>
       </Panel>
 
       {teamMode ? (
