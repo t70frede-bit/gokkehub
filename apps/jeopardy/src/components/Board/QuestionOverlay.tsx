@@ -8,6 +8,8 @@ interface QuestionOverlayProps {
   category: string;
   value:    number;
   blocks:   JpBlock[];
+  /** When false, the question content is hidden (pre-reveal step). */
+  questionRevealed?: boolean;
   /** How the question behaves once someone buzzes. */
   displayMode: JpBuzzDisplayMode;
   buzzed:      boolean;
@@ -22,7 +24,7 @@ interface QuestionOverlayProps {
 }
 
 export default function QuestionOverlay({
-  category, value, blocks, displayMode, buzzed, mediaNonce, soundOn,
+  category, value, blocks, questionRevealed = true, displayMode, buzzed, mediaNonce, soundOn,
   revealOrder = "together", revealStage, children,
 }: QuestionOverlayProps) {
   const hidden = displayMode === "disappear" && buzzed;
@@ -30,11 +32,13 @@ export default function QuestionOverlay({
   const stageDone = (revealStage ?? 1) >= 1;
   const showText  = stageDone || revealOrder !== "mediaFirst";
   const showMedia = stageDone || revealOrder !== "textFirst";
-  const media  = showMedia
+  const media  = (questionRevealed && showMedia)
     ? blocks.filter(b => b.type === "audio" || b.type === "video") as JpMediaBlock[]
     : [];
-  const visual = blocks.filter(b =>
-    (b.type === "text" && showText) || (b.type === "image" && showMedia));
+  const visual = questionRevealed
+    ? blocks.filter(b =>
+        (b.type === "text" && showText) || (b.type === "image" && showMedia))
+    : [];
 
   return (
     <div className="jp-overlay absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 p-6 sm:p-12"
@@ -45,7 +49,8 @@ export default function QuestionOverlay({
       >
         {category} — {value}
       </div>
-      {!hidden ? (
+
+      {questionRevealed && (!hidden ? (
         <div className="flex flex-col items-center gap-4 max-w-4xl text-center">
           {visual.map(block => block.type === "text" ? (
             displayMode === "typewriter" ? (
@@ -70,9 +75,9 @@ export default function QuestionOverlay({
         >
           · · ·
         </p>
-      )}
-      {/* Media stays mounted even when the question "disappears" — its own
-          on-buzz setting (stop / fade / freeze / continue) governs playback. */}
+      ))}
+
+      {/* Media stays mounted only when revealed (avoids premature autoplay). */}
       {media.map(block => (
         <MediaPlayer key={block.id} block={block} buzzed={buzzed}
           nonce={mediaNonce} soundOn={soundOn} />

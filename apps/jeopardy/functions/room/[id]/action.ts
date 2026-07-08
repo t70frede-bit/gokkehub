@@ -107,6 +107,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             buzzedPlayerId,
             timerStart:       buzzed ? Date.now() : null,
             secondChanceUsed: false,
+            questionRevealed: false,   // host always presses "Reveal question" first
             ...(buzzed ? { special: "buzzed" as const } : {}),
             ...(mode !== "standard" ? { submittedTeamIds: [] } : {}),
             ...(staged ? { revealStage: 0 } : {}),
@@ -133,6 +134,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         break;
       }
 
+      case "reveal_question": {
+        const q = state.activeQuestion;
+        if (!q) return json({ error: "No active question" }, 409, req);
+        updates.board_state = {
+          ...state,
+          activeQuestion: { ...q, questionRevealed: true },
+        };
+        break;
+      }
+
       case "replay_media": {
         const q = state.activeQuestion;
         if (!q) return json({ error: "No active question" }, 409, req);
@@ -149,6 +160,17 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         updates.board_state = {
           ...state,
           activeQuestion: { ...q, revealStage: 1 },
+        };
+        break;
+      }
+
+      case "reveal_and_open": {
+        const q = state.activeQuestion;
+        if (!q) return json({ error: "No active question" }, 409, req);
+        updates.board_state = {
+          ...state,
+          buzzersOpen:    true,
+          activeQuestion: { ...q, revealStage: 1, buzzRound: (q.buzzRound ?? 0) + 1 },
         };
         break;
       }

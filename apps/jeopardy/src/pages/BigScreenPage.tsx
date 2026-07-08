@@ -77,12 +77,14 @@ export default function BigScreenPage() {
   const q     = state.activeQuestion;
   const tile  = q && board ? board.tiles[q.tileKey] : null;
   const mode  = q?.mode ?? "standard";
+  const teamMode    = game.config.teams?.mode === "teams";
   const buzzedTeam  = q && q.buzzedBy !== null ? teams.find(t => t.id === q.buzzedBy) : null;
   const contestants = players.filter(p => p.id !== room.host_id);
   const prompt      = state.powerupPrompt ?? null;
   const final       = state.final ?? null;
   const displayMode = tile?.buzzDisplayMode ?? game.config.buzzer.defaultBuzzDisplayMode;
   const ranked      = [...teams].sort((a, b) => b.score - a.score);
+  const questionRevealed = q?.questionRevealed ?? true;
 
   // ── Lobby ───────────────────────────────────────────────────────────
   if (room.status === "lobby") {
@@ -255,6 +257,7 @@ export default function BigScreenPage() {
             : "???"}
           value={board!.pointValues[Number(q.tileKey.split("-")[1])] ?? 0}
           blocks={tile.questionBlocks}
+          questionRevealed={questionRevealed}
           displayMode={mode === "standard" ? displayMode : "stay"}
           buzzed={q.buzzedBy !== null}
           mediaNonce={q.mediaNonce ?? 0}
@@ -262,37 +265,65 @@ export default function BigScreenPage() {
           revealOrder={tile.revealOrder}
           revealStage={q.revealStage}
         >
-          <div className="min-h-20 flex flex-col items-center justify-center gap-2">
-            {q.special === "buzzed" && (
-              <p className="font-black text-2xl sm:text-4xl" style={{ color: "rgb(var(--color-danger-rgb))" }}>
-                💥 BUZZED TILE!
-              </p>
-            )}
-            {mode !== "standard" ? (
-              <p className="font-bold text-xl sm:text-3xl" style={state.buzzersOpen ? primary : secondary}>
-                {state.buzzersOpen
-                  ? `Lock in your answers! ${(q.submittedTeamIds ?? []).length}/${teams.length} in`
-                  : "Get ready…"}
-              </p>
-            ) : buzzedTeam ? (
-              <>
-                <p className="jp-podium-buzzed rounded-lg px-8 py-3 font-black text-2xl sm:text-4xl"
-                  style={{
-                    background: "rgba(var(--color-primary-rgb), 0.15)",
-                    border:     "1px solid rgb(var(--color-primary-rgb))",
-                    ...primary,
-                  }}>
-                  {buzzedTeam.name}
-                  {q.secondChanceUsed && " 🎯"}
+          <div className="min-h-20 flex flex-col items-center justify-center gap-2 text-center">
+            {!questionRevealed ? (
+              // Pre-reveal: show context while host gets ready
+              q.special === "buzzed" ? (
+                <p className="font-black text-2xl sm:text-4xl animate-pulse"
+                  style={{ color: "rgb(var(--color-danger-rgb))" }}>
+                  💥 Special tile! Host is revealing…
                 </p>
-                <AnswerTimer startMs={q.timerStart} />
-              </>
-            ) : state.buzzersOpen ? (
-              <p className="font-bold text-xl sm:text-3xl animate-pulse" style={primary}>
-                BUZZ NOW!
-              </p>
+              ) : mode !== "standard" ? (
+                <>
+                  <p className="font-black text-2xl sm:text-4xl" style={primary}>
+                    🎯 Special round
+                  </p>
+                  <p className="font-bold text-lg sm:text-2xl" style={secondary}>
+                    {teamMode
+                      ? "Gather around your captain's phone!"
+                      : "Get ready to answer on your phone!"}
+                  </p>
+                </>
+              ) : (
+                <p className="text-lg sm:text-2xl animate-pulse" style={secondary}>
+                  ⏳ Question incoming…
+                </p>
+              )
             ) : (
-              <p className="text-lg sm:text-2xl" style={secondary}>Get ready…</p>
+              // Question is revealed — normal play flow
+              <>
+                {q.special === "buzzed" && (
+                  <p className="font-black text-2xl sm:text-4xl" style={{ color: "rgb(var(--color-danger-rgb))" }}>
+                    💥 BUZZED TILE!
+                  </p>
+                )}
+                {mode !== "standard" ? (
+                  <p className="font-bold text-xl sm:text-3xl" style={state.buzzersOpen ? primary : secondary}>
+                    {state.buzzersOpen
+                      ? `Lock in your answers! ${(q.submittedTeamIds ?? []).length}/${teams.length} in`
+                      : "Open your phones — host will open answers shortly"}
+                  </p>
+                ) : buzzedTeam ? (
+                  <>
+                    <p className="jp-podium-buzzed rounded-lg px-8 py-3 font-black text-2xl sm:text-4xl"
+                      style={{
+                        background: "rgba(var(--color-primary-rgb), 0.15)",
+                        border:     "1px solid rgb(var(--color-primary-rgb))",
+                        ...primary,
+                      }}>
+                      {buzzedTeam.name} buzzed in!
+                      {q.secondChanceUsed && " 🎯"}
+                    </p>
+                    <AnswerTimer startMs={q.timerStart} />
+                  </>
+                ) : state.buzzersOpen ? (
+                  <p className="font-bold text-xl sm:text-3xl animate-pulse" style={primary}>
+                    BUZZ NOW!
+                  </p>
+                ) : (
+                  <p className="text-lg sm:text-2xl" style={secondary}>Get ready…</p>
+                )}
+              </>
             )}
           </div>
         </QuestionOverlay>

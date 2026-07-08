@@ -44,6 +44,24 @@
 .jp-img-frozen   { animation-play-state: paused; }
 .jp-img-revealed { filter: none !important; animation: none !important; }
 
+/* ── Score delta flash ─────────────────────────────────────────────────────── */
+@keyframes jp-score-delta {
+  0%   { opacity: 1; transform: translateY(0)    scale(1.3); }
+  60%  { opacity: 1; transform: translateY(-1rem) scale(1);   }
+  100% { opacity: 0; transform: translateY(-2rem) scale(0.9); }
+}
+.jp-score-delta {
+  animation: jp-score-delta 1.6s ease-out forwards;
+  position:  absolute;
+  top: 0; left: 50%;
+  transform-origin: center;
+  translate: -50% 0;
+  pointer-events: none;
+  font-weight: 900;
+  font-size:  1.1rem;
+  white-space: nowrap;
+}
+
 /* ── Buzzer button ─────────────────────────────────────────────────────────── */
 .jp-buzzer {
   touch-action: manipulation;

@@ -268,6 +268,8 @@ export interface JpActiveQuestion {
   lockedOutTeamIds?: number[];
   /** Bumped by the host's replay_media action — big screen restarts clips. */
   mediaNonce?: number;
+  /** false = tile selected but question not yet shown; host presses "Reveal question". */
+  questionRevealed?: boolean;
   /** Staged reveal progress: 0 = first part only, 1 = everything. */
   revealStage?: number;
 }
@@ -395,6 +397,7 @@ export type HostAction =
   | { type: "reveal_category"; categoryIndex: number }
   | { type: "reveal_all_categories" }
   | { type: "select_tile"; tileKey: string; pickerTeamId?: number }
+  | { type: "reveal_question" }           // show question on big screen (always first step after tile select)
   | { type: "open_buzzers" }              // every open starts a fresh buzz round
   | { type: "replay_media" }              // restart the question's audio/video clip
   | { type: "reveal_rest" }               // staged reveal: show the held-back part (buzzers stay closed)

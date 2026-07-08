@@ -216,6 +216,33 @@ export default function PlayerPage() {
     );
   }
 
+  // ── Question not yet revealed — show waiting screen ─────────────────
+  if (q && !(q.questionRevealed ?? true)) {
+    return (
+      <div className="flex-1 w-full max-w-md mx-auto p-4 flex flex-col gap-4">
+        {header}
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-6">
+          {mode !== "standard" ? (
+            <>
+              <p className="font-black text-2xl" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                🎯 Special round!
+              </p>
+              <p className="font-bold text-lg" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                {(!teamMode || isCaptain)
+                  ? "Get ready — host is about to reveal the question."
+                  : <span>Gather around <span className="font-black">{captainName}</span>'s phone!</span>}
+              </p>
+            </>
+          ) : (
+            <p className="text-lg animate-pulse" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              ⏳ Host is revealing the question…
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ── Submission answer modes ───────────────────────────────────────────
   if (q && tile && mode !== "standard") {
     return (
