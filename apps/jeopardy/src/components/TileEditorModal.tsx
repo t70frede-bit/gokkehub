@@ -246,19 +246,24 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {(showQImage || showQMedia) && (
           <div>
-            <p className="text-sm font-medium mb-2" style={labelStyle}>When do buzzers open?</p>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order</p>
             <Toggle
               options={[
-                { value: "together",   label: "Immediately — text + media at once" },
-                { value: "textFirst",  label: "After reveal — show text, you reveal media to open buzzers" },
-                { value: "mediaFirst", label: "After reveal — play media, you reveal text to open buzzers" },
+                { value: "together",   label: "Together" },
+                { value: "textFirst",  label: "Text → then image" },
+                { value: "mediaFirst", label: "Image → then text" },
               ]}
               value={order}
               onChange={v => setOrder(v as JpRevealOrder)}
             />
-            {order !== "together" && (
+            {order === "textFirst" && (
               <p className="text-xs mt-1" style={labelStyle}>
-                Your host controller will show a single "Reveal & open buzzers" button.
+                Question text appears first. Your host controller gets a "🖼 Reveal image &amp; open buzzers" button — one press shows the image and opens the buzzers.
+              </p>
+            )}
+            {order === "mediaFirst" && (
+              <p className="text-xs mt-1" style={labelStyle}>
+                Image appears first. Your host controller gets a "📝 Reveal text &amp; open buzzers" button — one press shows the text and opens the buzzers.
               </p>
             )}
           </div>
