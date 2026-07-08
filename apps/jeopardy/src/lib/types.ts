@@ -384,7 +384,8 @@ export type HostAction =
   | { type: "select_tile"; tileKey: string; pickerTeamId?: number }
   | { type: "open_buzzers" }              // every open starts a fresh buzz round
   | { type: "replay_media" }              // restart the question's audio/video clip
-  | { type: "reveal_rest" }               // staged reveal: show the held-back part
+  | { type: "reveal_rest" }               // staged reveal: show the held-back part (buzzers stay closed)
+  | { type: "reveal_and_open" }           // reveal held-back part AND open buzzers in one step
   | { type: "accept_answer" }
   | { type: "reject_answer" }
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)

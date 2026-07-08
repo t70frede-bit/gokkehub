@@ -26,7 +26,9 @@ const inputStyle = {
 
 const labelStyle = { color: "rgb(var(--text-secondary-rgb))" } as const;
 
-type ContentType = "text" | "image" | "media";
+// Extra content type beyond text: "none" = text only, "image" = + image, "media" = + audio/video.
+// Text is always present — it's the question read aloud, the base.
+type ExtraContent = "none" | "image" | "media";
 
 function firstText(blocks: JpBlock[] | undefined): string {
   return (blocks ?? []).filter(b => b.type === "text").map(b => (b as { text: string }).text).join("\n");
@@ -37,50 +39,10 @@ function firstImage(blocks: JpBlock[] | undefined): JpImageBlock | null {
 function firstMedia(blocks: JpBlock[] | undefined): JpMediaBlock | null {
   return ((blocks ?? []).find(b => b.type === "audio" || b.type === "video") as JpMediaBlock | undefined) ?? null;
 }
-function initTypes(blocks: JpBlock[] | undefined, defaultText = true): ContentType[] {
-  const types: ContentType[] = [];
-  if (defaultText || (blocks ?? []).some(b => b.type === "text")) types.push("text");
-  if ((blocks ?? []).some(b => b.type === "image")) types.push("image");
-  if ((blocks ?? []).some(b => b.type === "audio" || b.type === "video")) types.push("media");
-  if (types.length === 0) types.push("text");
-  return types;
-}
-
-// Multi-select chip toggle — same visual style as the shared Toggle component.
-function ContentToggle({ types, onChange }: {
-  types: ContentType[];
-  onChange: (types: ContentType[]) => void;
-}) {
-  const options: { value: ContentType; label: string }[] = [
-    { value: "text",  label: "📝 Text" },
-    { value: "image", label: "🖼 Image" },
-    { value: "media", label: "🎵 Audio / Video" },
-  ];
-  return (
-    <div className="flex rounded-md overflow-hidden"
-      style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-      {options.map(opt => {
-        const active = types.includes(opt.value);
-        return (
-          <button key={opt.value} type="button"
-            className="flex-1 px-3 py-2 text-sm font-bold transition-all duration-150 border-none cursor-pointer"
-            style={active
-              ? { background: "rgba(var(--color-primary-rgb), 0.18)", color: "rgb(var(--color-primary-rgb))" }
-              : { background: "transparent", color: "rgb(var(--text-secondary-rgb))" }}
-            onClick={() => {
-              const next = active
-                ? types.filter(t => t !== opt.value)
-                : [...types, opt.value];
-              // Always keep at least one type active.
-              if (next.length > 0) onChange(next);
-            }}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
+function initExtra(blocks: JpBlock[] | undefined): ExtraContent {
+  if ((blocks ?? []).some(b => b.type === "audio" || b.type === "video")) return "media";
+  if ((blocks ?? []).some(b => b.type === "image")) return "image";
+  return "none";
 }
 
 export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, onClose, simple = false }: TileEditorModalProps) {
@@ -90,9 +52,9 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   const [aImage, setAImage] = useState<JpImageBlock | null>(firstImage(tile?.answerBlocks));
   const [qMedia, setQMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.questionBlocks));
   const [aMedia, setAMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.answerBlocks));
-  // Which content types are toggled on for each side.
-  const [qTypes, setQTypes] = useState<ContentType[]>(() => initTypes(tile?.questionBlocks, true));
-  const [aTypes, setATypes] = useState<ContentType[]>(() => initTypes(tile?.answerBlocks, false));
+  // Extra content on top of the always-present text.
+  const [qExtra, setQExtra] = useState<ExtraContent>(() => initExtra(tile?.questionBlocks));
+  const [aExtra, setAExtra] = useState<ExtraContent>(() => initExtra(tile?.answerBlocks));
 
   const [reveal,  setReveal]  = useState<JpRevealMode>(qImage?.revealMode ?? "off");
   const [display, setDisplay] = useState<JpBuzzDisplayMode | "default">(tile?.buzzDisplayMode ?? "default");
@@ -143,10 +105,9 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   };
 
   const save = () => {
-    const hasQ = (qTypes.includes("text") && qText.trim()) ||
-                 (qTypes.includes("image") && qImage) ||
-                 (qTypes.includes("media") && qMedia);
-    if (!hasQ) { onSave(null); return; }
+    if (!qText.trim() && !(qExtra === "image" && qImage) && !(qExtra === "media" && qMedia)) {
+      onSave(null); return;
+    }
 
     if (mode === "multipleChoice") {
       const opts = mcOptions.map(o => o.trim()).filter(Boolean);
@@ -161,14 +122,14 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     }
 
     const questionBlocks: JpBlock[] = [];
-    if (qTypes.includes("text")  && qText.trim()) questionBlocks.push({ id: `${tileKey}-q`,      type: "text",  text: qText.trim() });
-    if (qTypes.includes("image") && qImage)        questionBlocks.push({ ...qImage, revealMode: reveal });
-    if (qTypes.includes("media") && qMedia)        questionBlocks.push(qMedia);
+    if (qText.trim())                        questionBlocks.push({ id: `${tileKey}-q`, type: "text", text: qText.trim() });
+    if (qExtra === "image" && qImage)        questionBlocks.push({ ...qImage, revealMode: reveal });
+    if (qExtra === "media" && qMedia)        questionBlocks.push(qMedia);
 
     const answerBlocks: JpBlock[] = [];
-    if (aTypes.includes("text")  && aText.trim()) answerBlocks.push({ id: `${tileKey}-a`,      type: "text",  text: aText.trim() });
-    if (aTypes.includes("image") && aImage)        answerBlocks.push(aImage);
-    if (aTypes.includes("media") && aMedia)        answerBlocks.push(aMedia);
+    if (aText.trim())                        answerBlocks.push({ id: `${tileKey}-a`, type: "text", text: aText.trim() });
+    if (aExtra === "image" && aImage)        answerBlocks.push(aImage);
+    if (aExtra === "media" && aMedia)        answerBlocks.push(aMedia);
 
     const out: JpTileConfig = { questionBlocks, answerBlocks, answerMode: mode };
     if (display !== "default") out.buzzDisplayMode = display;
@@ -215,10 +176,10 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     </div>
   );
 
-  const showQImage = qTypes.includes("image");
-  const showQMedia = qTypes.includes("media");
-  const showAImage = aTypes.includes("image");
-  const showAMedia = aTypes.includes("media");
+  const showQImage = qExtra === "image";
+  const showQMedia = qExtra === "media";
+  const showAImage = aExtra === "image";
+  const showAMedia = aExtra === "media";
 
   return (
     <Modal open onClose={onClose} maxWidth="560px">
@@ -227,15 +188,21 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {/* ── Question side ─────────────────────────────────────────── */}
         <div>
-          <p className="text-sm font-medium mb-2" style={labelStyle}>Question content</p>
-          <ContentToggle types={qTypes} onChange={setQTypes} />
+          <p className="text-sm font-medium mb-2" style={labelStyle}>Question</p>
+          <Toggle
+            options={[
+              { value: "none",  label: "📝 Text only" },
+              { value: "image", label: "🖼 + Image" },
+              { value: "media", label: "🎵 + Audio / Video" },
+            ]}
+            value={qExtra}
+            onChange={v => setQExtra(v as ExtraContent)}
+          />
         </div>
 
-        {qTypes.includes("text") && (
-          <textarea value={qText} onChange={e => setQText(e.target.value)} rows={3}
-            placeholder="Question text…"
-            className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-        )}
+        <textarea value={qText} onChange={e => setQText(e.target.value)} rows={3}
+          placeholder="Question text…"
+          className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
 
         {showQImage && (
           <div className="flex flex-col gap-2">
@@ -279,19 +246,19 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {(showQImage || showQMedia) && (
           <div>
-            <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order on the big screen</p>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>When do buzzers open?</p>
             <Toggle
               options={[
-                { value: "together",   label: "All at once" },
-                { value: "textFirst",  label: "Text first" },
-                { value: "mediaFirst", label: "Media first" },
+                { value: "together",   label: "Immediately — text + media at once" },
+                { value: "textFirst",  label: "After reveal — show text, you reveal media to open buzzers" },
+                { value: "mediaFirst", label: "After reveal — play media, you reveal text to open buzzers" },
               ]}
               value={order}
               onChange={v => setOrder(v as JpRevealOrder)}
             />
             {order !== "together" && (
               <p className="text-xs mt-1" style={labelStyle}>
-                You reveal the held-back part from your host controller when you're ready.
+                Your host controller will show a single "Reveal & open buzzers" button.
               </p>
             )}
           </div>
@@ -408,15 +375,21 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {/* ── Answer side ───────────────────────────────────────────── */}
         <div>
-          <p className="text-sm font-medium mb-2" style={labelStyle}>Answer content (host only)</p>
-          <ContentToggle types={aTypes} onChange={setATypes} />
+          <p className="text-sm font-medium mb-2" style={labelStyle}>Answer (host only)</p>
+          <Toggle
+            options={[
+              { value: "none",  label: "📝 Text only" },
+              { value: "image", label: "🖼 + Image" },
+              { value: "media", label: "🎵 + Audio / Video" },
+            ]}
+            value={aExtra}
+            onChange={v => setAExtra(v as ExtraContent)}
+          />
         </div>
 
-        {aTypes.includes("text") && (
-          <textarea value={aText} onChange={e => setAText(e.target.value)} rows={2}
-            placeholder="Answer text…"
-            className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-        )}
+        <textarea value={aText} onChange={e => setAText(e.target.value)} rows={2}
+          placeholder="Answer text…"
+          className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
 
         {showAImage && (
           <div className="flex flex-wrap items-center gap-3">
@@ -446,7 +419,7 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save}>
-            {(qTypes.includes("text") && qText.trim()) || (qTypes.includes("image") && qImage) || (qTypes.includes("media") && qMedia)
+            {qText.trim() || (qExtra === "image" && qImage) || (qExtra === "media" && qMedia)
               ? "Save tile" : "Clear tile"}
           </Button>
         </div>

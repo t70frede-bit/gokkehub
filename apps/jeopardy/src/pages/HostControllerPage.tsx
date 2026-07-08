@@ -246,12 +246,18 @@ export default function HostControllerPage() {
                       {b.type === "audio" ? "🎵 Audio clip plays on the big screen" : "🎬 Video clip plays on the big screen"}
                     </p>)}
             {(q.revealStage ?? 1) < 1 && (
-              <Button size="sm" className="mt-2 mr-2" loading={busy}
-                onClick={() => dispatch({ type: "reveal_rest" })}>
-                👁 Reveal the {tile.revealOrder === "mediaFirst" ? "question text" : "media"}
+              // Staged reveal: one button both reveals the held-back content
+              // AND opens buzzers — so the host never has to press two things.
+              <Button size="lg" fullWidth className="mt-2" loading={busy}
+                onClick={() => dispatch({ type: "reveal_and_open" })}>
+                {tile.revealOrder === "mediaFirst"
+                  ? "📝 Reveal text & open buzzers"
+                  : tile.revealOrder === "textFirst"
+                    ? (tile.questionBlocks.some(b => b.type === "video") ? "🎬 Reveal video & open buzzers" : "🖼 Reveal image & open buzzers")
+                    : "👁 Reveal & open buzzers"}
               </Button>
             )}
-            {hasMedia && (
+            {hasMedia && (q.revealStage ?? 1) >= 1 && (
               <Button variant="ghost" size="sm" className="mt-2" loading={busy}
                 onClick={() => dispatch({ type: "replay_media" })}>
                 🔁 Replay clip on big screen
@@ -314,6 +320,13 @@ export default function HostControllerPage() {
                   <p className="text-center font-bold text-lg animate-pulse"
                     style={{ color: "rgb(var(--color-primary-rgb))" }}>
                     Buzzers open…
+                  </p>
+                ) : (q.revealStage ?? 1) < 1 ? (
+                  // Staged-reveal tile: the big "Reveal & open buzzers" button
+                  // above (in the question panel) covers both actions. Show a
+                  // small reminder so the host knows what's waiting.
+                  <p className="text-center text-sm" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                    Press "Reveal & open buzzers" above when ready.
                   </p>
                 ) : (
                   <Button fullWidth size="lg" loading={busy} onClick={() => dispatch({ type: "open_buzzers" })}>
