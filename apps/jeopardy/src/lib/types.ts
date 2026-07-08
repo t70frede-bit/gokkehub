@@ -229,14 +229,27 @@ export function boardCount(config: JpGameConfig): number {
 export type JpGameStatus = "draft" | "ready" | "archived";
 export type JpRoomStatus = "lobby" | "playing" | "paused" | "finished";
 
+export interface CollabPermissions {
+  editQuestions: boolean;
+  editSettings:  boolean;
+}
+export interface JpCollaborator {
+  userId:      string;
+  displayName: string;
+  avatar:      string | null;
+  addedAt:     string;
+  permissions: CollabPermissions;
+}
+
 export interface JpGame {
-  id:         string;
-  host_id:    string;       // Supabase Auth user id
-  title:      string;
-  status:     JpGameStatus;
-  config:     JpGameConfig;
-  created_at: string;
-  updated_at: string;
+  id:            string;
+  host_id:       string;       // Supabase Auth user id
+  title:         string;
+  status:        JpGameStatus;
+  config:        JpGameConfig;
+  collaborators: JpCollaborator[];
+  created_at:    string;
+  updated_at:    string;
 }
 
 export interface JpActiveQuestion {

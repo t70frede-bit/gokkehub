@@ -19,18 +19,24 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
     const game = await getGame(env, gameId);
     if (!game) return json({ error: "Game not found" }, 404, req);
-    if (game.host_id !== session.userId) return json({ error: "Not your game" }, 403, req);
+
+    const isOwner    = game.host_id === session.userId;
+    const meCollab   = (game.collaborators ?? []).find(c => c.userId === session.userId);
+    if (!isOwner && !meCollab) return json({ error: "Not your game" }, 403, req);
 
     const body    = await req.json() as UpdateGameRequest;
     const updates: Partial<JpGame> = {};
 
-    if (typeof body.title === "string" && body.title.trim()) {
+    const canSettings = isOwner || meCollab?.permissions.editSettings;
+    const canQuestions = isOwner || meCollab?.permissions.editQuestions || canSettings;
+
+    if (canSettings && typeof body.title === "string" && body.title.trim()) {
       updates.title = body.title.trim().slice(0, 80);
     }
     if (body.config && typeof body.config === "object") {
-      updates.config = body.config;
+      if (canQuestions) updates.config = body.config;
     }
-    if (body.status === "draft" || body.status === "ready" || body.status === "archived") {
+    if (canSettings && (body.status === "draft" || body.status === "ready" || body.status === "archived")) {
       updates.status = body.status;
     }
     if (Object.keys(updates).length === 0) return json({ error: "Nothing to update" }, 400, req);

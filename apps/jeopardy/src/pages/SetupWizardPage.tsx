@@ -1,13 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button, Input, Panel, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
 import { storePlayerId } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import TileEditorModal from "../components/TileEditorModal";
 import type {
-  JpBoardConfig, JpBuzzDisplayMode, JpGame, JpGameConfig, JpPowerupType,
-  JpTileConfig, LaunchGameResponse,
+  JpBoardConfig, JpBuzzDisplayMode, JpCollaborator, JpGame, JpGameConfig,
+  JpPowerupType, JpTileConfig, LaunchGameResponse, CollabPermissions,
 } from "../lib/types";
 import { DEFAULT_JP_CONFIG, POWERUP_META, getBoard } from "../lib/types";
 
@@ -19,19 +19,87 @@ const inputStyle = {
 const labelStyle = { color: "rgb(var(--text-secondary-rgb))" } as const;
 
 export default function SetupWizardPage() {
-  const navigate     = useNavigate();
-  const { gameId }   = useParams();
-  const { session }  = useSession();
-  const { addToast } = useToast();
+  const navigate          = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { gameId }        = useParams();
+  const { session }       = useSession();
+  const { addToast }      = useToast();
 
-  const [game,      setGame]      = useState<JpGame | null>(null);
-  const [title,     setTitle]     = useState("");
-  const [config,    setConfig]    = useState<JpGameConfig | null>(null);
-  const [dirty,     setDirty]     = useState(false);
-  const [busy,      setBusy]      = useState(false);
-  const [loadErr,   setLoadErr]   = useState<string | null>(null);
-  const [editTile,  setEditTile]  = useState<{ boardIdx: number; key: string } | null>(null);
-  const [finalEdit, setFinalEdit] = useState(false);
+  const [game,          setGame]          = useState<JpGame | null>(null);
+  const [title,         setTitle]         = useState("");
+  const [config,        setConfig]        = useState<JpGameConfig | null>(null);
+  const [dirty,         setDirty]         = useState(false);
+  const [busy,          setBusy]          = useState(false);
+  const [loadErr,       setLoadErr]       = useState<string | null>(null);
+  const [editTile,      setEditTile]      = useState<{ boardIdx: number; key: string } | null>(null);
+  const [finalEdit,     setFinalEdit]     = useState(false);
+  // Collaborators
+  const [collabs,       setCollabs]       = useState<JpCollaborator[]>([]);
+  const [invitePerms,   setInvitePerms]   = useState<CollabPermissions>({ editQuestions: true, editSettings: false });
+  const [inviteUrl,     setInviteUrl]     = useState<string | null>(null);
+  const [collabBusy,    setCollabBusy]    = useState(false);
+  const [inviteBusy,    setInviteBusy]    = useState(false);
+  const [editingCollab, setEditingCollab] = useState<string | null>(null); // userId being edited
+
+  const inviteToken = searchParams.get("invite");
+
+  const acceptInvite = async () => {
+    if (!gameId || !inviteToken) return;
+    setCollabBusy(true);
+    const res = await fetch(`/game/${gameId}/accept-invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ token: inviteToken }),
+    });
+    setCollabBusy(false);
+    const body = await res.json().catch(() => null) as { error?: string; gameId?: string } | null;
+    if (!res.ok) { addToast(body?.error ?? "Failed to accept invite"); return; }
+    setSearchParams({}, { replace: true });
+    addToast("You've been added as a collaborator!");
+  };
+
+  const generateInvite = async () => {
+    if (!gameId) return;
+    setInviteBusy(true);
+    const res = await fetch(`/game/${gameId}/collaborators`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ permissions: invitePerms }),
+    });
+    setInviteBusy(false);
+    const body = await res.json().catch(() => null) as { inviteUrl?: string; error?: string } | null;
+    if (!res.ok || !body?.inviteUrl) { addToast(body?.error ?? "Failed to generate link"); return; }
+    setInviteUrl(body.inviteUrl);
+  };
+
+  const removeCollab = async (userId: string) => {
+    if (!gameId) return;
+    const res = await fetch(`/game/${gameId}/collaborators`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ userId }),
+    });
+    const body = await res.json().catch(() => null) as { collaborators?: JpCollaborator[]; error?: string } | null;
+    if (!res.ok) { addToast(body?.error ?? "Failed to remove"); return; }
+    setCollabs(body?.collaborators ?? []);
+  };
+
+  const updateCollabPerms = async (userId: string, permissions: CollabPermissions) => {
+    if (!gameId) return;
+    const res = await fetch(`/game/${gameId}/collaborators`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ userId, permissions }),
+    });
+    const body = await res.json().catch(() => null) as { collaborators?: JpCollaborator[]; error?: string } | null;
+    if (!res.ok) { addToast(body?.error ?? "Failed to update"); return; }
+    setCollabs(body?.collaborators ?? []);
+    setEditingCollab(null);
+  };
 
   useEffect(() => {
     if (!gameId) return;
@@ -43,6 +111,7 @@ export default function SetupWizardPage() {
       const g = data as JpGame;
       setGame(g);
       setTitle(g.title);
+      setCollabs(g.collaborators ?? []);
       // Backfill config sections added after the game was created.
       setConfig({ ...DEFAULT_JP_CONFIG, ...g.config });
     })();
@@ -127,7 +196,8 @@ export default function SetupWizardPage() {
     return <div className="flex-1 flex items-center justify-center opacity-60">Loading…</div>;
   }
 
-  const board2Mode  = config.board2Mode ?? "off";
+  const isOwner    = game.host_id === session?.userId;
+  const board2Mode = config.board2Mode ?? "off";
   const filledCount = Object.keys(config.boards[0].tiles).length;
   const teamsCfg    = config.teams ?? DEFAULT_JP_CONFIG.teams!;
   const powerups    = config.powerups ?? DEFAULT_JP_CONFIG.powerups!;
@@ -269,6 +339,19 @@ export default function SetupWizardPage() {
 
   return (
     <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 flex flex-col gap-5">
+
+      {/* ── Invite acceptance banner ────────────────────────────────────── */}
+      {inviteToken && !isOwner && (
+        <div className="rounded-xl p-4 flex items-center gap-4"
+          style={{ background: "rgba(var(--color-primary-rgb),0.12)", border: "1px solid rgba(var(--color-primary-rgb),0.35)" }}>
+          <div className="flex-1">
+            <p className="font-bold">You've been invited to collaborate on this game.</p>
+            <p className="text-sm mt-0.5" style={labelStyle}>Accept to join the editor. The link expires in 24 hours.</p>
+          </div>
+          <Button loading={collabBusy} onClick={acceptInvite}>Accept invite</Button>
+        </div>
+      )}
+
       <Panel>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-52">
@@ -538,6 +621,100 @@ export default function SetupWizardPage() {
           </div>
         )}
       </Panel>
+
+      {/* ── Collaborators (owner only) ──────────────────────────────────── */}
+      {isOwner && (
+        <Panel>
+          <h2 className="text-lg font-bold mb-1">Collaborators</h2>
+          <p className="text-sm mb-4" style={labelStyle}>
+            Share an invite link so others can help build the game. Each link is single-use and expires after 24 hours.
+          </p>
+
+          {/* Current list */}
+          {collabs.length > 0 && (
+            <div className="flex flex-col gap-3 mb-4">
+              {collabs.map(c => (
+                <div key={c.userId} className="rounded-lg p-3 flex flex-col gap-2"
+                  style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
+                  <div className="flex items-center gap-3">
+                    {c.avatar && <img src={c.avatar} className="w-8 h-8 rounded-full" />}
+                    <div className="flex-1">
+                      <p className="font-bold text-sm">{c.displayName}</p>
+                      <p className="text-xs" style={labelStyle}>
+                        {[c.permissions.editQuestions && "Edit questions", c.permissions.editSettings && "Edit settings"]
+                          .filter(Boolean).join(" · ") || "No permissions"}
+                      </p>
+                    </div>
+                    <Button variant="ghost" size="sm"
+                      onClick={() => setEditingCollab(editingCollab === c.userId ? null : c.userId)}>
+                      {editingCollab === c.userId ? "Cancel" : "Edit"}
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => removeCollab(c.userId)}>Remove</Button>
+                  </div>
+
+                  {editingCollab === c.userId && (() => {
+                    const cur = collabs.find(x => x.userId === c.userId)!;
+                    return (
+                      <div className="flex flex-col gap-2 pt-2 border-t" style={{ borderColor: "rgb(var(--border-rgb))" }}>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" className="accent-current"
+                            checked={cur.permissions.editQuestions}
+                            onChange={e => updateCollabPerms(c.userId, { ...cur.permissions, editQuestions: e.target.checked })} />
+                          Can edit questions (tiles, images, audio/video)
+                        </label>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" className="accent-current"
+                            checked={cur.permissions.editSettings}
+                            onChange={e => updateCollabPerms(c.userId, { ...cur.permissions, editSettings: e.target.checked })} />
+                          Can edit game settings (teams, buzzers, powerups, title)
+                        </label>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Generate invite */}
+          <div className="flex flex-col gap-3 rounded-lg p-3"
+            style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
+            <p className="text-sm font-bold">Generate invite link</p>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-current"
+                checked={invitePerms.editQuestions}
+                onChange={e => setInvitePerms(p => ({ ...p, editQuestions: e.target.checked }))} />
+              Can edit questions
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-current"
+                checked={invitePerms.editSettings}
+                onChange={e => setInvitePerms(p => ({ ...p, editSettings: e.target.checked }))} />
+              Can edit settings
+            </label>
+            <div className="flex gap-2 items-center flex-wrap">
+              <Button size="sm" loading={inviteBusy} onClick={generateInvite}>
+                Generate link
+              </Button>
+              {inviteUrl && (
+                <>
+                  <code className="text-xs px-2 py-1 rounded flex-1 min-w-0 truncate"
+                    style={{ background: "rgb(var(--surface-rgb))", color: "rgb(var(--text-secondary-rgb))" }}>
+                    {inviteUrl}
+                  </code>
+                  <Button size="sm" variant="ghost"
+                    onClick={() => { navigator.clipboard.writeText(inviteUrl); addToast("Copied!"); }}>
+                    Copy
+                  </Button>
+                </>
+              )}
+            </div>
+            {inviteUrl && (
+              <p className="text-xs" style={labelStyle}>Single-use · expires in 24 hours · share via Discord or any chat</p>
+            )}
+          </div>
+        </Panel>
+      )}
 
       {editTile !== null && editingBoard && (
         <TileEditorModal
