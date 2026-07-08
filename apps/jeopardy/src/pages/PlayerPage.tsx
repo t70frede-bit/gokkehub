@@ -218,6 +218,18 @@ export default function PlayerPage() {
 
   // ── Question not yet revealed — show waiting screen ─────────────────
   if (q && !(q.questionRevealed ?? true)) {
+    const rkCfg = mode === "ranking" ? tile?.answerModeConfig as JpRankingConfig | undefined : undefined;
+    const modeInstruction = mode === "multipleChoice"
+      ? "Look at the captain's device — be the first to choose the correct answer. You get one guess."
+      : mode === "ranking"
+        ? (rkCfg?.topLabel
+            ? `Sort the answers from "${rkCfg.topLabel}" (top) to "${rkCfg.bottomLabel ?? "bottom"}" (bottom).`
+            : "Sort the answers in the correct order from top to bottom.")
+        : "Use the slider on your device to pick the correct number.";
+    const modeTitle = mode === "multipleChoice" ? "Multiple choice"
+      : mode === "ranking" ? "Rank the answers"
+      : "Number challenge";
+
     return (
       <div className="flex-1 w-full max-w-md mx-auto p-4 flex flex-col gap-4">
         {header}
@@ -225,13 +237,17 @@ export default function PlayerPage() {
           {mode !== "standard" ? (
             <>
               <p className="font-black text-2xl" style={{ color: "rgb(var(--color-primary-rgb))" }}>
-                🎯 Special round!
+                🎯 {modeTitle}
               </p>
-              <p className="font-bold text-lg" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-                {(!teamMode || isCaptain)
-                  ? "Get ready — host is about to reveal the question."
-                  : <span>Gather around <span className="font-black">{captainName}</span>'s phone!</span>}
-              </p>
+              {(!teamMode || isCaptain) ? (
+                <p className="font-semibold text-base" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                  {modeInstruction}
+                </p>
+              ) : (
+                <p className="font-bold text-lg" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                  Gather around <span className="font-black">{captainName}</span>'s phone!
+                </p>
+              )}
             </>
           ) : (
             <p className="text-lg animate-pulse" style={{ color: "rgb(var(--text-secondary-rgb))" }}>

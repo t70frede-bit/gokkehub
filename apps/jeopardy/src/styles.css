@@ -73,6 +73,15 @@
   white-space: nowrap;
 }
 
+/* ── Category reveal animation ─────────────────────────────────────────────── */
+@keyframes jp-cat-appear {
+  from { opacity: 0; transform: scale(0.3); filter: blur(12px); }
+  to   { opacity: 1; transform: scale(1);   filter: blur(0);    }
+}
+.jp-cat-appear {
+  animation: jp-cat-appear 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 /* ── Buzzer button ─────────────────────────────────────────────────────────── */
 .jp-buzzer {
   touch-action: manipulation;

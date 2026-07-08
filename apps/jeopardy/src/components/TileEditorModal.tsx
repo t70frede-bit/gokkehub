@@ -77,6 +77,8 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
   const [rkItems,   setRkItems]   = useState<string[]>(rkInit?.items ?? ["", ""]);
   const [rkScoring, setRkScoring] = useState<"exact" | "partial">(rkInit?.scoring ?? "partial");
+  const [rkTopLabel,    setRkTopLabel]    = useState(rkInit?.topLabel    ?? "");
+  const [rkBottomLabel, setRkBottomLabel] = useState(rkInit?.bottomLabel ?? "");
 
   const [uploading, setUploading] = useState<"q" | "a" | null>(null);
   const [error,     setError]     = useState<string | null>(null);
@@ -155,10 +157,13 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
         correct: Number(cnCorrect),
       } satisfies JpClosestNumberConfig;
     } else if (mode === "ranking") {
-      out.answerModeConfig = {
+      const cfg: JpRankingConfig = {
         items:   rkItems.map(i => i.trim()).filter(Boolean),
         scoring: rkScoring,
-      } satisfies JpRankingConfig;
+      };
+      if (rkTopLabel.trim())    cfg.topLabel    = rkTopLabel.trim();
+      if (rkBottomLabel.trim()) cfg.bottomLabel = rkBottomLabel.trim();
+      out.answerModeConfig = cfg;
     }
     onSave(out);
   };
@@ -354,6 +359,12 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
                 </label>
               </div>
             )}
+            {cnCorrect !== "" && Number.isFinite(Number(cnCorrect)) && (
+              <p className="text-xs rounded-md px-3 py-1.5"
+                style={{ background: "rgba(var(--color-primary-rgb), 0.1)", color: "rgb(var(--color-primary-rgb))" }}>
+                Auto-answer shown to host: <strong>{cnCorrect} {cnUnit}</strong>
+              </p>
+            )}
           </div>
         )}
 
@@ -361,6 +372,20 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
           <div className="flex flex-col gap-2">
             <p className="text-sm font-semibold" style={labelStyle}>Items in the CORRECT order (top first)</p>
             {listEditor(rkItems, setRkItems, 8)}
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <p className="text-xs mb-1" style={labelStyle}>Top label (e.g. "Highest")</p>
+                <input value={rkTopLabel} placeholder="Most / High / Largest…"
+                  onChange={e => setRkTopLabel(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-md text-sm outline-none" style={inputStyle} />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs mb-1" style={labelStyle}>Bottom label (e.g. "Lowest")</p>
+                <input value={rkBottomLabel} placeholder="Least / Low / Smallest…"
+                  onChange={e => setRkBottomLabel(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-md text-sm outline-none" style={inputStyle} />
+              </div>
+            </div>
             <div>
               <p className="text-sm font-medium mb-1" style={labelStyle}>Scoring</p>
               <Toggle

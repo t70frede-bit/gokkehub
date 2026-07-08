@@ -107,7 +107,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             buzzedPlayerId,
             timerStart:       buzzed ? Date.now() : null,
             secondChanceUsed: false,
-            questionRevealed: false,   // host always presses "Reveal question" first
+            // Staged standard tiles: first part is the "prelude" — show immediately.
+            // Together tiles and submission modes wait for the host button.
+            questionRevealed: staged && mode === "standard",
             ...(buzzed ? { special: "buzzed" as const } : {}),
             ...(mode !== "standard" ? { submittedTeamIds: [] } : {}),
             ...(staged ? { revealStage: 0 } : {}),
@@ -450,6 +452,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         if (boardCount(game.config) < 2 || state.currentBoard !== 0) {
           return json({ error: "No second board" }, 409, req);
         }
+        const board0Tiles = Object.keys(getBoard(game.config, 0)?.tiles ?? {});
+        const allSpent = board0Tiles.every(k => state.spentTiles.includes(k));
+        if (!allSpent) return json({ error: "All questions must be answered before advancing" }, 409, req);
         if ((game.config.powerupCarryover ?? "persist") === "reset") {
           const teams = await getTeams(env, roomId);
           for (const t of teams) {

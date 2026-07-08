@@ -76,6 +76,9 @@ export interface JpRankingConfig {
   /** Items stored in the CORRECT order; shuffled on player phones. */
   items:   string[];        // up to 8
   scoring: "exact" | "partial";
+  /** Labels shown at the top/bottom of the ranking list on player phones. */
+  topLabel?:    string;     // e.g. "Highest", "Most"
+  bottomLabel?: string;     // e.g. "Lowest", "Least"
 }
 
 export type JpAnswerModeConfig = JpMultipleChoiceConfig | JpClosestNumberConfig | JpRankingConfig;

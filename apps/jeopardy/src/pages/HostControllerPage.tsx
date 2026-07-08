@@ -69,7 +69,9 @@ export default function HostControllerPage() {
   const mode   = q?.mode ?? "standard";
   const buzzedTeam  = q && q.buzzedBy !== null ? teams.find(t => t.id === q.buzzedBy) : null;
   const prompt      = state.powerupPrompt ?? null;
-  const allRevealed = state.revealedCategories.length >= board.categories.length;
+  const allRevealed    = state.revealedCategories.length >= board.categories.length;
+  const nextCatIndex   = board.categories.findIndex((_, i) => !state.revealedCategories.includes(i));
+  const allTilesSpent  = Object.keys(board.tiles).every(k => state.spentTiles.includes(k));
   const buzzedTilesOn = game.config.dangerous?.buzzed.enabled ?? false;
   const hasBoard2   = boardCount(game.config) > 1;
   const finalOn     = game.config.finalJeopardy?.enabled ?? false;
@@ -375,15 +377,24 @@ export default function HostControllerPage() {
       /* ── Board ──────────────────────────────────────────────────── */
       ) : (
         <>
-          <Panel variant="bare" className="p-3">
-            <BoardGrid compact board={board} state={state} onTileSelect={selectTile} />
-            {!allRevealed && (
-              <Button fullWidth variant="ghost" size="sm" className="mt-3" loading={busy}
-                onClick={() => dispatch({ type: "reveal_all_categories" })}>
-                Reveal categories
-              </Button>
-            )}
-          </Panel>
+          {/* Category reveal phase: one at a time, board hidden until all done */}
+          {!allRevealed ? (
+            <Panel className="flex flex-col gap-3 text-center">
+              <p className="text-xs font-bold uppercase tracking-widest" style={secondary}>
+                Reveal categories ({state.revealedCategories.length}/{board.categories.length})
+              </p>
+              {nextCatIndex >= 0 && (
+                <Button fullWidth size="lg" loading={busy}
+                  onClick={() => dispatch({ type: "reveal_category", categoryIndex: nextCatIndex })}>
+                  Reveal: {board.categories[nextCatIndex]}
+                </Button>
+              )}
+            </Panel>
+          ) : (
+            <Panel variant="bare" className="p-3">
+              <BoardGrid compact board={board} state={state} onTileSelect={selectTile} />
+            </Panel>
+          )}
 
           <Panel>
             <h2 className="text-sm font-bold uppercase tracking-widest mb-2" style={secondary}>
@@ -411,8 +422,10 @@ export default function HostControllerPage() {
 
           <div className="flex flex-col gap-2">
             {hasBoard2 && state.currentBoard === 0 && (
-              <Button loading={busy} onClick={() => dispatch({ type: "advance_board" })}>
-                Scoreboard → board 2
+              <Button loading={busy} disabled={!allTilesSpent}
+                title={allTilesSpent ? undefined : "All questions must be answered first"}
+                onClick={() => dispatch({ type: "advance_board" })}>
+                {allTilesSpent ? "Scoreboard → board 2" : `Answer all questions to advance (${state.spentTiles.length}/${Object.keys(board.tiles).length})`}
               </Button>
             )}
             {finalOn && (

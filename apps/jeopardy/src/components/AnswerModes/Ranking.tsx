@@ -37,9 +37,16 @@ export default function Ranking({ cfg, seed, submitted, busy, onSubmit }: Rankin
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-center" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-        Arrange top → bottom
-      </p>
+      {(cfg.topLabel || cfg.bottomLabel) ? (
+        <div className="flex justify-between text-xs font-bold px-1" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+          <span>▲ {cfg.topLabel ?? "Top"}</span>
+          <span>{cfg.bottomLabel ?? "Bottom"} ▼</span>
+        </div>
+      ) : (
+        <p className="text-xs text-center" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+          Arrange top → bottom
+        </p>
+      )}
       {order.map((orig, i) => (
         <div key={orig} className="flex items-center gap-2 rounded-lg px-3 py-2"
           style={{

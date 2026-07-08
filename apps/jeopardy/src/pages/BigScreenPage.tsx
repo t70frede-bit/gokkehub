@@ -9,6 +9,7 @@ import AnswerTimer from "../components/AnswerTimer";
 import PowerUpPrompt from "../components/PowerUpPrompt";
 import MediaPlayer from "../components/MediaPlayer";
 import { POWERUP_META, getBoard } from "../lib/types";
+import type { JpRankingConfig } from "../lib/types";
 
 const secondary = { color: "rgb(var(--text-secondary-rgb))" } as const;
 const primary   = { color: "rgb(var(--color-primary-rgb))" } as const;
@@ -30,6 +31,13 @@ export default function BigScreenPage() {
   const [soundOn, setSoundOn] = useState(false);
   const lastBuzzPlayer = useRef<string | null>(null);
   const lastReveal     = useRef<string | null>(null);
+
+  // ── Category reveal animation ───────────────────────────────────────
+  const prevRevealedCats = useRef<number[]>([]);
+  const catTimers        = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [catAnim, setCatAnim] = useState<{
+    index: number; name: string; total: number; phase: "show" | "fly";
+  } | null>(null);
 
   // ── Special tile flash ──────────────────────────────────────────────
   // Briefly flood the screen in the tile's colour on first appearance.
@@ -79,6 +87,37 @@ export default function BigScreenPage() {
     playBuzzerSound(captain?.buzzer_sound);
   }, [resolution, soundOn, teams, players]);
 
+  // ── Category reveal animation effect ───────────────────────────────
+  const revealedKey = room?.board_state.revealedCategories.join(",") ?? "";
+  useEffect(() => {
+    if (!room || !game) return;
+    const state  = room.board_state;
+    const board  = getBoard(game.config, state.currentBoard);
+    const cats   = board?.categories ?? [];
+    const prev   = prevRevealedCats.current;
+    const curr   = state.revealedCategories;
+
+    if (curr.length <= prev.length) {
+      prevRevealedCats.current = [...curr];
+      return;
+    }
+
+    const newIdx = curr.find(i => !prev.includes(i));
+    prevRevealedCats.current = [...curr];
+    if (newIdx === undefined) return;
+
+    catTimers.current.forEach(clearTimeout);
+    catTimers.current = [];
+
+    setCatAnim({ index: newIdx, name: cats[newIdx] ?? "", total: cats.length, phase: "show" });
+
+    const t1 = setTimeout(() => setCatAnim(a => a ? { ...a, phase: "fly" } : null), 1900);
+    const t2 = setTimeout(() => setCatAnim(null), 2750);
+    catTimers.current = [t1, t2];
+
+    return () => { catTimers.current.forEach(clearTimeout); catTimers.current = []; };
+  }, [revealedKey]);
+
   if (loading) return <div className="flex-1 flex items-center justify-center opacity-60">Loading…</div>;
   if (error || !room || !game) {
     return <div className="flex-1 flex items-center justify-center">{error ?? "Room not found"}</div>;
@@ -112,6 +151,18 @@ export default function BigScreenPage() {
   const displayMode = tile?.buzzDisplayMode ?? game.config.buzzer.defaultBuzzDisplayMode;
   const ranked      = [...teams].sort((a, b) => b.score - a.score);
   const questionRevealed = q?.questionRevealed ?? true;
+
+  const rankingCfg  = mode === "ranking" ? tile?.answerModeConfig as JpRankingConfig | undefined : undefined;
+  const modeLabel   = mode === "multipleChoice" ? "Multiple choice"
+                    : mode === "ranking"         ? "Rank the answers"
+                    : "Number challenge";
+  const modeInstruction = mode === "multipleChoice"
+    ? "Look at the captain's device — be the first to choose the correct answer from the list. You get one guess."
+    : mode === "ranking"
+      ? (rankingCfg?.topLabel
+          ? `Sort the answers from "${rankingCfg.topLabel}" at the top to "${rankingCfg.bottomLabel ?? "least"}" at the bottom.`
+          : "Sort the answers from top to bottom in the correct order.")
+      : "Type the correct number using the slider on your device.";
 
   // ── Lobby ───────────────────────────────────────────────────────────
   if (room.status === "lobby") {
@@ -247,6 +298,39 @@ export default function BigScreenPage() {
         <div key={tileFlash.key} className="jp-tile-flash"
           style={{ background: `rgba(${tileFlash.color}, 0.45)` }} />
       )}
+
+      {/* Category reveal overlay */}
+      {catAnim && (() => {
+        const offsetPct = ((catAnim.index + 0.5) / catAnim.total - 0.5) * 78;
+        const flying    = catAnim.phase === "fly";
+        return (
+          <div className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden pointer-events-none"
+            style={{
+              backdropFilter: flying ? "blur(0)"   : "blur(14px)",
+              background:     flying ? "transparent" : "rgba(var(--bg-rgb), 0.45)",
+              transition: flying ? "backdrop-filter 0.75s ease, background 0.75s ease" : "none",
+            }}>
+            <p
+              className={catAnim.phase === "show" ? "jp-cat-appear" : undefined}
+              style={{
+                color:         "rgb(var(--color-primary-rgb))",
+                fontWeight:    900,
+                textTransform: "uppercase",
+                letterSpacing: "0.12em",
+                textAlign:     "center",
+                textShadow:    "0 2px 24px rgba(0,0,0,0.55)",
+                fontSize:      flying ? "1.1rem"                    : "clamp(2.5rem, 7vw, 5.5rem)",
+                maxWidth:      flying ? `${100 / catAnim.total}vw`  : "80vw",
+                transform:     flying ? `translate(${offsetPct}vw, -38vh) scale(1)` : "none",
+                opacity:       flying ? 0                           : 1,
+                transition:    flying ? "all 0.85s cubic-bezier(0.4, 0, 0.2, 1)" : "none",
+              }}>
+              {catAnim.name}
+            </p>
+          </div>
+        );
+      })()}
+
       {soundChip}
       {game.config.board2Mode !== "off" && (
         <p className="text-center text-sm font-bold uppercase tracking-widest" style={secondary}>
@@ -307,12 +391,13 @@ export default function BigScreenPage() {
               ) : mode !== "standard" ? (
                 <>
                   <p className="font-black text-2xl sm:text-4xl" style={primary}>
-                    🎯 Special round
+                    🎯 {modeLabel}
                   </p>
-                  <p className="font-bold text-lg sm:text-2xl" style={secondary}>
-                    {teamMode
-                      ? "Gather around your captain's phone!"
-                      : "Get ready to answer on your phone!"}
+                  <p className="font-bold text-base sm:text-2xl max-w-2xl text-center" style={secondary}>
+                    {modeInstruction}
+                  </p>
+                  <p className="text-sm sm:text-lg mt-1 animate-pulse" style={secondary}>
+                    {teamMode ? "Gather around your captain's phone!" : "Open your phone to play!"}
                   </p>
                 </>
               ) : (
