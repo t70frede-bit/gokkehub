@@ -44,6 +44,17 @@
 .jp-img-frozen   { animation-play-state: paused; }
 .jp-img-revealed { filter: none !important; animation: none !important; }
 
+/* ── Special tile reveal flash ─────────────────────────────────────────────── */
+@keyframes jp-tile-flash {
+  0%   { opacity: 0.7; transform: scale(1);    }
+  40%  { opacity: 0.5; transform: scale(1.02); }
+  100% { opacity: 0;   transform: scale(1);    }
+}
+.jp-tile-flash {
+  position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  animation: jp-tile-flash 1s ease-out forwards;
+}
+
 /* ── Score delta flash ─────────────────────────────────────────────────────── */
 @keyframes jp-score-delta {
   0%   { opacity: 1; transform: translateY(0)    scale(1.3); }

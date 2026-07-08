@@ -9,7 +9,7 @@ import type {
   JpBoardConfig, JpBuzzDisplayMode, JpCollaborator, JpGame, JpGameConfig,
   JpPowerupType, JpTileConfig, LaunchGameResponse, CollabPermissions,
 } from "../lib/types";
-import { DEFAULT_JP_CONFIG, POWERUP_META, getBoard } from "../lib/types";
+import { DEFAULT_JP_CONFIG, POWERUP_META } from "../lib/types";
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -134,9 +134,13 @@ export default function SetupWizardPage() {
   const setBoard2Mode = (mode: JpGameConfig["board2Mode"]) => {
     if (!config) return;
     const boards = [...config.boards];
-    if (mode === "custom" && !boards[1]) {
+    if ((mode === "custom" || mode === "doubleUp") && !boards[1]) {
       const b0 = boards[0];
-      boards[1] = { categories: [...b0.categories], rows: b0.rows, pointValues: [...b0.pointValues], tiles: {} };
+      // doubleUp pre-populates with doubled point values; questions start empty.
+      const pointValues = mode === "doubleUp"
+        ? b0.pointValues.map(v => v * 2)
+        : [...b0.pointValues];
+      boards[1] = { categories: [...b0.categories], rows: b0.rows, pointValues, tiles: {} };
     }
     patch({ board2Mode: mode, boards });
   };
@@ -335,7 +339,6 @@ export default function SetupWizardPage() {
   };
 
   const editingBoard = editTile ? config.boards[editTile.boardIdx] : null;
-  const derivedBoard2 = board2Mode === "doubleUp" ? getBoard(config, 1) : null;
 
   return (
     <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 flex flex-col gap-5">
@@ -466,44 +469,17 @@ export default function SetupWizardPage() {
       </Panel>
 
       {/* ── Board 2 ────────────────────────────────────────────────────── */}
-      {board2Mode === "custom" && (
+      {(board2Mode === "custom" || board2Mode === "doubleUp") && (
         <Panel>
-          <h2 className="text-lg font-bold mb-4">Board 2</h2>
+          <h2 className="text-lg font-bold mb-1">
+            {board2Mode === "doubleUp" ? "Board 2 — double-up (2× points)" : "Board 2"}
+          </h2>
+          {board2Mode === "doubleUp" && (
+            <p className="text-sm mb-3" style={labelStyle}>
+              Pre-filled with board 1's categories and doubled point values. Questions are independent — write harder versions for the second round.
+            </p>
+          )}
           {boardEditor(1)}
-        </Panel>
-      )}
-      {board2Mode === "doubleUp" && derivedBoard2 && (
-        <Panel>
-          <h2 className="text-lg font-bold mb-1">Board 2 — double-up</h2>
-          <p className="text-sm mb-3" style={labelStyle}>
-            Mirrors board 1 with the same questions at double points. Edit board 1 above; this preview updates with it.
-          </p>
-          <div className="grid gap-1.5 opacity-70 pointer-events-none"
-            style={{ gridTemplateColumns: `repeat(${derivedBoard2.categories.length}, minmax(0, 1fr))` }}>
-            {derivedBoard2.categories.map((cat, col) => (
-              <div key={`h2-${col}`} className="text-[10px] sm:text-xs font-bold text-center uppercase truncate py-1">
-                {cat}
-              </div>
-            ))}
-            {Array.from({ length: derivedBoard2.rows }, (_, row) =>
-              derivedBoard2.categories.map((_, col) => {
-                const filled = !!derivedBoard2.tiles[`${col}-${row}`];
-                return (
-                  <div key={`p-${col}-${row}`}
-                    className="rounded-md py-3 font-bold text-sm sm:text-base text-center"
-                    style={{
-                      background: filled ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
-                      border: filled
-                        ? "1px solid rgba(var(--color-primary-rgb), 0.6)"
-                        : "1px dashed rgb(var(--border-rgb))",
-                      color: filled ? "rgb(var(--color-primary-rgb))" : "rgba(var(--text-secondary-rgb), 0.6)",
-                    }}>
-                    {derivedBoard2.pointValues[row]}
-                  </div>
-                );
-              })
-            )}
-          </div>
         </Panel>
       )}
 

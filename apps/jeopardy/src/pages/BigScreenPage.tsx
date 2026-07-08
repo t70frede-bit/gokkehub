@@ -31,6 +31,33 @@ export default function BigScreenPage() {
   const lastBuzzPlayer = useRef<string | null>(null);
   const lastReveal     = useRef<string | null>(null);
 
+  // ── Special tile flash ──────────────────────────────────────────────
+  // Briefly flood the screen in the tile's colour on first appearance.
+  const prevSpecial     = useRef<string | null>(null);
+  const prevPromptType  = useRef<string | null>(null);
+  const [tileFlash, setTileFlash] = useState<{ color: string; key: number } | null>(null);
+
+  const special    = room?.board_state.activeQuestion?.special ?? null;
+  const promptType = room?.board_state.powerupPrompt?.powerupType ?? null;
+
+  useEffect(() => {
+    if (special !== prevSpecial.current) {
+      if (special === "buzzed") {
+        setTileFlash({ color: "var(--color-danger-rgb)", key: Date.now() });
+      }
+      prevSpecial.current = special;
+    }
+  }, [special]);
+
+  useEffect(() => {
+    if (promptType !== prevPromptType.current) {
+      if (promptType) {
+        setTileFlash({ color: "var(--color-primary-rgb)", key: Date.now() });
+      }
+      prevPromptType.current = promptType;
+    }
+  }, [promptType]);
+
   const buzzedPlayerId = room?.board_state.activeQuestion?.buzzedPlayerId ?? null;
   useEffect(() => {
     if (buzzedPlayerId === lastBuzzPlayer.current) return;
@@ -216,6 +243,10 @@ export default function BigScreenPage() {
   // ── Board play ──────────────────────────────────────────────────────
   return (
     <div className="flex-1 relative flex flex-col gap-4 p-4 sm:p-8">
+      {tileFlash && (
+        <div key={tileFlash.key} className="jp-tile-flash"
+          style={{ background: `rgba(${tileFlash.color}, 0.45)` }} />
+      )}
       {soundChip}
       {game.config.board2Mode !== "off" && (
         <p className="text-center text-sm font-bold uppercase tracking-widest" style={secondary}>

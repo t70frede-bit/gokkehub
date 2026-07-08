@@ -214,6 +214,9 @@ export function getBoard(config: JpGameConfig, index: number): JpBoardConfig | n
   const mode = config.board2Mode ?? "off";
   if (mode === "custom")   return config.boards[1] ?? null;
   if (mode === "doubleUp") {
+    // Prefer the stored board[1] (independently editable); fall back to
+    // derived copy for games created before this change.
+    if (config.boards[1]) return config.boards[1];
     const b = config.boards[0];
     return b ? { ...b, pointValues: b.pointValues.map(v => v * 2) } : null;
   }
