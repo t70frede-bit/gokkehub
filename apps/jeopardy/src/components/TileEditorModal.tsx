@@ -244,30 +244,38 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
             block={qMedia} onChange={setQMedia} />
         )}
 
-        {(showQImage || showQMedia) && (
-          <div>
-            <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order</p>
-            <Toggle
-              options={[
-                { value: "together",   label: "Together" },
-                { value: "textFirst",  label: "Text → then image" },
-                { value: "mediaFirst", label: "Image → then text" },
-              ]}
-              value={order}
-              onChange={v => setOrder(v as JpRevealOrder)}
-            />
-            {order === "textFirst" && (
-              <p className="text-xs mt-1" style={labelStyle}>
-                Question text appears first. Your host controller gets a "🖼 Reveal image &amp; open buzzers" button — one press shows the image and opens the buzzers.
-              </p>
-            )}
-            {order === "mediaFirst" && (
-              <p className="text-xs mt-1" style={labelStyle}>
-                Image appears first. Your host controller gets a "📝 Reveal text &amp; open buzzers" button — one press shows the text and opens the buzzers.
-              </p>
-            )}
-          </div>
-        )}
+        {(showQImage || showQMedia) && (() => {
+          const mediaLabel = showQMedia
+            ? (qMedia?.type === "video" ? "video" : "audio")
+            : "image";
+          const mediaIcon  = showQMedia
+            ? (qMedia?.type === "video" ? "🎬" : "🎵")
+            : "🖼";
+          return (
+            <div>
+              <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order</p>
+              <Toggle
+                options={[
+                  { value: "together",   label: "Together" },
+                  { value: "textFirst",  label: `Text → then ${mediaLabel}` },
+                  { value: "mediaFirst", label: `${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} → then text` },
+                ]}
+                value={order}
+                onChange={v => setOrder(v as JpRevealOrder)}
+              />
+              {order === "textFirst" && (
+                <p className="text-xs mt-1" style={labelStyle}>
+                  Question text appears first. Your host controller gets a "{mediaIcon} Reveal {mediaLabel} &amp; open buzzers" button.
+                </p>
+              )}
+              {order === "mediaFirst" && (
+                <p className="text-xs mt-1" style={labelStyle}>
+                  {mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} appears first. Your host controller gets a "📝 Reveal text &amp; open buzzers" button.
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Answer mode ───────────────────────────────────────────── */}
         {!simple && (
