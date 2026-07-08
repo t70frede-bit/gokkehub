@@ -237,31 +237,24 @@ export default function HostControllerPage() {
       ) : q && tile ? (
         <>
           {!(q.questionRevealed ?? true) ? (
-            // Step 0: reveal the question to the big screen before play begins.
+            // Pre-reveal: only together-mode buzzer questions reach here.
+            // Staged buzzer and all submission modes are revealed at tile-press.
             <Panel>
               <p className="text-xs uppercase tracking-widest mb-2" style={secondary}>
                 {board.categories[Number(q.tileKey.split("-")[0])]} — {value}
               </p>
-              {mode !== "standard" && (
-                <p className="text-sm font-bold mb-1">
-                  {mode === "multipleChoice" ? "🎯 Multiple choice" : mode === "closestNumber" ? "🎯 Closest number" : "🎯 Ranking"}
-                  {" — special round"}
-                </p>
-              )}
               {q.special === "buzzed" && (
                 <p className="text-sm font-bold mb-1" style={{ color: "rgb(var(--color-danger-rgb))" }}>
                   💥 Buzzed tile — {teams.find(t => t.id === q.buzzedBy)?.name} picked it!
                 </p>
               )}
               <Button fullWidth size="lg" loading={busy} className="mt-2"
-                onClick={() => dispatch({ type: "reveal_question" })}>
-                {mode !== "standard" ? "🎯 Start question on phones" : "📋 Reveal question"}
+                onClick={() => dispatch({ type: "reveal_and_open" })}>
+                📋 Reveal question & open buzzers
               </Button>
-              {mode !== "standard" && (
-                <p className="text-xs mt-2 text-center" style={secondary}>
-                  Players see "Gather around captain's phone!" until you press this.
-                </p>
-              )}
+              <p className="text-xs mt-2 text-center" style={secondary}>
+                Players see "⏳ Question incoming…" until you press this.
+              </p>
             </Panel>
           ) : (
           <>

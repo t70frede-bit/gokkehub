@@ -2,7 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import {
-  getRoom, getGame, getTeams, getPlayers, getSecrets, getSubmissions, getBuzzAttempts,
+  getRoom, getGame, getTeams, getPlayers, getSecrets, getSubmissions,
   updateRoom, updateTeam, updatePlayer, logEvent, resetRoomData, createSecrets,
 } from "../../_supabase";
 import { tileValue, getSpecial, specialPowerup, resolvePowerupChoice, assignSpecialTiles } from "../../_game";
@@ -107,9 +107,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             buzzedPlayerId,
             timerStart:       buzzed ? Date.now() : null,
             secondChanceUsed: false,
-            // Staged standard tiles: first part is the "prelude" — show immediately.
-            // Together tiles and submission modes wait for the host button.
-            questionRevealed: staged && mode === "standard",
+            // Submission modes: question text shows at tile-press (press 1).
+            // Staged buzzer: first part shows at tile-press (press 1).
+            // Together buzzer: "Get ready" state — host presses to reveal + open simultaneously.
+            questionRevealed: staged || mode !== "standard",
             ...(buzzed ? { special: "buzzed" as const } : {}),
             ...(mode !== "standard" ? { submittedTeamIds: [] } : {}),
             ...(staged ? { revealStage: 0 } : {}),
@@ -250,50 +251,27 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
               payload: { tileKey: q.tileKey, pointsDelta: -loss },
             });
 
-            const lockedOut = [...(q.lockedOutTeamIds ?? []), team.id];
+            const noRebuzz    = game.config.buzzer.noRebuzz    ?? false;
+            const teamLockout = game.config.buzzer.teamLockout ?? false;
+            const lockedOut   = teamLockout
+              ? [...(q.lockedOutTeamIds ?? []), team.id]
+              : (q.lockedOutTeamIds ?? []);
 
-            // Queue Lock-In: the next team that buzzed (initial race losers
-            // count as queued) is called automatically, in arrival order.
-            let next: { team_id: number; player_id: string } | undefined;
-            if (game.config.buzzer.queueMode === "lockIn") {
-              const attempts = await getBuzzAttempts(env, roomId, q.tileKey, state.buzzRound);
-              next = attempts.find(a => a.team_id !== team.id && !lockedOut.includes(a.team_id));
-            }
-
-            if (next) {
-              updates.board_state = {
-                ...state,
-                buzzersOpen: false,
-                activeQuestion: {
-                  ...q,
-                  buzzedBy:         next.team_id,
-                  buzzedPlayerId:   next.player_id,
-                  timerStart:       Date.now(),
-                  secondChanceUsed: false,
-                  lockedOutTeamIds: lockedOut,
-                },
-              };
-              await logEvent(env, roomId, "buzz_win", {
-                team_id: next.team_id, player_id: next.player_id,
-                payload: { tileKey: q.tileKey, buzzRound: state.buzzRound, fromQueue: true },
-              });
-            } else {
-              // Buzzers stay closed until the host reopens — their call when
-              // everyone has had a look at the still-open question.
-              // secondChanceUsed resets: it described THIS team's buzz.
-              updates.board_state = {
-                ...state,
-                buzzersOpen: false,
-                activeQuestion: {
-                  ...q,
-                  buzzedBy:         null,
-                  buzzedPlayerId:   null,
-                  timerStart:       null,
-                  secondChanceUsed: false,
-                  lockedOutTeamIds: lockedOut,
-                },
-              };
-            }
+            // Setting A (noRebuzz): close the buzzer for everyone after any wrong answer.
+            // Setting B (teamLockout): lock out the wrong team; reopen for others.
+            // Default (neither): reopen for everyone (rebuzz).
+            updates.board_state = {
+              ...state,
+              buzzersOpen: !noRebuzz,
+              activeQuestion: {
+                ...q,
+                buzzedBy:         null,
+                buzzedPlayerId:   null,
+                timerStart:       null,
+                secondChanceUsed: false,
+                lockedOutTeamIds: lockedOut,
+              },
+            };
           }
         }
         break;

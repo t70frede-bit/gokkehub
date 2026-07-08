@@ -55,7 +55,6 @@ export type JpMediaBlock = JpAudioBlock | JpVideoBlock;
 
 export type JpAnswerMode      = "standard" | "multipleChoice" | "closestNumber" | "ranking";
 export type JpBuzzDisplayMode = "disappear" | "typewriter" | "stay";
-export type JpQueueMode       = "rebuzz" | "lockIn";
 
 export interface JpMultipleChoiceConfig {
   options:      string[];   // up to 8
@@ -159,7 +158,10 @@ export interface JpGameConfig {
   teams?: JpTeamsConfig;
   boards: JpBoardConfig[];
   buzzer: {
-    queueMode:              JpQueueMode;  // MVP: "rebuzz"
+    /** Setting A: any wrong answer closes the buzzer for everyone on that question. */
+    noRebuzz:               boolean;
+    /** Setting B: a team that buzzed wrong is locked out; others can still buzz (overridden by noRebuzz). */
+    teamLockout:            boolean;
     defaultBuzzDisplayMode: JpBuzzDisplayMode;
     collectionWindowMs:     number;
   };
@@ -185,7 +187,8 @@ export const DEFAULT_JP_CONFIG: JpGameConfig = {
     },
   ],
   buzzer: {
-    queueMode:              "rebuzz",
+    noRebuzz:               false,
+    teamLockout:            false,
     defaultBuzzDisplayMode: "stay",
     collectionWindowMs:     300,
   },
@@ -270,7 +273,7 @@ export interface JpActiveQuestion {
   special?:       "buzzed";
   /** Teams that have locked in a submission (submission modes only). */
   submittedTeamIds?: number[];
-  /** Queue Lock-In: teams that answered this tile wrong and can't rebuzz it. */
+  /** Team Lockout: teams that answered wrong and can't buzz again on this question. */
   lockedOutTeamIds?: number[];
   /** Bumped by the host's replay_media action — big screen restarts clips. */
   mediaNonce?: number;

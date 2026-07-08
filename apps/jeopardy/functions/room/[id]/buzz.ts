@@ -48,8 +48,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!player || player.room_id !== roomId) return json({ error: "Player not in room" }, 403, req);
     if (player.team_id === null)              return json({ error: "Not on a team" }, 403, req);
 
-    const queueMode = game?.config.buzzer.queueMode ?? "rebuzz";
-    const answering = q.buzzedBy !== null;
+    const teamLockout = game?.config.buzzer.teamLockout ?? false;
 
     // Captain-only buzzing (team mode option). Standard questions only —
     // device questions never reach this endpoint.
@@ -61,21 +60,15 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       }
     }
 
-    // Fast pre-checks; the resolve RPC re-checks the race case atomically.
-    // A fresh race needs open buzzers. Buzzing while someone is answering is
-    // only allowed in Queue Lock-In — it queues you for the wrong-answer case.
-    if (!answering && !state.buzzersOpen) {
-      return json({ error: "Buzzers are closed" }, 409, req);
-    }
-    if (answering && queueMode !== "lockIn") {
+    // Pre-checks: need open buzzers, no one currently answering, not already buzzed in.
+    if (!state.buzzersOpen || q.buzzedBy !== null) {
       return json({ error: "Buzzers are closed" }, 409, req);
     }
     if (q.buzzedBy === player.team_id) {
       return json({ error: "You're already in" }, 409, req);
     }
-    // Lock-outs only exist in Queue Lock-In; Must Re-Buzz lets everyone
-    // compete fresh each time the host reopens.
-    if (queueMode === "lockIn" && (q.lockedOutTeamIds ?? []).includes(player.team_id)) {
+    // Team Lockout: a team that answered wrong can't buzz again on this question.
+    if (teamLockout && (q.lockedOutTeamIds ?? []).includes(player.team_id)) {
       return json({ error: "Your team already answered this one" }, 409, req);
     }
 
@@ -92,14 +85,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     });
 
     if (rank === 0) {
-      // Duplicate tap — they're already in this race / queue.
+      // Duplicate tap — they're already in this race.
       return json({ winner_team_id: null, winner_player_id: null } as BuzzResponse, 200, req);
-    }
-
-    // Queued behind the current answerer (Queue Lock-In): no race to resolve —
-    // the reject handler promotes the queue in arrival order.
-    if (answering) {
-      return json({ winner_team_id: q.buzzedBy, winner_player_id: q.buzzedPlayerId } as BuzzResponse, 200, req);
     }
 
     // Rank 1 owns the window; everyone else is only a backstop resolver.

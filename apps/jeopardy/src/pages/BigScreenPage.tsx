@@ -388,18 +388,6 @@ export default function BigScreenPage() {
                   style={{ color: "rgb(var(--color-danger-rgb))" }}>
                   💥 Special tile! Host is revealing…
                 </p>
-              ) : mode !== "standard" ? (
-                <>
-                  <p className="font-black text-2xl sm:text-4xl" style={primary}>
-                    🎯 {modeLabel}
-                  </p>
-                  <p className="font-bold text-base sm:text-2xl max-w-2xl text-center" style={secondary}>
-                    {modeInstruction}
-                  </p>
-                  <p className="text-sm sm:text-lg mt-1 animate-pulse" style={secondary}>
-                    {teamMode ? "Gather around your captain's phone!" : "Open your phone to play!"}
-                  </p>
-                </>
               ) : (
                 <p className="text-lg sm:text-2xl animate-pulse" style={secondary}>
                   ⏳ Question incoming…
@@ -414,11 +402,23 @@ export default function BigScreenPage() {
                   </p>
                 )}
                 {mode !== "standard" ? (
-                  <p className="font-bold text-xl sm:text-3xl" style={state.buzzersOpen ? primary : secondary}>
-                    {state.buzzersOpen
-                      ? `Lock in your answers! ${(q.submittedTeamIds ?? []).length}/${teams.length} in`
-                      : "Open your phones — host will open answers shortly"}
-                  </p>
+                  state.buzzersOpen ? (
+                    <p className="font-bold text-xl sm:text-3xl" style={primary}>
+                      Lock in your answers! {(q.submittedTeamIds ?? []).length}/{teams.length} in
+                    </p>
+                  ) : (
+                    <>
+                      <p className="font-black text-xl sm:text-3xl" style={primary}>
+                        🎯 {modeLabel}
+                      </p>
+                      <p className="font-bold text-base sm:text-xl max-w-2xl text-center" style={secondary}>
+                        {modeInstruction}
+                      </p>
+                      <p className="text-sm sm:text-base mt-1 animate-pulse" style={secondary}>
+                        {teamMode ? "Gather around your captain's phone!" : "Open your phone to play!"}
+                      </p>
+                    </>
+                  )
                 ) : buzzedTeam ? (
                   <>
                     <p className="jp-podium-buzzed rounded-lg px-8 py-3 font-black text-2xl sm:text-4xl"

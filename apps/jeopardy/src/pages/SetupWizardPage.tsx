@@ -472,16 +472,24 @@ export default function SetupWizardPage() {
               onChange={v => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: v as JpBuzzDisplayMode } })}
             />
           </div>
-          <div>
-            <p className="text-sm font-medium mb-2" style={labelStyle}>After a wrong answer</p>
-            <Toggle
-              options={[
-                { value: "rebuzz", label: "🔄 Must Re-Buzz — fresh race" },
-                { value: "lockIn", label: "📋 Queue Lock-In — next is called" },
-              ]}
-              value={config.buzzer.queueMode}
-              onChange={v => patch({ buzzer: { ...config.buzzer, queueMode: v as JpGameConfig["buzzer"]["queueMode"] } })}
-            />
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium" style={labelStyle}>After a wrong answer</p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-[rgb(var(--color-primary-rgb))]"
+                checked={config.buzzer.noRebuzz ?? false}
+                onChange={e => patch({ buzzer: { ...config.buzzer, noRebuzz: e.target.checked } })} />
+              <span className="text-sm">
+                <span className="font-bold">No re-buzz</span> — a wrong answer closes the buzzer for everyone on that question
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-[rgb(var(--color-primary-rgb))]"
+                checked={config.buzzer.teamLockout ?? false}
+                onChange={e => patch({ buzzer: { ...config.buzzer, teamLockout: e.target.checked } })} />
+              <span className="text-sm">
+                <span className="font-bold">Team lockout</span> — a team that answered wrong is locked out; others can still buzz
+              </span>
+            </label>
           </div>
         </div>
       </Panel>

@@ -11,14 +11,12 @@ const LABELS: Record<BuzzerPhase, string> = {
   "locked":       "Get ready…",
   "open":         "BUZZ",
   "you-buzzed":   "YOU'RE IN!",
-  "queueable":    "BUZZ to queue",
-  "queued":       "In the queue…",
   "locked-out":   "Locked out of this one",
   "other-buzzed": "Too late!",
 };
 
 export default function BuzzerButton({ phase, inFlight, onBuzz }: BuzzerButtonProps) {
-  const open = (phase === "open" || phase === "queueable") && !inFlight;
+  const open = phase === "open" && !inFlight;
   const you  = phase === "you-buzzed";
   return (
     <button

@@ -31,7 +31,7 @@ export default function PlayerPage() {
 
   const { phase, buzz, inFlight } = useBuzzer(
     room, playerId, me?.team_id ?? null,
-    game?.config.buzzer.queueMode ?? "rebuzz",
+    game?.config.buzzer.teamLockout ?? false,
   );
 
   const [busy, setBusy]           = useState(false);
