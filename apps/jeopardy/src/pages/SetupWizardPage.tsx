@@ -223,6 +223,8 @@ export default function SetupWizardPage() {
   }
 
   const isOwner    = game.host_id === session?.userId;
+  const isCollab   = collabs.some(c => c.userId === session?.userId);
+  const canEdit    = isOwner || isCollab;
   const board2Mode = config.board2Mode ?? "off";
   const filledCount = Object.keys(config.boards[0].tiles).length;
   const teamsCfg    = config.teams ?? DEFAULT_JP_CONFIG.teams!;
@@ -257,13 +259,14 @@ export default function SetupWizardPage() {
           {board.categories.map((cat, i) => (
             <div key={i} className="flex gap-2 items-center">
               <div className="flex-1">
-                <Input value={cat} onChange={e => {
+                <Input value={cat} readOnly={!canEdit} onChange={e => {
+                  if (!canEdit) return;
                   const categories = [...board.categories];
                   categories[i] = e.target.value;
                   patchBoard(idx, { categories });
                 }} />
               </div>
-              <Button variant="danger" size="sm" disabled={board.categories.length <= 1}
+              <Button variant="danger" size="sm" disabled={!canEdit || board.categories.length <= 1}
                 onClick={() => {
                   const tilesInCol = Object.keys(board.tiles).filter(k => k.startsWith(`${i}-`)).length;
                   if (tilesInCol > 0 && !window.confirm(
@@ -281,7 +284,7 @@ export default function SetupWizardPage() {
               </Button>
             </div>
           ))}
-          <Button variant="ghost" size="sm" disabled={board.categories.length >= 8}
+          <Button variant="ghost" size="sm" disabled={!canEdit || board.categories.length >= 8}
             onClick={() => patchBoard(idx, { categories: [...board.categories, `Category ${board.categories.length + 1}`] })}>
             + Add category
           </Button>
@@ -292,12 +295,13 @@ export default function SetupWizardPage() {
           {board.pointValues.map((v, row) => (
             <div key={row} className="flex gap-2 items-center">
               <span className="w-14 text-sm" style={labelStyle}>Row {row + 1}</span>
-              <Input type="number" value={v} className="max-w-32" onChange={e => {
+              <Input type="number" value={v} className="max-w-32" readOnly={!canEdit} onChange={e => {
+                if (!canEdit) return;
                 const pointValues = [...board.pointValues];
                 pointValues[row] = Number(e.target.value) || 0;
                 patchBoard(idx, { pointValues });
               }} />
-              <Button variant="danger" size="sm" disabled={board.rows <= 1}
+              <Button variant="danger" size="sm" disabled={!canEdit || board.rows <= 1}
                 onClick={() => {
                   const tiles: typeof board.tiles = {};
                   for (const [key, tile] of Object.entries(board.tiles)) {
@@ -315,7 +319,7 @@ export default function SetupWizardPage() {
               </Button>
             </div>
           ))}
-          <Button variant="ghost" size="sm" disabled={board.rows >= 8}
+          <Button variant="ghost" size="sm" disabled={!canEdit || board.rows >= 8}
             onClick={() => patchBoard(idx, {
               rows:        board.rows + 1,
               pointValues: [...board.pointValues, (board.pointValues[board.pointValues.length - 1] ?? 100) + 100],
@@ -342,7 +346,7 @@ export default function SetupWizardPage() {
                 : tile?.questionBlocks.some(b => b.type === "audio") ? "🎵"
                 : tile?.questionBlocks.some(b => b.type === "image") ? "🖼" : null;
               return (
-                <button key={key} type="button" onClick={() => setEditTile({ boardIdx: idx, key })}
+                <button key={key} type="button" onClick={() => canEdit && setEditTile({ boardIdx: idx, key })}
                   className="relative rounded-md py-3 font-bold text-sm sm:text-base transition-colors"
                   style={{
                     background: tile ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
@@ -393,10 +397,10 @@ export default function SetupWizardPage() {
             <Input label="Game title" value={title}
               onChange={e => { setTitle(e.target.value); setDirty(true); }} />
           </div>
-          <Button variant="ghost" onClick={save} loading={busy} disabled={!dirty}>
+          <Button variant="ghost" onClick={save} loading={busy} disabled={!dirty || !canEdit}>
             {dirty ? "Save" : "Saved"}
           </Button>
-          <Button onClick={launch} loading={busy} disabled={filledCount === 0}>
+          <Button onClick={launch} loading={busy} disabled={filledCount === 0 || !canEdit}>
             Launch game
           </Button>
         </div>
@@ -405,6 +409,14 @@ export default function SetupWizardPage() {
           {board2Mode === "custom" ? `, ${Object.keys(config.boards[1]?.tiles ?? {}).length} on board 2` : ""}.
         </p>
       </Panel>
+
+      {/* ── View-only notice (not owner or accepted collaborator) ──────── */}
+      {!canEdit && !inviteToken && (
+        <div className="rounded-xl px-4 py-3 text-sm text-center"
+          style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))", color: "rgb(var(--text-secondary-rgb))" }}>
+          You are viewing this game in read-only mode.
+        </div>
+      )}
 
       {/* ── Teams ──────────────────────────────────────────────────────── */}
       <Panel>
