@@ -36,24 +36,24 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, params, env }
   }
 
   const collaborators: JpCollaborator[] = game.collaborators ?? [];
+  let updated: JpCollaborator[];
   if (collaborators.some(c => c.userId === session.userId)) {
-    const updated = collaborators.map(c =>
+    updated = collaborators.map(c =>
       c.userId === session.userId ? { ...c, permissions: invite.permissions } : c,
     );
-    await (env.SESSIONS as KVNamespace).delete(`jp_invite:${body.token}`);
-    await updateGame(env, gameId, { collaborators: updated } as never);
-    return json({ collaborators: updated, gameId }, 200, req);
+  } else {
+    const entry: JpCollaborator = {
+      userId:      session.userId,
+      displayName: session.displayName,
+      avatar:      session.avatarUrl ?? null,
+      addedAt:     new Date().toISOString(),
+      permissions: invite.permissions,
+    };
+    updated = [...collaborators, entry];
   }
-
-  const entry: JpCollaborator = {
-    userId:      session.userId,
-    displayName: session.displayName,
-    avatar:      session.avatarUrl ?? null,
-    addedAt:     new Date().toISOString(),
-    permissions: invite.permissions,
-  };
-  const updated = [...collaborators, entry];
-  await (env.SESSIONS as KVNamespace).delete(`jp_invite:${body.token}`);
+  // Update DB first — only burn the token after a successful write so a
+  // crash doesn't leave the user with a deleted token and no collaborator added.
   await updateGame(env, gameId, { collaborators: updated } as never);
+  await (env.SESSIONS as KVNamespace).delete(`jp_invite:${body.token}`);
   return json({ collaborators: updated, gameId }, 200, req);
 };
