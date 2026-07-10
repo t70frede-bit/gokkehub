@@ -22,7 +22,7 @@ export default function SetupWizardPage() {
   const navigate          = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { gameId }        = useParams();
-  const { session }       = useSession();
+  const { session, loading: sessionLoading } = useSession();
   const { addToast }      = useToast();
 
   const [game,          setGame]          = useState<JpGame | null>(null);
@@ -53,6 +53,10 @@ export default function SetupWizardPage() {
 
   const acceptInvite = async () => {
     if (!gameId || !inviteToken) return;
+    if (!session) {
+      window.location.href = `https://account.gokkehub.com/login?redirect=${encodeURIComponent(window.location.href)}`;
+      return;
+    }
     setCollabBusy(true);
     const res = await fetch(`/game/${gameId}/accept-invite`, {
       method: "POST",
@@ -62,6 +66,10 @@ export default function SetupWizardPage() {
     });
     setCollabBusy(false);
     const body = await res.json().catch(() => null) as { error?: string; gameId?: string } | null;
+    if (res.status === 401) {
+      window.location.href = `https://account.gokkehub.com/login?redirect=${encodeURIComponent(window.location.href)}`;
+      return;
+    }
     if (!res.ok) { addToast(body?.error ?? "Failed to accept invite"); return; }
     setSearchParams({}, { replace: true });
     addToast("You've been added as a collaborator!");
@@ -367,9 +375,15 @@ export default function SetupWizardPage() {
           style={{ background: "rgba(var(--color-primary-rgb),0.12)", border: "1px solid rgba(var(--color-primary-rgb),0.35)" }}>
           <div className="flex-1">
             <p className="font-bold">You've been invited to collaborate on this game.</p>
-            <p className="text-sm mt-0.5" style={labelStyle}>Accept to join the editor. The link expires in 24 hours.</p>
+            {!sessionLoading && !session ? (
+              <p className="text-sm mt-0.5" style={labelStyle}>You need to log in to your GokkeHub account first.</p>
+            ) : (
+              <p className="text-sm mt-0.5" style={labelStyle}>Accept to join the editor. The link expires in 24 hours.</p>
+            )}
           </div>
-          <Button loading={collabBusy} onClick={acceptInvite}>Accept invite</Button>
+          <Button loading={collabBusy || sessionLoading} onClick={acceptInvite}>
+            {!sessionLoading && !session ? "Log in to accept" : "Accept invite"}
+          </Button>
         </div>
       )}
 

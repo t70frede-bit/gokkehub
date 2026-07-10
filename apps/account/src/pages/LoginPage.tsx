@@ -7,10 +7,26 @@ const ERROR_MESSAGES: Record<string, string> = {
   discord_user:   "Could not fetch Discord profile.",
 };
 
+const ALLOWED_REDIRECT_ORIGINS = ["https://jeopardy.gokkehub.com", "https://gokkehub.com"];
+
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const errorKey = searchParams.get("error");
   const errorMsg = errorKey ? (ERROR_MESSAGES[errorKey] ?? `Login error: ${errorKey}`) : null;
+
+  const redirectParam = searchParams.get("redirect");
+
+  const startLogin = (provider: "discord" | "spotify") => {
+    if (redirectParam) {
+      try {
+        const origin = new URL(redirectParam).origin;
+        if (ALLOWED_REDIRECT_ORIGINS.includes(origin)) {
+          sessionStorage.setItem("post_login_redirect", redirectParam);
+        }
+      } catch { /* malformed URL — ignore */ }
+    }
+    window.location.href = `/auth/${provider}`;
+  };
 
   return (
     <div className="flex-1 flex items-center justify-center p-4">
@@ -31,7 +47,7 @@ export default function LoginPage() {
               Welcome to GokkeHub
             </p>
 
-            <Button variant="ghost" fullWidth onClick={() => { window.location.href = "/auth/discord"; }}>
+            <Button variant="ghost" fullWidth onClick={() => startLogin("discord")}>
               <span className="flex items-center justify-center gap-2 w-full">
                 <DiscordIcon />
                 Continue with Discord
@@ -48,7 +64,7 @@ export default function LoginPage() {
                 want to drop into a musix game without setting up a Discord
                 account. Creates a session with userId "sp:<spotify_id>"
                 and pulls display name + avatar from the Spotify profile. */}
-            <Button variant="ghost" fullWidth onClick={() => { window.location.href = "/auth/spotify"; }}>
+            <Button variant="ghost" fullWidth onClick={() => startLogin("spotify")}>
               <span className="flex items-center justify-center gap-2 w-full">
                 <SpotifyIcon />
                 Continue with Spotify

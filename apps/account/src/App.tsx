@@ -23,6 +23,16 @@ export default function App() {
     );
   }
 
+  // After login, consume any pending post-login redirect (set by LoginPage before OAuth).
+  if (session) {
+    const pending = sessionStorage.getItem("post_login_redirect");
+    if (pending) {
+      sessionStorage.removeItem("post_login_redirect");
+      window.location.replace(pending);
+      return null;
+    }
+  }
+
   const handleLogout = async () => {
     await fetch("/auth/logout", { method: "DELETE", credentials: "include" });
     window.location.replace("/login");
