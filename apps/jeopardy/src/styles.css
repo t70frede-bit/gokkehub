@@ -44,16 +44,43 @@
 .jp-img-frozen   { animation-play-state: paused; }
 .jp-img-revealed { filter: none !important; animation: none !important; }
 
-/* ── Special tile reveal flash ─────────────────────────────────────────────── */
-@keyframes jp-tile-flash {
-  0%   { opacity: 0.7; transform: scale(1);    }
-  40%  { opacity: 0.5; transform: scale(1.02); }
-  100% { opacity: 0;   transform: scale(1);    }
+/* ── Special tile reveal overlay ────────────────────────────────────────────── */
+@keyframes jp-special-overlay-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes jp-special-overlay-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.04); } }
+
+@keyframes jp-special-icon-in {
+  0%   { transform: scale(0)    rotate(-20deg); opacity: 0; }
+  60%  { transform: scale(1.25) rotate(6deg);   opacity: 1; }
+  80%  { transform: scale(0.92) rotate(-3deg); }
+  100% { transform: scale(1)    rotate(0deg); }
 }
-.jp-tile-flash {
-  position: fixed; inset: 0; z-index: 50; pointer-events: none;
-  animation: jp-tile-flash 1s ease-out forwards;
+@keyframes jp-special-icon-shake {
+  0%,100% { transform: translateX(0)   rotate(0deg)   scale(1);    }
+  15%     { transform: translateX(-9px) rotate(-10deg) scale(1.06); }
+  30%     { transform: translateX(9px)  rotate(10deg)  scale(1.06); }
+  45%     { transform: translateX(-6px) rotate(-6deg);  }
+  60%     { transform: translateX(6px)  rotate(6deg);   }
+  75%     { transform: translateX(-3px) rotate(-2deg);  }
 }
+@keyframes jp-special-title-in {
+  0%   { transform: scale(0.35) translateY(16px); opacity: 0; filter: blur(10px); }
+  100% { transform: scale(1)    translateY(0);    opacity: 1; filter: blur(0);    }
+}
+@keyframes jp-special-desc-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.jp-special-overlay-in  { animation: jp-special-overlay-in  0.2s ease-out  forwards; }
+.jp-special-overlay-out { animation: jp-special-overlay-out 0.55s ease-in  forwards; }
+.jp-special-icon-in     { animation: jp-special-icon-in     0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+.jp-special-icon-shake  {
+  animation:
+    jp-special-icon-in    0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+    jp-special-icon-shake 0.45s ease-in-out 0.55s 3 forwards;
+}
+.jp-special-title-in { animation: jp-special-title-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.18s both; }
+.jp-special-desc-in  { animation: jp-special-desc-in  0.4s  ease-out 0.55s both; }
 
 /* ── Score delta flash ─────────────────────────────────────────────────────── */
 @keyframes jp-score-delta {

@@ -9,7 +9,7 @@ import AnswerTimer from "../components/AnswerTimer";
 import PowerUpPrompt from "../components/PowerUpPrompt";
 import MediaPlayer from "../components/MediaPlayer";
 import { POWERUP_META, getBoard } from "../lib/types";
-import type { JpRankingConfig } from "../lib/types";
+import type { JpPowerupType, JpRankingConfig } from "../lib/types";
 
 const secondary = { color: "rgb(var(--text-secondary-rgb))" } as const;
 const primary   = { color: "rgb(var(--color-primary-rgb))" } as const;
@@ -39,29 +39,39 @@ export default function BigScreenPage() {
     index: number; name: string; total: number; phase: "show" | "fly";
   } | null>(null);
 
-  // ── Special tile flash ──────────────────────────────────────────────
-  // Briefly flood the screen in the tile's colour on first appearance.
-  const prevSpecial     = useRef<string | null>(null);
-  const prevPromptType  = useRef<string | null>(null);
-  const [tileFlash, setTileFlash] = useState<{ color: string; key: number } | null>(null);
+  // ── Special tile reveal overlay ─────────────────────────────────────
+  // Full-screen dramatic splash when a buzzed or power-up tile is first hit.
+  const prevSpecial    = useRef<string | null>(null);
+  const prevPromptType = useRef<string | null>(null);
+  const specialTimers  = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  type SpecialReveal = { kind: "buzzed" | JpPowerupType; phase: "in" | "out"; key: number } | null;
+  const [specialReveal,   setSpecialReveal]   = useState<SpecialReveal>(null);
+  const [powerupRevealing, setPowerupRevealing] = useState(false);
 
   const special    = room?.board_state.activeQuestion?.special ?? null;
   const promptType = room?.board_state.powerupPrompt?.powerupType ?? null;
 
+  const triggerReveal = (kind: "buzzed" | JpPowerupType, isPowerup: boolean) => {
+    specialTimers.current.forEach(clearTimeout);
+    if (isPowerup) setPowerupRevealing(true);
+    setSpecialReveal({ kind, phase: "in", key: Date.now() });
+    specialTimers.current = [
+      setTimeout(() => setSpecialReveal(r => r ? { ...r, phase: "out" } : null), 2400),
+      setTimeout(() => { setSpecialReveal(null); if (isPowerup) setPowerupRevealing(false); }, 3000),
+    ];
+  };
+
   useEffect(() => {
     if (special !== prevSpecial.current) {
-      if (special === "buzzed") {
-        setTileFlash({ color: "var(--color-danger-rgb)", key: Date.now() });
-      }
+      if (special === "buzzed") triggerReveal("buzzed", false);
       prevSpecial.current = special;
     }
   }, [special]);
 
   useEffect(() => {
     if (promptType !== prevPromptType.current) {
-      if (promptType) {
-        setTileFlash({ color: "var(--color-primary-rgb)", key: Date.now() });
-      }
+      if (promptType) triggerReveal(promptType as JpPowerupType, true);
       prevPromptType.current = promptType;
     }
   }, [promptType]);
@@ -292,12 +302,69 @@ export default function BigScreenPage() {
   }
 
   // ── Board play ──────────────────────────────────────────────────────
+  const SPECIAL_REVEAL_DESC: Record<string, string> = {
+    buzzed:       "The host picks a team — they must answer this question!",
+    sniper:       "Answer correctly to earn a permanent head-start on the buzzer!",
+    buffer:       "Answer correctly to cushion any wrong-answer point loss!",
+    secondChance: "Answer correctly to unlock two attempts on every future buzz!",
+  };
+  // Colour palette per tile type: [bgRgb, glowRgb]
+  const SPECIAL_COLOURS: Record<string, [string, string]> = {
+    buzzed:       ["30,0,0",   "220,30,30"],
+    sniper:       ["40,28,0",  "220,160,0"],
+    buffer:       ["0,15,60",  "50,130,255"],
+    secondChance: ["0,35,20",  "50,210,130"],
+  };
+
   return (
     <div className="flex-1 relative flex flex-col gap-4 p-4 sm:p-8">
-      {tileFlash && (
-        <div key={tileFlash.key} className="jp-tile-flash"
-          style={{ background: `rgba(${tileFlash.color}, 0.45)` }} />
-      )}
+      {/* Special tile reveal splash */}
+      {specialReveal && (() => {
+        const isBuzzed = specialReveal.kind === "buzzed";
+        const meta     = isBuzzed ? null : POWERUP_META[specialReveal.kind as JpPowerupType];
+        const [bgRgb, glowRgb] = SPECIAL_COLOURS[specialReveal.kind] ?? ["0,0,0", "255,255,255"];
+        return (
+          <div
+            key={specialReveal.key}
+            className={specialReveal.phase === "in" ? "jp-special-overlay-in" : "jp-special-overlay-out"}
+            style={{
+              position: "fixed", inset: 0, zIndex: 60, pointerEvents: "none",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: "1rem",
+              background: `radial-gradient(ellipse at center, rgba(${glowRgb},0.35) 0%, rgba(${bgRgb},0.97) 60%)`,
+              backdropFilter: "blur(6px)",
+            }}
+          >
+            <div
+              className={isBuzzed ? "jp-special-icon-shake" : "jp-special-icon-in"}
+              style={{ fontSize: "clamp(5rem, 14vw, 9rem)", lineHeight: 1 }}
+            >
+              {isBuzzed ? "💥" : meta!.icon}
+            </div>
+            <p className="jp-special-title-in" style={{
+              color: `rgb(${glowRgb})`,
+              fontWeight: 900,
+              fontSize: "clamp(2.8rem, 9vw, 6.5rem)",
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
+              textShadow: `0 0 50px rgba(${glowRgb},0.65), 0 4px 24px rgba(0,0,0,0.7)`,
+              lineHeight: 1.05,
+              textAlign: "center",
+            }}>
+              {isBuzzed ? "BUZZED!" : `${meta!.name}!`}
+            </p>
+            <p className="jp-special-desc-in" style={{
+              color: "rgba(255,255,255,0.82)",
+              fontSize: "clamp(1rem, 2.8vw, 1.6rem)",
+              textAlign: "center",
+              maxWidth: "62vw",
+              lineHeight: 1.45,
+            }}>
+              {SPECIAL_REVEAL_DESC[specialReveal.kind]}
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Category reveal overlay */}
       {catAnim && (() => {
@@ -352,8 +419,8 @@ export default function BigScreenPage() {
         </div>
       )}
 
-      {/* Power-up choice pending */}
-      {prompt && (
+      {/* Power-up choice pending — suppressed during reveal animation */}
+      {prompt && !powerupRevealing && (
         <div className="absolute inset-0 z-20 flex items-center justify-center p-10"
           style={{ background: "rgba(var(--bg-rgb), 0.9)" }}>
           <div className="w-full max-w-lg">
