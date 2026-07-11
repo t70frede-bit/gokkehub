@@ -303,7 +303,7 @@ export default function BigScreenPage() {
 
   // ── Board play ──────────────────────────────────────────────────────
   const SPECIAL_REVEAL_DESC: Record<string, string> = {
-    buzzed:       "The host picks a team — they must answer this question!",
+    buzzed:       "The team that picked this tile is automatically buzzed in — no escape!",
     sniper:       "Answer correctly to earn a permanent head-start on the buzzer!",
     buffer:       "Answer correctly to cushion any wrong-answer point loss!",
     secondChance: "Answer correctly to unlock two attempts on every future buzz!",
