@@ -1,9 +1,11 @@
 # Legacy source folder (migrated to apps/gridchallenge — kept locally for reference)
 /Games/
 
-# Claude Code local settings (but track shared agent definitions)
+# Claude Code local settings (but track shared agents + committed team settings)
 .claude/*
 !.claude/agents/
+!.claude/settings.json
+# settings.local.json stays ignored (personal allow-list, matched by .claude/* above)
 
 # Environment variables — NEVER commit these
 .env

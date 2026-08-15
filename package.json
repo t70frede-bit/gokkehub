@@ -11,15 +11,21 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "turbo run clean && rimraf node_modules"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
     "typescript": "^5.4.0",
-    "rimraf": "^5.0.0"
+    "rimraf": "^5.0.0",
+    "vitest": "^2.1.0"
   },
   "packageManager": "npm@11.11.0",
   "engines": {
     "node": ">=20"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
   }
 }
