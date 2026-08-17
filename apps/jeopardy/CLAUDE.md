@@ -24,6 +24,18 @@ to localhost — you are permanently signed out. Two terminals:
 2. `npm run dev --workspace=apps/jeopardy` — Vite on :5173 with HMR; its proxy
    forwards `/game/*` and `/room/*` to :8788.
 
+**Restarting wrangler, on Windows:** `.dev.vars` is read once at startup and is
+*not* watched — editing it does nothing until wrangler rebuilds (a change to a
+`functions/*.ts` file also triggers this). Worse, Ctrl-C / killing the npm
+wrapper can leave the `workerd` child alive, and Windows will happily let the
+new instance bind :8788 *alongside* it — you get "Ready on 8788" while your
+requests still hit the old process and its old env. If a `.dev.vars` change
+seems to have no effect, kill the strays before restarting:
+
+```powershell
+Get-Process workerd -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
 `DEV_USER_ID` (+ `VITE_DEV_USER_ID` in `.env` for the client) stands in for a
 login. It is honoured **only** when the var is set *and* the request hostname is
 localhost/127.0.0.1 — see `functions/_session.ts` and its test. The client half
