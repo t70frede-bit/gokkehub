@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Button, Panel } from "@gokkehub/ui";
+import { Button, Modal, Panel } from "@gokkehub/ui";
 import { getStoredPlayerId, useRoom } from "../hooks/useRoom";
 import { useBuzzer } from "../hooks/useBuzzer";
 import BuzzerButton from "../components/BuzzerButton";
@@ -12,7 +12,7 @@ import Ranking from "../components/AnswerModes/Ranking";
 import type {
   JpClosestNumberConfig, JpMultipleChoiceConfig, JpRankingConfig,
 } from "../lib/types";
-import { POWERUP_META, getBoard } from "../lib/types";
+import { POWERUP_META, TEAM_COLOR_PALETTE, getBoard, getTeamColor } from "../lib/types";
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -29,7 +29,7 @@ export default function PlayerPage() {
   const me       = useMemo(() => players.find(p => p.id === playerId) ?? null, [players, playerId]);
   const myTeam   = useMemo(() => teams.find(t => t.id === me?.team_id) ?? null, [teams, me]);
 
-  const { phase, buzz, inFlight } = useBuzzer(
+  const { phase, buzz, inFlight, armingMsLeft } = useBuzzer(
     room, playerId, me?.team_id ?? null,
     game?.config.buzzer.teamLockout ?? false,
   );
@@ -38,6 +38,11 @@ export default function PlayerPage() {
   const [wager, setWager]         = useState("");
   const [finalAnswer, setFinalAnswer] = useState("");
   const [submitErr, setSubmitErr] = useState<string | null>(null);
+
+  // Captain team-edit state
+  const [teamEdit,     setTeamEdit]     = useState<{ name: string; color: string } | null>(null);
+  const [editBusy,     setEditBusy]     = useState(false);
+  const [editErr,      setEditErr]      = useState<string | null>(null);
 
   useEffect(() => {
     if (!room || !roomId) return;
@@ -107,6 +112,28 @@ export default function PlayerPage() {
 
   const teamMode    = game.config.teams?.mode === "teams";
   const isCaptain   = myTeam.captain_id === me.id;
+  const myTeamIdx   = teams.findIndex(t => t.id === myTeam.id);
+  const myTeamColor = getTeamColor(myTeam, myTeamIdx);
+
+  const saveTeamEdit = async () => {
+    if (!teamEdit || !roomId || !playerId) return;
+    setEditBusy(true);
+    setEditErr(null);
+    try {
+      const res = await fetch(`/room/${roomId}/update-team`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ player_id: playerId, name: teamEdit.name, color: teamEdit.color }),
+      });
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      if (!res.ok) { setEditErr(body?.error ?? "Could not save"); return; }
+      setTeamEdit(null);
+    } catch {
+      setEditErr("Network error");
+    } finally {
+      setEditBusy(false);
+    }
+  };
   const captainName = players.find(p => p.id === myTeam.captain_id)?.name ?? "your captain";
   const captainOnlyBuzz = teamMode && game.config.teams?.buzzerMode === "captain" && !isCaptain;
 
@@ -119,22 +146,93 @@ export default function PlayerPage() {
     </p>
   );
 
+  // The captain team-edit modal ships WITH the header: the "Edit team" button
+  // lives in the header, and the header is rendered by every branch below
+  // (power-up choice, submission modes, Final Jeopardy, standard buzzer).
   const header = (
+    <>
     <div className="flex justify-between items-center rounded-lg px-4 py-3"
-      style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-      <span className="font-bold truncate">
+      style={{ background: "rgb(var(--surface-raised-rgb))", border: `1px solid ${myTeamColor}55` }}>
+      <span className="flex items-center gap-2 font-bold truncate">
+        {/* Team colour dot */}
+        <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+          style={{ background: myTeamColor }} />
         {myTeam.powerup && (
-          <span className="mr-1.5" title={POWERUP_META[myTeam.powerup].name}>
+          <span title={POWERUP_META[myTeam.powerup].name}>
             {POWERUP_META[myTeam.powerup].icon}
           </span>
         )}
         {me.name}
       </span>
-      <span className="font-black text-xl tabular-nums"
-        style={{ color: myTeam.score < 0 ? "rgb(var(--color-danger-rgb))" : "rgb(var(--color-primary-rgb))" }}>
-        {myTeam.score}
-      </span>
+      <div className="flex items-center gap-2">
+        {isCaptain && (
+          <button
+            type="button"
+            className="text-xs px-2 py-1 rounded"
+            style={{ color: "rgb(var(--text-secondary-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+            onClick={() => setTeamEdit({ name: myTeam.name, color: myTeamColor })}>
+            Edit team
+          </button>
+        )}
+        <span className="font-black text-xl tabular-nums"
+          style={{ color: myTeam.score < 0 ? "rgb(var(--color-danger-rgb))" : myTeamColor }}>
+          {myTeam.score}
+        </span>
+      </div>
     </div>
+
+    <Modal open={teamEdit !== null} onClose={() => setTeamEdit(null)}>
+      {teamEdit && (
+        <div className="flex flex-col gap-4">
+          <h3 className="text-lg font-bold">Edit team</h3>
+          <div>
+            <label className="text-xs uppercase tracking-widest mb-1 block"
+              style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              Team name
+            </label>
+            <input
+              type="text"
+              maxLength={30}
+              value={teamEdit.name}
+              autoFocus
+              onChange={e => setTeamEdit({ ...teamEdit, name: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-widest mb-2 block"
+              style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              Team colour
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {TEAM_COLOR_PALETTE.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setTeamEdit({ ...teamEdit, color: c })}
+                  className="w-9 h-9 rounded-full transition-all"
+                  style={{
+                    background:  c,
+                    outline:     teamEdit.color === c ? `3px solid ${c}` : "none",
+                    outlineOffset: "3px",
+                    boxShadow:   teamEdit.color === c ? `0 0 12px ${c}88` : "none",
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+          {editErr && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{editErr}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setTeamEdit(null)}>Cancel</Button>
+            <Button loading={editBusy} disabled={!teamEdit.name.trim()} onClick={saveTeamEdit}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+    </>
   );
 
   // ── Power-up choice belongs to my team ────────────────────────────────
@@ -307,6 +405,7 @@ export default function PlayerPage() {
   return (
     <div className="flex-1 w-full max-w-md mx-auto p-4 flex flex-col gap-4">
       {header}
+
       {captainOnlyBuzz && q ? (
         <div className="jp-buzzer w-full flex-1 min-h-64 rounded-2xl flex items-center justify-center font-bold text-xl text-center p-6"
           style={{
@@ -317,7 +416,7 @@ export default function PlayerPage() {
           ⭐ {captainName} buzzes for your team
         </div>
       ) : (
-        <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} />
+        <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} armingMsLeft={armingMsLeft} />
       )}
       {phase === "you-buzzed" && (
         <div className="text-center">

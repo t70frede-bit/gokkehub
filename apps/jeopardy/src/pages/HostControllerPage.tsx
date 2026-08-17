@@ -6,9 +6,9 @@ import { useHostController } from "../hooks/useHostController";
 import BoardGrid from "../components/Board/BoardGrid";
 import AnswerTimer from "../components/AnswerTimer";
 import type {
-  JpClosestNumberConfig, JpMultipleChoiceConfig, JpRankingConfig, JpSubmissionRow,
+  JpClosestNumberConfig, JpMultipleChoiceConfig, JpPowerupType, JpRankingConfig, JpSubmissionRow,
 } from "../lib/types";
-import { POWERUP_META, boardCount, getBoard } from "../lib/types";
+import { POWERUP_META, boardCount, getBoard, getTeamColor } from "../lib/types";
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -29,7 +29,6 @@ export default function HostControllerPage() {
   const [confirmEnd,     setConfirmEnd]     = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmFinal,   setConfirmFinal]   = useState(false);
-  const [pickerTile,     setPickerTile]     = useState<string | null>(null);
   const [finalSubs, setFinalSubs]   = useState<JpSubmissionRow[]>([]);
 
   useEffect(() => {
@@ -74,16 +73,12 @@ export default function HostControllerPage() {
   const allRevealed    = state.revealedCategories.length >= board.categories.length;
   const nextCatIndex   = board.categories.findIndex((_, i) => !state.revealedCategories.includes(i));
   const allTilesSpent  = Object.keys(board.tiles).every(k => state.spentTiles.includes(k));
-  const buzzedTilesOn = game.config.dangerous?.buzzed.enabled ?? false;
   const hasBoard2   = boardCount(game.config) > 1;
   const finalOn     = game.config.finalJeopardy?.enabled ?? false;
   const submittedCount = q?.submittedTeamIds?.length ?? 0;
 
   const selectTile = (tileKey: string) => {
-    // With Buzzed tiles in play the server needs to know who picked —
-    // the host can't see which tiles are dangerous (that's the point).
-    if (buzzedTilesOn) setPickerTile(tileKey);
-    else void dispatch({ type: "select_tile", tileKey });
+    void dispatch({ type: "select_tile", tileKey });
   };
 
   const hasMedia = !!tile?.questionBlocks.some(b => b.type === "audio" || b.type === "video");
@@ -233,28 +228,124 @@ export default function HostControllerPage() {
           </div>
         </Panel>
 
+      /* ── Answer reveal — host must explicitly return to board ──── */
+      ) : state.lastResolution ? (() => {
+        const res    = state.lastResolution!;
+        const winner = res.winnerTeamIds?.[0] !== undefined
+          ? teams.find(t => t.id === res.winnerTeamIds![0])
+          : null;
+        const winnerIdx = winner ? teams.findIndex(t => t.id === winner.id) : -1;
+        const winColor  = winner ? getTeamColor(winner, winnerIdx) : undefined;
+        // Mirror the big screen's own test: it skips the answer overlay when
+        // there is nothing to render (no answer blocks on a standard tile).
+        // Don't tell the host to look at an empty screen — show it here instead.
+        const resTile   = board.tiles[res.tileKey];
+        const onScreen  = !!resTile && (
+          resTile.answerBlocks.length > 0 || res.mode !== "standard"
+        );
+        return (
+          <Panel className="text-center flex flex-col gap-3">
+            <p className="text-2xl font-black" style={{ color: winColor ?? "rgb(var(--text-primary-rgb))" }}>
+              {winner ? `✓ ${winner.name}` : "Nobody got it"}
+            </p>
+            {res.lines.length > 0 && (
+              <p className="text-lg font-bold tabular-nums"
+                style={{ color: res.lines[0]?.startsWith("-") ? "rgb(var(--color-danger-rgb))" : winColor }}>
+                {res.lines[0]}
+              </p>
+            )}
+            {!onScreen && resTile && resTile.answerBlocks.some(b => b.type === "text") && (
+              <div className="rounded-md px-3 py-2 text-left"
+                style={{ background: "rgba(var(--color-primary-rgb), 0.12)", border: "1px solid rgba(var(--color-primary-rgb), 0.4)" }}>
+                <p className="text-xs uppercase tracking-widest" style={secondary}>Answer</p>
+                {resTile.answerBlocks.map(b =>
+                  b.type === "text"
+                    ? <p key={b.id} className="font-bold" style={{ color: "rgb(var(--color-primary-rgb))" }}>{b.text}</p>
+                    : null)}
+              </div>
+            )}
+            <p className="text-xs" style={secondary}>
+              {onScreen
+                ? "The big screen is showing the answer. Dismiss when ready."
+                : "No answer to show on the big screen — read it out, then dismiss."}
+            </p>
+            <Button fullWidth size="lg" loading={busy}
+              onClick={() => dispatch({ type: "dismiss_resolution" })}>
+              ← Back to board
+            </Button>
+          </Panel>
+        );
+      })()
+
       /* ── Active question ────────────────────────────────────────── */
-      ) : q && tile ? (
+      : q && tile ? (
         <>
-          {!(q.questionRevealed ?? true) ? (
-            // Pre-reveal: only together-mode buzzer questions reach here.
-            // Staged buzzer and all submission modes are revealed at tile-press.
+          {q.special && !q.specialRevealAcked ? (() => {
+            const isBuzzed = q.special === "buzzed";
+            const pMeta = isBuzzed ? null : POWERUP_META[(q.special as string).slice("powerup_".length) as JpPowerupType];
+            return (
+              <Panel className="text-center">
+                <div style={{ fontSize: "3rem", lineHeight: 1 }}>{isBuzzed ? "💥" : pMeta!.icon}</div>
+                <p className="font-black text-xl mt-2" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                  {isBuzzed ? "Buzzed tile!" : `${pMeta!.name} tile!`}
+                </p>
+                <p className="text-sm mt-1 mb-4" style={secondary}>
+                  {isBuzzed
+                    ? "Whoever picked this tile is locked in automatically."
+                    : pMeta!.desc}
+                </p>
+                <Button fullWidth size="lg" loading={busy}
+                  onClick={() => dispatch({ type: "ack_special" })}>
+                  Everyone ready — continue →
+                </Button>
+              </Panel>
+            );
+          })() : !(q.questionRevealed ?? true) ? (
             <Panel>
-              <p className="text-xs uppercase tracking-widest mb-2" style={secondary}>
+              <p className="text-xs uppercase tracking-widest mb-3" style={secondary}>
                 {board.categories[Number(q.tileKey.split("-")[0])]} — {value}
               </p>
-              {q.special === "buzzed" && (
-                <p className="text-sm font-bold mb-1" style={{ color: "rgb(var(--color-danger-rgb))" }}>
-                  💥 Buzzed tile — {teams.find(t => t.id === q.buzzedBy)?.name} picked it!
-                </p>
+              {q.special && q.special !== "buzzed" ? (() => {
+                // Power-up pre-reveal panel: buzzed tiles skip this (questionRevealed=true at tile-press).
+                const pType = (q.special as string).slice("powerup_".length) as JpPowerupType;
+                const meta  = POWERUP_META[pType];
+                // Submission modes → just show question; together-mode → show question + open buzzers.
+                const continueType = (q.mode ?? "standard") !== "standard"
+                  ? "reveal_question" as const
+                  : "reveal_and_open" as const;
+                return (
+                  <>
+                    <div className="text-center mb-4">
+                      <div style={{ fontSize: "2.5rem", lineHeight: 1 }}>{meta.icon}</div>
+                      <p className="font-black text-lg mt-1" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                        {meta.name} tile!
+                      </p>
+                      <p className="text-sm mt-1" style={secondary}>{meta.desc}</p>
+                    </div>
+                    <Button fullWidth size="lg" loading={busy}
+                      onClick={() => dispatch({ type: continueType })}>
+                      {(q.mode ?? "standard") !== "standard"
+                        ? "Show question →"
+                        : "Show question & open buzzers →"}
+                    </Button>
+                    <Button fullWidth variant="ghost" size="sm" loading={busy} className="mt-1"
+                      onClick={() => dispatch({ type: "dismiss_question" })}>
+                      Cancel question
+                    </Button>
+                  </>
+                );
+              })() : (
+                // Together-mode non-special pre-reveal
+                <>
+                  <Button fullWidth size="lg" loading={busy}
+                    onClick={() => dispatch({ type: "reveal_and_open" })}>
+                    📋 Reveal question & open buzzers
+                  </Button>
+                  <p className="text-xs mt-2 text-center" style={secondary}>
+                    Players see "⏳ Question incoming…" until you press this.
+                  </p>
+                </>
               )}
-              <Button fullWidth size="lg" loading={busy} className="mt-2"
-                onClick={() => dispatch({ type: "reveal_and_open" })}>
-                📋 Reveal question & open buzzers
-              </Button>
-              <p className="text-xs mt-2 text-center" style={secondary}>
-                Players see "⏳ Question incoming…" until you press this.
-              </p>
             </Panel>
           ) : (
           <>
@@ -272,15 +363,18 @@ export default function HostControllerPage() {
                       {b.type === "audio" ? "🎵 Audio clip plays on the big screen" : "🎬 Video clip plays on the big screen"}
                     </p>)}
             {(q.revealStage ?? 1) < 1 && (
-              // Staged reveal: one button both reveals the held-back content
-              // AND opens buzzers — so the host never has to press two things.
+              // If a team is already locked in (buzzed tile), just reveal the
+              // rest without reopening buzzers — the team is already in.
+              // Otherwise, reveal + open in one step.
               <Button size="lg" fullWidth className="mt-2" loading={busy}
-                onClick={() => dispatch({ type: "reveal_and_open" })}>
-                {tile.revealOrder === "mediaFirst"
-                  ? "📝 Reveal text & open buzzers"
-                  : tile.revealOrder === "textFirst"
-                    ? (tile.questionBlocks.some(b => b.type === "video") ? "🎬 Reveal video & open buzzers" : "🖼 Reveal image & open buzzers")
-                    : "👁 Reveal & open buzzers"}
+                onClick={() => dispatch({ type: buzzedTeam ? "reveal_rest" : "reveal_and_open" })}>
+                {buzzedTeam
+                  ? "👁 Reveal rest of question"
+                  : tile.revealOrder === "mediaFirst"
+                    ? "📝 Reveal text & open buzzers"
+                    : tile.revealOrder === "textFirst"
+                      ? (tile.questionBlocks.some(b => b.type === "video") ? "🎬 Reveal video & open buzzers" : "🖼 Reveal image & open buzzers")
+                      : "👁 Reveal & open buzzers"}
               </Button>
             )}
             {hasMedia && (q.revealStage ?? 1) >= 1 && (
@@ -314,9 +408,28 @@ export default function HostControllerPage() {
                 </Button>
               </div>
             </Panel>
+          ) : q.special === "buzzed" && q.buzzedBy === null && !state.buzzersOpen ? (
+            <Panel>
+              <p className="text-center font-bold mb-3" style={{ color: "rgb(var(--color-danger-rgb))" }}>
+                💥 Who picked this tile?
+              </p>
+              <div className="flex flex-col gap-2">
+                {teams.map(t => (
+                  <Button key={t.id} variant="ghost" fullWidth loading={busy}
+                    onClick={() => dispatch({ type: "assign_buzzed", teamId: t.id })}>
+                    {t.name}
+                  </Button>
+                ))}
+                <Button variant="ghost" fullWidth loading={busy}
+                  onClick={() => dispatch({ type: "open_buzzers" })}>
+                  Skip — open buzzers for all
+                </Button>
+              </div>
+            </Panel>
           ) : buzzedTeam ? (
             <Panel className="text-center">
-              <p className="font-black text-2xl mb-1" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+              <p className="font-black text-2xl mb-1"
+                style={{ color: getTeamColor(buzzedTeam, teams.findIndex(t => t.id === buzzedTeam.id)) }}>
                 {buzzedTeam.name}
                 {buzzedTeam.powerup && ` ${POWERUP_META[buzzedTeam.powerup].icon}`}
               </p>
@@ -338,6 +451,27 @@ export default function HostControllerPage() {
                     : ` (−${q.secondChanceUsed ? value * 2 : value})`}
                 </Button>
               </div>
+              {q.secondChanceUsed && (
+                <Button fullWidth variant="ghost" size="sm" loading={busy} className="mt-2"
+                  onClick={() => dispatch({ type: "skip_second_chance" })}>
+                  ⏭ Skip — don't answer again (−{value}, no double)
+                </Button>
+              )}
+              {q.special === "buzzed" && (
+                <details className="mt-3 text-left">
+                  <summary className="text-xs cursor-pointer select-none" style={secondary}>
+                    Change who picked this tile
+                  </summary>
+                  <div className="flex flex-col gap-1 mt-2">
+                    {teams.filter(t => t.id !== buzzedTeam.id).map((t, _i) => (
+                      <Button key={t.id} variant="ghost" size="sm" fullWidth loading={busy}
+                        onClick={() => dispatch({ type: "assign_buzzed", teamId: t.id })}>
+                        {t.name}
+                      </Button>
+                    ))}
+                  </div>
+                </details>
+              )}
             </Panel>
           ) : (
             <Panel>
@@ -348,11 +482,8 @@ export default function HostControllerPage() {
                     Buzzers open…
                   </p>
                 ) : (q.revealStage ?? 1) < 1 ? (
-                  // Staged-reveal tile: the big "Reveal & open buzzers" button
-                  // above (in the question panel) covers both actions. Show a
-                  // small reminder so the host knows what's waiting.
                   <p className="text-center text-sm" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
-                    Press "Reveal & open buzzers" above when ready.
+                    Press "Reveal &amp; open buzzers" above when ready.
                   </p>
                 ) : (
                   <Button fullWidth size="lg" loading={busy} onClick={() => dispatch({ type: "open_buzzers" })}>
@@ -374,16 +505,36 @@ export default function HostControllerPage() {
         <>
           {/* Category reveal phase: one at a time, board hidden until all done */}
           {!allRevealed ? (
-            <Panel className="flex flex-col gap-3 text-center">
-              <p className="text-xs font-bold uppercase tracking-widest" style={secondary}>
+            <Panel className="flex flex-col gap-3">
+              <p className="text-xs font-bold uppercase tracking-widest text-center" style={secondary}>
                 Reveal categories ({state.revealedCategories.length}/{board.categories.length})
               </p>
-              {nextCatIndex >= 0 && (
-                <Button fullWidth size="lg" loading={busy}
-                  onClick={() => dispatch({ type: "reveal_category", categoryIndex: nextCatIndex })}>
-                  Reveal: {board.categories[nextCatIndex]}
-                </Button>
-              )}
+              {/* Any order — reveal the one you want to talk about next. */}
+              <div className="flex flex-col gap-1.5">
+                {board.categories.map((cat, i) => {
+                  const done = state.revealedCategories.includes(i);
+                  return done ? (
+                    <div key={i} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold"
+                      style={{ border: "1px solid rgb(var(--border-rgb))", color: "rgb(var(--text-secondary-rgb))" }}>
+                      <span style={{ color: "rgb(var(--color-primary-rgb))" }}>✓</span>
+                      <span className="truncate">{cat}</span>
+                      {board.categoryDescriptions?.[i] && (
+                        <span className="truncate text-xs opacity-70">— {board.categoryDescriptions[i]}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <Button key={i} fullWidth size={i === nextCatIndex ? "lg" : "md"}
+                      variant={i === nextCatIndex ? "primary" : "ghost"} loading={busy}
+                      onClick={() => dispatch({ type: "reveal_category", categoryIndex: i })}>
+                      Reveal: {cat}
+                    </Button>
+                  );
+                })}
+              </div>
+              <Button fullWidth variant="ghost" size="sm" loading={busy}
+                onClick={() => dispatch({ type: "reveal_all_categories" })}>
+                ⏭ Reveal all remaining — skip to the board
+              </Button>
             </Panel>
           ) : (
             <Panel variant="bare" className="p-3">
@@ -396,23 +547,64 @@ export default function HostControllerPage() {
               Scores (tap to edit)
             </h2>
             <ul className="flex flex-col gap-1.5">
-              {teams.map(t => (
-                <li key={t.id}>
-                  <button type="button" className="w-full flex justify-between rounded-md px-3 py-2 font-semibold"
-                    style={{ border: "1px solid rgb(var(--border-rgb))" }}
-                    onClick={() => setScoreEdit({ teamId: t.id, value: String(t.score) })}>
-                    <span>
-                      {t.powerup && <span className="mr-1.5">{POWERUP_META[t.powerup].icon}</span>}
-                      {t.name}
-                    </span>
-                    <span className="tabular-nums"
-                      style={{ color: t.score < 0 ? "rgb(var(--color-danger-rgb))" : "rgb(var(--color-primary-rgb))" }}>
-                      {t.score}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {teams.map((t, i) => {
+                const color   = getTeamColor(t, i);
+                const isOwner = (state.activeBoardTeamId ?? null) === t.id;
+                return (
+                  <li key={t.id}>
+                    <button type="button" className="w-full flex justify-between rounded-md px-3 py-2 font-semibold"
+                      style={{
+                        border:     `1px solid ${isOwner ? `${color}88` : "rgb(var(--border-rgb))"}`,
+                        background: isOwner ? `${color}11` : "transparent",
+                      }}
+                      onClick={() => setScoreEdit({ teamId: t.id, value: String(t.score) })}>
+                      <span>
+                        {t.powerup && <span className="mr-1.5">{POWERUP_META[t.powerup].icon}</span>}
+                        <span style={{ color: isOwner ? color : undefined }}>{t.name}</span>
+                        {isOwner && <span className="ml-1.5 text-xs" style={{ color }}>🎯</span>}
+                      </span>
+                      <span className="tabular-nums"
+                        style={{ color: t.score < 0 ? "rgb(var(--color-danger-rgb))" : color }}>
+                        {t.score}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
+          </Panel>
+
+          {/* Board owner — who picks the next tile. Auto-set from last correct answer. */}
+          <Panel className="py-2">
+            <p className="text-xs font-bold uppercase tracking-widest mb-2" style={secondary}>
+              Picks next
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {teams.map((t, i) => {
+                const color   = getTeamColor(t, i);
+                const isOwner = (state.activeBoardTeamId ?? null) === t.id;
+                return (
+                  <button key={t.id}
+                    onClick={() => dispatch({ type: "set_board_team", teamId: t.id })}
+                    className="px-3 py-1 rounded-full text-sm font-bold transition-all"
+                    style={{
+                      background:  isOwner ? `${color}22` : "transparent",
+                      border:      `1px solid ${isOwner ? color : "rgb(var(--border-rgb))"}`,
+                      color:       isOwner ? color : "rgb(var(--text-secondary-rgb))",
+                      cursor:      "pointer",
+                    }}>
+                    {t.name}
+                  </button>
+                );
+              })}
+              {(state.activeBoardTeamId ?? null) !== null && (
+                <button onClick={() => dispatch({ type: "set_board_team", teamId: null })}
+                  className="px-2 py-1 rounded-full text-sm"
+                  style={{ color: "rgb(var(--text-secondary-rgb))", border: "1px solid rgb(var(--border-rgb))", cursor: "pointer" }}>
+                  ✕ clear
+                </button>
+              )}
+            </div>
           </Panel>
 
           <div className="flex flex-col gap-2">
@@ -436,34 +628,6 @@ export default function HostControllerPage() {
       {actionError && (
         <p className="text-center text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{actionError}</p>
       )}
-
-      {/* ── Who picked this tile? (Buzzed tiles in play) ─────────────── */}
-      <Modal open={pickerTile !== null} onClose={() => setPickerTile(null)}>
-        {pickerTile && (
-          <div className="flex flex-col gap-3">
-            <h3 className="text-lg font-bold">Who picked this tile?</h3>
-            <p className="text-sm" style={secondary}>
-              Needed in case it's a 💥 Buzzed tile — the picker gets locked in automatically.
-            </p>
-            {teams.map(t => (
-              <Button key={t.id} variant="ghost" fullWidth loading={busy}
-                onClick={async () => {
-                  await dispatch({ type: "select_tile", tileKey: pickerTile, pickerTeamId: t.id });
-                  setPickerTile(null);
-                }}>
-                {t.name}
-              </Button>
-            ))}
-            <Button variant="ghost" fullWidth loading={busy}
-              onClick={async () => {
-                await dispatch({ type: "select_tile", tileKey: pickerTile });
-                setPickerTile(null);
-              }}>
-              Skip — host picked
-            </Button>
-          </div>
-        )}
-      </Modal>
 
       <Modal open={scoreEdit !== null} onClose={() => setScoreEdit(null)}>
         {scoreEdit && (

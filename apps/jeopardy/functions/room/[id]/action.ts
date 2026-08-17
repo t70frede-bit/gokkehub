@@ -15,6 +15,18 @@ import { boardCount, getBoard, INITIAL_BOARD_STATE } from "../../../src/lib/type
 // All host-driven state transitions run through here so board_state moves
 // through one server-side state machine instead of ad-hoc client writes.
 
+/**
+ * Reading delay: when the game sets buzzer.openDelayMs, the buzzers open but
+ * only go live that many ms later, so the fastest reader doesn't win every
+ * race. Returns the ms-epoch they become tappable (buzz.ts enforces it), or
+ * null when the game has no delay.
+ */
+async function openDelayFrom(env: Env, gameId: string): Promise<number | null> {
+  const game = await getGame(env, gameId);
+  const ms   = game?.config.buzzer.openDelayMs ?? 0;
+  return ms > 0 ? Date.now() + ms : null;
+}
+
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
   if (pre) return pre;
@@ -82,15 +94,26 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
         const mode    = tile.answerMode ?? "standard";
         const secrets = await getSecrets(env, roomId);
-        const special = getSpecial(secrets, state.currentBoard, action.tileKey);
+        let   special = getSpecial(secrets, state.currentBoard, action.tileKey);
+        // Buzzed is a buzzer-only mechanic: if a stored secret ever pairs it
+        // with a submission tile (MC/closest/ranking), ignore it so the tile
+        // just plays as its normal answer mode instead of a broken "buzzed" one.
+        if (special === "buzzed" && mode !== "standard") special = null;
 
-        // Buzzed dangerous tile: the picking team is instantly buzzed in.
-        // Only meaningful on buzz questions with a known picker.
-        const buzzed = special === "buzzed" && mode === "standard" && action.pickerTeamId != null;
-        let buzzedPlayerId: string | null = null;
-        if (buzzed) {
-          const teams = await getTeams(env, roomId);
-          buzzedPlayerId = teams.find(t => t.id === action.pickerTeamId)?.captain_id ?? null;
+        // Buzzed dangerous tile: auto-assign to whoever has the board (activeBoardTeamId),
+        // falling back to an explicit pickerTeamId override from the action.
+        let autoBuzzTeamId:   number | null = null;
+        let autoBuzzPlayerId: string | null = null;
+        if (special === "buzzed" && mode === "standard") {
+          const candidateId = action.pickerTeamId ?? (state.activeBoardTeamId ?? null);
+          if (candidateId !== null) {
+            const allTeams    = await getTeams(env, roomId);
+            const buzzTeam    = allTeams.find(t => t.id === candidateId);
+            if (buzzTeam) {
+              autoBuzzTeamId   = buzzTeam.id;
+              autoBuzzPlayerId = buzzTeam.captain_id ?? null;
+            }
+          }
         }
 
         // Staged reveal: hold back text or media until the host triggers it.
@@ -99,26 +122,31 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         updates.board_state = {
           ...state,
           buzzersOpen:    false,
-          lastResolution: null,
+          buzzersOpenAt:  null,
           activeQuestion: {
             tileKey:          action.tileKey,
             mode,
-            buzzedBy:         buzzed ? action.pickerTeamId! : null,
-            buzzedPlayerId,
-            timerStart:       buzzed ? Date.now() : null,
+            buzzedBy:         autoBuzzTeamId,
+            buzzedPlayerId:   autoBuzzPlayerId,
+            timerStart:       autoBuzzTeamId !== null ? Date.now() : null,
             secondChanceUsed: false,
             // Submission modes: question text shows at tile-press (press 1).
             // Staged buzzer: first part shows at tile-press (press 1).
             // Together buzzer: "Get ready" state — host presses to reveal + open simultaneously.
-            questionRevealed: staged || mode !== "standard",
-            ...(buzzed ? { special: "buzzed" as const } : {}),
+            // Buzzed: reveal immediately (team is locked in, timer running).
+            // Power-up: hold back until host presses Continue on their controller.
+            // Non-special: staged and submission modes reveal at tile-press; together-mode reveals on host button.
+            questionRevealed: special
+              ? special === "buzzed"
+              : staged || mode !== "standard",
+            ...(special ? { special, specialRevealAcked: false } : {}),
             ...(mode !== "standard" ? { submittedTeamIds: [] } : {}),
             ...(staged ? { revealStage: 0 } : {}),
           },
         };
         await logEvent(env, roomId, "tile_selected", {
           team_id: action.pickerTeamId ?? null,
-          payload: { tileKey: action.tileKey, mode, buzzed },
+          payload: { tileKey: action.tileKey, mode, buzzed: special === "buzzed" },
         });
         break;
       }
@@ -131,8 +159,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         if (state.activeQuestion.buzzedBy !== null) return json({ error: "Someone already buzzed" }, 409, req);
         updates.board_state = {
           ...state,
-          buzzersOpen: true,
-          buzzRound:   state.buzzRound + 1,
+          buzzersOpen:   true,
+          buzzersOpenAt: await openDelayFrom(env, room.game_id),
+          buzzRound:     state.buzzRound + 1,
         };
         break;
       }
@@ -173,7 +202,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         updates.board_state = {
           ...state,
           buzzersOpen:    true,
-          activeQuestion: { ...q, revealStage: 1, buzzRound: (q.buzzRound ?? 0) + 1 },
+          buzzersOpenAt:  await openDelayFrom(env, room.game_id),
+          buzzRound:      state.buzzRound + 1,
+          activeQuestion: { ...q, revealStage: 1, questionRevealed: true },
         };
         break;
       }
@@ -212,6 +243,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
                 value:          award,
                 currentPowerup: team.powerup,
               },
+              activeBoardTeamId: team.id,
+              // Show answer on big screen while the team makes their choice.
+              lastResolution: {
+                tileKey:      q.tileKey,
+                mode:         q.mode ?? "standard",
+                lines:        [],
+                winnerTeamIds: [team.id],
+              },
             };
             // answer_correct is logged when the choice resolves (points vs claim).
           } else {
@@ -221,6 +260,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
               buzzersOpen:    false,
               spentTiles:     [...state.spentTiles, q.tileKey],
               activeQuestion: null,
+              activeBoardTeamId: team.id,
+              lastResolution: {
+                tileKey:      q.tileKey,
+                mode:         q.mode ?? "standard",
+                lines:        award > 0 ? [`+${award}`] : [],
+                winnerTeamIds: [team.id],
+              },
             };
             await logEvent(env, roomId, "answer_correct", {
               team_id: team.id, player_id: q.buzzedPlayerId,
@@ -251,6 +297,24 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
               payload: { tileKey: q.tileKey, pointsDelta: -loss },
             });
 
+            // Buzzed dangerous tile: one team, one shot (or two with secondChance).
+            // Wrong answer always closes the question — nobody else can answer.
+            if (q.special === "buzzed") {
+              updates.board_state = {
+                ...state,
+                buzzersOpen:    false,
+                spentTiles:     [...state.spentTiles, q.tileKey],
+                activeQuestion: null,
+                lastResolution: {
+                  tileKey:      q.tileKey,
+                  mode:         q.mode ?? "standard",
+                  lines:        loss > 0 ? [`-${loss}`] : [],
+                  winnerTeamIds: [],
+                },
+              };
+              break;
+            }
+
             const noRebuzz    = game.config.buzzer.noRebuzz    ?? false;
             const teamLockout = game.config.buzzer.teamLockout ?? false;
             const lockedOut   = teamLockout
@@ -263,6 +327,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             updates.board_state = {
               ...state,
               buzzersOpen: !noRebuzz,
+              // Re-opening after a wrong answer is immediate — the reading
+              // delay only applies to the question's first open.
+              buzzersOpenAt: null,
               activeQuestion: {
                 ...q,
                 buzzedBy:         null,
@@ -274,6 +341,67 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
             };
           }
         }
+        break;
+      }
+
+      case "skip_second_chance": {
+        const q = state.activeQuestion;
+        if (!q || q.buzzedBy === null) return json({ error: "Nobody has buzzed" }, 409, req);
+        if (!q.secondChanceUsed)       return json({ error: "No second chance pending" }, 409, req);
+
+        const game = await getGame(env, room.game_id);
+        if (!game) return json({ error: "Game config missing" }, 500, req);
+        const board = getBoard(game.config, state.currentBoard);
+        const value = tileValue(board, q.tileKey);
+
+        const teams = await getTeams(env, roomId);
+        const team  = teams.find(t => t.id === q.buzzedBy);
+        if (!team) return json({ error: "Buzzed team missing" }, 500, req);
+
+        // Team declines their extra attempt: they take the single wrong-answer
+        // loss (not the doubled second-attempt penalty). Then close or reopen
+        // exactly like a normal wrong answer.
+        await updateTeam(env, team.id, { score: team.score - value });
+        await logEvent(env, roomId, "answer_wrong", {
+          team_id: team.id, player_id: q.buzzedPlayerId,
+          payload: { tileKey: q.tileKey, pointsDelta: -value, skippedSecondChance: true },
+        });
+
+        if (q.special === "buzzed") {
+          updates.board_state = {
+            ...state,
+            buzzersOpen:    false,
+            spentTiles:     [...state.spentTiles, q.tileKey],
+            activeQuestion: null,
+            lastResolution: {
+              tileKey:       q.tileKey,
+              mode:          q.mode ?? "standard",
+              lines:         value > 0 ? [`-${value}`] : [],
+              winnerTeamIds: [],
+            },
+          };
+          break;
+        }
+
+        const noRebuzz    = game.config.buzzer.noRebuzz    ?? false;
+        const teamLockout = game.config.buzzer.teamLockout ?? false;
+        const lockedOut   = teamLockout
+          ? [...(q.lockedOutTeamIds ?? []), team.id]
+          : (q.lockedOutTeamIds ?? []);
+
+        updates.board_state = {
+          ...state,
+          buzzersOpen:   !noRebuzz,
+          buzzersOpenAt: null,
+          activeQuestion: {
+            ...q,
+            buzzedBy:         null,
+            buzzedPlayerId:   null,
+            timerStart:       null,
+            secondChanceUsed: false,
+            lockedOutTeamIds: lockedOut,
+          },
+        };
         break;
       }
 
@@ -399,6 +527,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           activeQuestion: null,
           powerupPrompt:  prompt,
           lastResolution: { tileKey: q.tileKey, mode: q.mode ?? "standard", lines, winnerTeamIds },
+          // Fastest correct submitter gets the board; keep current owner if no winner.
+          activeBoardTeamId: winnerTeamIds.length > 0 ? winnerTeamIds[0] : (state.activeBoardTeamId ?? null),
         };
         break;
       }
@@ -412,7 +542,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       }
 
       case "dismiss_question": {
-        // Nobody knew it — spend the tile, reveal moves on.
+        // Nobody knew it — spend the tile, reveal the answer, move on.
         const q = state.activeQuestion;
         if (!q) return json({ error: "No active question" }, 409, req);
         updates.board_state = {
@@ -420,6 +550,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           buzzersOpen:    false,
           spentTiles:     [...state.spentTiles, q.tileKey],
           activeQuestion: null,
+          lastResolution: {
+            tileKey:      q.tileKey,
+            mode:         q.mode ?? "standard",
+            lines:        [],
+            winnerTeamIds: [],
+          },
         };
         break;
       }
@@ -591,6 +727,55 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           team_id: team.id,
           payload: { from: team.score, to: Math.round(action.score) },
         });
+        break;
+      }
+
+      case "ack_special": {
+        const q = state.activeQuestion;
+        if (!q?.special) return json({ error: "No special tile active" }, 409, req);
+        updates.board_state = {
+          ...state,
+          activeQuestion: {
+            ...q,
+            specialRevealAcked: true,
+            // Reset the answer timer: it started at tile-press but should only
+            // begin once the animation clears and the team is ready to answer.
+            ...(q.buzzedBy !== null ? { timerStart: Date.now() } : {}),
+          },
+        };
+        break;
+      }
+
+      case "assign_buzzed": {
+        // Assign (or re-assign) who picked a 💥 Buzzed tile.
+        // Auto-assign happens at tile selection; this is the host's correction lever.
+        const q = state.activeQuestion;
+        if (!q || q.special !== "buzzed") return json({ error: "Not a buzzed tile" }, 409, req);
+        const teams = await getTeams(env, roomId);
+        const team  = teams.find(t => t.id === action.teamId);
+        if (!team) return json({ error: "Team not found" }, 404, req);
+        updates.board_state = {
+          ...state,
+          activeQuestion: {
+            ...q,
+            buzzedBy:       team.id,
+            buzzedPlayerId: team.captain_id ?? null,
+            timerStart:     Date.now(),
+          },
+        };
+        break;
+      }
+
+      case "set_board_team": {
+        updates.board_state = {
+          ...state,
+          activeBoardTeamId: action.teamId,
+        };
+        break;
+      }
+
+      case "dismiss_resolution": {
+        updates.board_state = { ...state, lastResolution: null };
         break;
       }
 

@@ -112,6 +112,14 @@ export interface JpDangerousConfig {
 export type JpSpecialTile = "powerup_sniper" | "powerup_buffer" | "powerup_secondChance" | "buzzed";
 export type JpSpecialTiles = Record<string, Record<string, JpSpecialTile>>; // "board0" → tileKey → special
 
+/** Where special tiles come from: rolled at launch, or pinned by the author. */
+export type JpSpecialPlacement = "random" | "manual";
+
+/** The special a power-up type occupies on the board. */
+export function powerupSpecial(type: JpPowerupType): JpSpecialTile {
+  return `powerup_${type}` as JpSpecialTile;
+}
+
 // ── Game config (setup wizard output, stored on jp_games.config) ─────────────
 
 /** What shows first on the big screen: everything, text before media, or media before text. */
@@ -129,6 +137,9 @@ export interface JpTileConfig {
 
 export interface JpBoardConfig {
   categories:  string[];
+  /** Optional per-category blurb, parallel to `categories` by index. Shown on
+   *  the big screen when a category is revealed and while a question in it is open. */
+  categoryDescriptions?: string[];
   rows:        number;
   pointValues: number[];
   /** Keyed "col-row", e.g. "0-0" = first category, top row. */
@@ -164,6 +175,9 @@ export interface JpGameConfig {
     teamLockout:            boolean;
     defaultBuzzDisplayMode: JpBuzzDisplayMode;
     collectionWindowMs:     number;
+    /** Reading time before buzzers go live, in ms (0 = live immediately).
+     *  Stops the fastest reader from winning every race. Server-enforced. */
+    openDelayMs?:           number;
   };
   powerups?: {
     sniper:       JpPowerupConfig;
@@ -171,6 +185,12 @@ export interface JpGameConfig {
     secondChance: JpPowerupConfig;
   };
   dangerous?:        JpDangerousConfig;
+  /** "random" (default) rolls special tiles at launch within each row range;
+   *  "manual" uses exactly what the author pinned in `manualSpecials`. */
+  specialPlacement?: JpSpecialPlacement;
+  /** Manual placement map: "board0"/"board1" → tileKey → special. Only read
+   *  when specialPlacement === "manual", and still gated by each `enabled` flag. */
+  manualSpecials?:   JpSpecialTiles;
   board2Mode?:       JpBoard2Mode;
   powerupCarryover?: "persist" | "reset";
   finalJeopardy?:    JpFinalJeopardyConfig;
@@ -269,8 +289,10 @@ export interface JpActiveQuestion {
   buzzedPlayerId: string | null;
   timerStart:     number | null;   // ms epoch, set server-side on buzz resolve
   secondChanceUsed: boolean;
-  /** Set when this tile was a Buzzed dangerous tile (display drama). */
-  special?:       "buzzed";
+  /** Set when this tile is special (buzzed or any power-up) — revealed at tile-press. */
+  special?:       JpSpecialTile;
+  /** false while the big-screen special animation plays; host presses Continue to set true. */
+  specialRevealAcked?: boolean;
   /** Teams that have locked in a submission (submission modes only). */
   submittedTeamIds?: number[];
   /** Team Lockout: teams that answered wrong and can't buzz again on this question. */
@@ -315,6 +337,10 @@ export interface JpBoardState {
   spentTiles:         string[];
   revealedCategories: number[];
   buzzersOpen:        boolean;   // doubles as "submissions open" in submission modes
+  /** ms epoch the buzzers actually go live (config.buzzer.openDelayMs). While
+   *  this is in the future the buzzers are "arming": visible, not yet tappable,
+   *  and buzz.ts rejects early taps. null/absent = live the moment they open. */
+  buzzersOpenAt?:     number | null;
   buzzRound:          number;
   activeQuestion:     JpActiveQuestion | null;
   powerupPrompt?:     JpPowerupPrompt | null;
@@ -322,6 +348,8 @@ export interface JpBoardState {
   /** Between-boards scoreboard is showing. */
   interlude?:         boolean;
   final?:             JpFinalState | null;
+  /** The team that last answered correctly and gets to pick the next tile. */
+  activeBoardTeamId?: number | null;
 }
 
 export const INITIAL_BOARD_STATE: JpBoardState = {
@@ -329,12 +357,14 @@ export const INITIAL_BOARD_STATE: JpBoardState = {
   spentTiles:         [],
   revealedCategories: [],
   buzzersOpen:        false,
+  buzzersOpenAt:      null,
   buzzRound:          0,
   activeQuestion:     null,
   powerupPrompt:      null,
   lastResolution:     null,
   interlude:          false,
   final:              null,
+  activeBoardTeamId:  null,
 };
 
 export interface JpRoom {
@@ -353,8 +383,26 @@ export interface JpTeam {
   name:       string;
   score:      number;
   powerup:    JpPowerupType | null;
+  color:      string | null;
   captain_id: string | null;
   sort_order: number;
+}
+
+/** Eight distinct vibrant colours for dark-background display. */
+export const TEAM_COLOR_PALETTE = [
+  "#f59e0b", // amber
+  "#3b82f6", // blue
+  "#22c55e", // green
+  "#a855f7", // purple
+  "#ef4444", // red
+  "#ec4899", // pink
+  "#06b6d4", // cyan
+  "#f97316", // orange
+] as const;
+
+/** Returns the team's custom colour or the default palette entry for its slot. */
+export function getTeamColor(team: Pick<JpTeam, "color">, sortIndex: number): string {
+  return team.color ?? TEAM_COLOR_PALETTE[sortIndex % TEAM_COLOR_PALETTE.length];
 }
 
 export interface JpPlayer {
@@ -413,6 +461,7 @@ export type HostAction =
   | { type: "reveal_and_open" }           // reveal held-back part AND open buzzers in one step
   | { type: "accept_answer" }
   | { type: "reject_answer" }
+  | { type: "skip_second_chance" }        // Second Chance holder declines their extra attempt (no loss)
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)
   | { type: "resolve_submissions" }       // grade MC / closest / ranking submissions
   | { type: "force_powerup_choice"; choice: "points" | "powerup" }
@@ -426,6 +475,10 @@ export type HostAction =
   | { type: "set_captain"; playerId: string }
   | { type: "shuffle_teams" }
   | { type: "rename_team"; teamId: number; name: string }
+  | { type: "assign_buzzed"; teamId: number } // buzzed tile: assign/re-assign picker (host can correct auto-assign)
+  | { type: "ack_special" }                  // dismiss big-screen special overlay, reveal normal flow
+  | { type: "set_board_team"; teamId: number | null } // host sets whose board it is (null = nobody)
+  | { type: "dismiss_resolution" }           // host explicitly returns to board after answer reveal
   | { type: "end_game" }
   | { type: "rematch" };                  // finished room → back to lobby, fresh state
 

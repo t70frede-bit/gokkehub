@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { JpRoom } from "../lib/types";
 
 export type BuzzerPhase =
   | "no-question"   // nothing selected
   | "locked"        // question up, buzzers closed
+  | "arming"        // open, but the reading delay hasn't elapsed yet
   | "open"          // race is on
   | "you-buzzed"    // this device won the buzz
   | "locked-out"    // teamLockout: this team already answered wrong
@@ -20,14 +21,32 @@ export function useBuzzer(
   const q     = room?.board_state.activeQuestion ?? null;
   const state = room?.board_state;
 
+  // Reading delay: buzzers are open but not live until `buzzersOpenAt`. No
+  // realtime event fires at that moment, so wake the component up ourselves.
+  const openAt = state?.buzzersOpenAt ?? null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!openAt) return;
+    const ms = openAt - Date.now();
+    if (ms <= 0) return;
+    // Tick while arming so the countdown can show whole seconds.
+    const tick = setInterval(() => setNow(Date.now()), 100);
+    const stop = setTimeout(() => { clearInterval(tick); setNow(Date.now()); }, ms + 60);
+    return () => { clearInterval(tick); clearTimeout(stop); };
+  }, [openAt]);
+
+  const armingMsLeft = openAt ? Math.max(0, openAt - now) : 0;
+
   let phase: BuzzerPhase = "no-question";
   if (room && room.status === "playing" && q) {
     if (q.buzzedBy !== null) {
       phase = q.buzzedBy === teamId ? "you-buzzed" : "other-buzzed";
     } else if (teamLockout && teamId !== null && (q.lockedOutTeamIds ?? []).includes(teamId)) {
       phase = "locked-out";
+    } else if (!state!.buzzersOpen) {
+      phase = "locked";
     } else {
-      phase = state!.buzzersOpen ? "open" : "locked";
+      phase = armingMsLeft > 0 ? "arming" : "open";
     }
   }
 
@@ -48,5 +67,5 @@ export function useBuzzer(
     }
   }, [room, playerId, inFlight, phase]);
 
-  return { phase, buzz, inFlight };
+  return { phase, buzz, inFlight, armingMsLeft };
 }

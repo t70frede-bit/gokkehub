@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Button, Modal, Toggle } from "@gokkehub/ui";
 import MediaBlockEditor from "./MediaBlockEditor";
+import QuestionOverlay from "./Board/QuestionOverlay";
 import type {
   JpAnswerMode, JpBlock, JpBuzzDisplayMode, JpClosestNumberConfig,
   JpImageBlock, JpMediaBlock, JpMultipleChoiceConfig, JpRankingConfig,
@@ -16,6 +17,10 @@ interface TileEditorModalProps {
   onClose:  () => void;
   /** Final Jeopardy: blocks only — no answer modes or buzz-display options. */
   simple?:  boolean;
+  /** Shown in the preview's header, exactly as the big screen would. */
+  category?:     string;
+  categoryDesc?: string;
+  value?:        number;
 }
 
 const inputStyle = {
@@ -26,37 +31,190 @@ const inputStyle = {
 
 const labelStyle = { color: "rgb(var(--text-secondary-rgb))" } as const;
 
-// Extra content type beyond text: "none" = text only, "image" = + image, "media" = + audio/video.
-// Text is always present — it's the question read aloud, the base.
-type ExtraContent = "none" | "image" | "media";
+type Side = "q" | "a";
 
-function firstText(blocks: JpBlock[] | undefined): string {
-  return (blocks ?? []).filter(b => b.type === "text").map(b => (b as { text: string }).text).join("\n");
-}
-function firstImage(blocks: JpBlock[] | undefined): JpImageBlock | null {
-  return ((blocks ?? []).find(b => b.type === "image") as JpImageBlock | undefined) ?? null;
-}
-function firstMedia(blocks: JpBlock[] | undefined): JpMediaBlock | null {
-  return ((blocks ?? []).find(b => b.type === "audio" || b.type === "video") as JpMediaBlock | undefined) ?? null;
-}
-function initExtra(blocks: JpBlock[] | undefined): ExtraContent {
-  if ((blocks ?? []).some(b => b.type === "audio" || b.type === "video")) return "media";
-  if ((blocks ?? []).some(b => b.type === "image")) return "image";
-  return "none";
+let blockSeq = 0;
+function newBlockId(tileKey: string, side: Side): string {
+  blockSeq += 1;
+  return `${tileKey}-${side}-${Date.now().toString(36)}${blockSeq}`;
 }
 
-export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, onClose, simple = false }: TileEditorModalProps) {
-  const [qText, setQText] = useState(firstText(tile?.questionBlocks));
-  const [aText, setAText] = useState(firstText(tile?.answerBlocks));
-  const [qImage, setQImage] = useState<JpImageBlock | null>(firstImage(tile?.questionBlocks));
-  const [aImage, setAImage] = useState<JpImageBlock | null>(firstImage(tile?.answerBlocks));
-  const [qMedia, setQMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.questionBlocks));
-  const [aMedia, setAMedia] = useState<JpMediaBlock | null>(firstMedia(tile?.answerBlocks));
-  // Extra content on top of the always-present text.
-  const [qExtra, setQExtra] = useState<ExtraContent>(() => initExtra(tile?.questionBlocks));
-  const [aExtra, setAExtra] = useState<ExtraContent>(() => initExtra(tile?.answerBlocks));
+// A block is "empty" while its media hasn't been uploaded yet, or its text is
+// blank. Empty blocks are editing scaffolding — they never reach the config.
+function isEmpty(b: JpBlock): boolean {
+  return b.type === "text" ? !b.text.trim() : !b.url;
+}
+function clean(blocks: JpBlock[]): JpBlock[] {
+  return blocks
+    .filter(b => !isEmpty(b))
+    .map(b => (b.type === "text" ? { ...b, text: b.text.trim() } : b));
+}
 
-  const [reveal,  setReveal]  = useState<JpRevealMode>(qImage?.revealMode ?? "off");
+const BLOCK_LABEL: Record<JpBlock["type"], string> = {
+  text:  "📝 Text",
+  image: "🖼 Image",
+  audio: "🎵 Audio",
+  video: "🎬 Video",
+};
+
+/**
+ * Ordered block list for one side of a tile. Blocks render on the big screen
+ * in this order, so ↑/↓ is the layout control — buttons rather than drag,
+ * because the host builds games on a phone as often as a laptop.
+ */
+function BlockListEditor({
+  gameId, tileKey, side, blocks, setBlocks, allowRevealMode,
+}: {
+  gameId:   string;
+  tileKey:  string;
+  side:     Side;
+  blocks:   JpBlock[];
+  setBlocks: React.Dispatch<React.SetStateAction<JpBlock[]>>;
+  /** Question side only: images can be silhouetted/blurred until reveal. */
+  allowRevealMode: boolean;
+}) {
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [error,       setError]       = useState<string | null>(null);
+  const fileRef    = useRef<HTMLInputElement>(null);
+  const pendingRef = useRef<string | null>(null);
+
+  const patchAt  = (id: string, patch: Partial<JpBlock>) =>
+    setBlocks(bs => bs.map(b => (b.id === id ? { ...b, ...patch } as JpBlock : b)));
+  const removeId = (id: string) => setBlocks(bs => bs.filter(b => b.id !== id));
+  const move     = (i: number, dir: -1 | 1) =>
+    setBlocks(bs => {
+      const j = i + dir;
+      if (j < 0 || j >= bs.length) return bs;
+      const next = [...bs];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  const pickImage = (id: string) => { pendingRef.current = id; fileRef.current?.click(); };
+
+  const uploadImage = async (file: File) => {
+    const id = pendingRef.current;
+    if (!id) return;
+    setUploadingId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/game/${gameId}/upload`, {
+        method:  "POST",
+        headers: { "Content-Type": file.type },
+        credentials: "include",
+        body:    file,
+      });
+      const body = await res.json().catch(() => null) as (UploadResponse & { error?: string }) | null;
+      if (!res.ok || !body?.url) { setError(body?.error ?? "Upload failed"); return; }
+      patchAt(id, { url: body.url } as Partial<JpImageBlock>);
+    } catch {
+      setError("Upload failed");
+    } finally {
+      setUploadingId(null);
+      pendingRef.current = null;
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {blocks.map((b, i) => (
+        <div key={b.id} className="flex flex-col gap-2 rounded-md p-2"
+          style={{ border: "1px solid rgb(var(--border-rgb))" }}>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-widest" style={labelStyle}>
+              {BLOCK_LABEL[b.type]}
+            </span>
+            {blocks.length > 1 && (
+              <span className="text-xs" style={labelStyle}>#{i + 1}</span>
+            )}
+            <div className="ml-auto flex gap-1">
+              <Button variant="ghost" size="sm" disabled={i === 0} onClick={() => move(i, -1)}>↑</Button>
+              <Button variant="ghost" size="sm" disabled={i === blocks.length - 1} onClick={() => move(i, 1)}>↓</Button>
+              <Button variant="danger" size="sm" onClick={() => removeId(b.id)}>✕</Button>
+            </div>
+          </div>
+
+          {b.type === "text" && (
+            <textarea value={b.text} rows={3} placeholder="Text…"
+              onChange={e => patchAt(b.id, { text: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
+          )}
+
+          {b.type === "image" && (
+            b.url ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <img src={b.url} alt="" className="h-16 rounded-md object-cover" />
+                  <Button variant="ghost" size="sm" loading={uploadingId === b.id}
+                    onClick={() => pickImage(b.id)}>Replace</Button>
+                </div>
+                {allowRevealMode && (
+                  <div>
+                    <p className="text-sm font-medium mb-2" style={labelStyle}>Image reveal</p>
+                    <Toggle
+                      options={[
+                        { value: "off",        label: "Normal" },
+                        { value: "silhouette", label: "Silhouette" },
+                        { value: "pixelated",  label: "Blurred" },
+                        { value: "animated",   label: "Slow sharpen" },
+                      ]}
+                      value={b.revealMode ?? "off"}
+                      onChange={v => patchAt(b.id, { revealMode: v as JpRevealMode } as Partial<JpImageBlock>)}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" loading={uploadingId === b.id}
+                onClick={() => pickImage(b.id)}>Upload image</Button>
+            )
+          )}
+
+          {(b.type === "audio" || b.type === "video") && (
+            <MediaBlockEditor gameId={gameId} blockId={b.id}
+              block={b.url ? b as JpMediaBlock : null}
+              onChange={nb => (nb ? patchAt(b.id, nb) : removeId(b.id))} />
+          )}
+        </div>
+      ))}
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="ghost" size="sm"
+          onClick={() => setBlocks(bs => [...bs, { id: newBlockId(tileKey, side), type: "text", text: "" }])}>
+          + Text
+        </Button>
+        <Button variant="ghost" size="sm"
+          onClick={() => setBlocks(bs => [...bs, { id: newBlockId(tileKey, side), type: "image", url: "" }])}>
+          + Image
+        </Button>
+        <Button variant="ghost" size="sm"
+          onClick={() => setBlocks(bs => [...bs, { id: newBlockId(tileKey, side), type: "audio", url: "" }])}>
+          + Audio / video
+        </Button>
+      </div>
+
+      {/* Media blocks all start together when the side is revealed — two clips
+          means two clips at once, which is almost never what you want. */}
+      {blocks.filter(b => (b.type === "audio" || b.type === "video") && b.url).length > 1 && (
+        <p className="text-xs" style={{ color: "rgb(var(--color-danger-rgb))" }}>
+          ⚠ More than one clip on this side — they'll all play at the same time.
+        </p>
+      )}
+
+      <input ref={fileRef} type="file" accept="image/*" className="hidden"
+        onChange={e => e.target.files?.[0] && uploadImage(e.target.files[0])} />
+      {error && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
+    </div>
+  );
+}
+
+export default function TileEditorModal({
+  gameId, tileKey, title, tile, onSave, onClose, simple = false,
+  category, categoryDesc, value,
+}: TileEditorModalProps) {
+  const [qBlocks, setQBlocks] = useState<JpBlock[]>(() => tile?.questionBlocks ?? []);
+  const [aBlocks, setABlocks] = useState<JpBlock[]>(() => tile?.answerBlocks ?? []);
+
   const [display, setDisplay] = useState<JpBuzzDisplayMode | "default">(tile?.buzzDisplayMode ?? "default");
   const [order,   setOrder]   = useState<JpRevealOrder>(tile?.revealOrder ?? "together");
   const [mode,    setMode]    = useState<JpAnswerMode>(tile?.answerMode ?? "standard");
@@ -80,40 +238,26 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
   const [rkTopLabel,    setRkTopLabel]    = useState(rkInit?.topLabel    ?? "");
   const [rkBottomLabel, setRkBottomLabel] = useState(rkInit?.bottomLabel ?? "");
 
-  const [uploading, setUploading] = useState<"q" | "a" | null>(null);
-  const [error,     setError]     = useState<string | null>(null);
-  const qFileRef = useRef<HTMLInputElement>(null);
-  const aFileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const upload = async (side: "q" | "a", file: File) => {
-    setUploading(side);
-    setError(null);
-    try {
-      const res = await fetch(`/game/${gameId}/upload`, {
-        method:  "POST",
-        headers: { "Content-Type": file.type },
-        credentials: "include",
-        body:    file,
-      });
-      const body = await res.json().catch(() => null) as (UploadResponse & { error?: string }) | null;
-      if (!res.ok || !body?.url) { setError(body?.error ?? "Upload failed"); return; }
-      const block: JpImageBlock = { id: `${tileKey}-${side}img`, type: "image", url: body.url };
-      if (side === "q") setQImage(block); else setAImage(block);
-    } catch {
-      setError("Upload failed");
-    } finally {
-      setUploading(null);
-    }
-  };
+  // Preview-as-player: the real big-screen renderer, driven by the draft.
+  const [preview,      setPreview]      = useState(false);
+  const [pvSide,       setPvSide]       = useState<Side>("q");
+  const [pvStage,      setPvStage]      = useState(0);
+  const [pvBuzzed,     setPvBuzzed]     = useState(false);
+  const [pvNonce,      setPvNonce]      = useState(0);
+
+  const cleanQ = clean(qBlocks);
+  const cleanA = clean(aBlocks);
+  const hasQuestion = cleanQ.length > 0;
+  const qHasVisual  = cleanQ.some(b => b.type !== "text");
 
   const clearTile = () => {
     if (window.confirm("Clear this tile and remove the question?")) onSave(null);
   };
 
-  const hasQuestion = qText.trim() || (qExtra === "image" && qImage) || (qExtra === "media" && qMedia);
-
   const handleClose = () => {
-    const hasEdits = hasQuestion || aText.trim() || aImage || aMedia || mode !== "standard";
+    const hasEdits = hasQuestion || cleanA.length > 0 || mode !== "standard";
     if (hasEdits && !window.confirm("Discard unsaved changes?")) return;
     onClose();
   };
@@ -135,25 +279,22 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
       setError("Ranking needs at least 2 items"); return;
     }
 
-    const questionBlocks: JpBlock[] = [];
-    if (qText.trim())                        questionBlocks.push({ id: `${tileKey}-q`, type: "text", text: qText.trim() });
-    if (qExtra === "image" && qImage)        questionBlocks.push({ ...qImage, revealMode: reveal });
-    if (qExtra === "media" && qMedia)        questionBlocks.push(qMedia);
+    const questionBlocks = cleanQ;
+    const answerBlocks   = [...cleanA];
 
-    const answerBlocks: JpBlock[] = [];
-    if (aText.trim())                        answerBlocks.push({ id: `${tileKey}-a`, type: "text", text: aText.trim() });
-    if (aExtra === "image" && aImage) {
-      answerBlocks.push(aImage);
-    } else if (aExtra === "none" && qExtra === "image" && qImage && reveal !== "off") {
-      // Question image has a visual effect (blur/silhouette/sharpen) — auto-add the
-      // same image to the answer side without any effect so the host sees it clearly.
-      answerBlocks.push({ ...qImage, id: `${tileKey}-a-img`, revealMode: "off" });
+    // A question image with a visual effect (silhouette/blur/sharpen) is useless
+    // to the host unless the plain version shows at reveal — add it once, on save.
+    if (!answerBlocks.some(b => b.type === "image")) {
+      for (const b of questionBlocks) {
+        if (b.type === "image" && (b.revealMode ?? "off") !== "off") {
+          answerBlocks.push({ ...b, id: `${b.id}-reveal`, revealMode: "off" });
+        }
+      }
     }
-    if (aExtra === "media" && aMedia)        answerBlocks.push(aMedia);
 
     const out: JpTileConfig = { questionBlocks, answerBlocks, answerMode: mode };
     if (display !== "default") out.buzzDisplayMode = display;
-    if (order !== "together" && questionBlocks.some(b => b.type !== "text")) out.revealOrder = order;
+    if (order !== "together" && qHasVisual) out.revealOrder = order;
     if (mode === "multipleChoice") {
       out.answerModeConfig = {
         options:          mcOptions.map(o => o.trim()).filter(Boolean),
@@ -199,10 +340,11 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
     </div>
   );
 
-  const showQImage = qExtra === "image";
-  const showQMedia = qExtra === "media";
-  const showAImage = aExtra === "image";
-  const showAMedia = aExtra === "media";
+  const mediaLabel = (() => {
+    const m = cleanQ.find(b => b.type === "audio" || b.type === "video");
+    if (m) return m.type === "video" ? "video" : "audio";
+    return "image";
+  })();
 
   return (
     <Modal open onClose={handleClose} maxWidth="560px">
@@ -211,94 +353,37 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {/* ── Question side ─────────────────────────────────────────── */}
         <div>
-          <p className="text-sm font-medium mb-2" style={labelStyle}>Question</p>
-          <Toggle
-            options={[
-              { value: "none",  label: "📝 Text only" },
-              { value: "image", label: "🖼 + Image" },
-              { value: "media", label: "🎵 + Audio / Video" },
-            ]}
-            value={qExtra}
-            onChange={v => setQExtra(v as ExtraContent)}
-          />
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-sm font-medium" style={labelStyle}>Question</p>
+            <span className="text-xs" style={labelStyle}>
+              — shown on the big screen in this order
+            </span>
+          </div>
+          <BlockListEditor gameId={gameId} tileKey={tileKey} side="q"
+            blocks={qBlocks} setBlocks={setQBlocks} allowRevealMode />
         </div>
 
-        <textarea value={qText} onChange={e => setQText(e.target.value)} rows={3}
-          placeholder="Question text…"
-          className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-
-        {showQImage && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-3">
-              {qImage ? (
-                <>
-                  <img src={qImage.url} alt="" className="h-16 rounded-md object-cover" />
-                  <Button variant="danger" size="sm" onClick={() => setQImage(null)}>Remove image</Button>
-                </>
-              ) : (
-                <Button variant="ghost" size="sm" loading={uploading === "q"}
-                  onClick={() => qFileRef.current?.click()}>
-                  Upload question image
-                </Button>
-              )}
-              <input ref={qFileRef} type="file" accept="image/*" className="hidden"
-                onChange={e => e.target.files?.[0] && upload("q", e.target.files[0])} />
-            </div>
-            {qImage && (
-              <div>
-                <p className="text-sm font-medium mb-2" style={labelStyle}>Image reveal</p>
-                <Toggle
-                  options={[
-                    { value: "off",        label: "Normal" },
-                    { value: "silhouette", label: "Silhouette" },
-                    { value: "pixelated",  label: "Blurred" },
-                    { value: "animated",   label: "Slow sharpen" },
-                  ]}
-                  value={reveal}
-                  onChange={v => setReveal(v as JpRevealMode)}
-                />
-              </div>
+        {qHasVisual && (
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order</p>
+            <Toggle
+              options={[
+                { value: "together",   label: "Together" },
+                { value: "textFirst",  label: `Text → then ${mediaLabel}` },
+                { value: "mediaFirst", label: `${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} → then text` },
+              ]}
+              value={order}
+              onChange={v => setOrder(v as JpRevealOrder)}
+            />
+            {order !== "together" && (
+              <p className="text-xs mt-1" style={labelStyle}>
+                {order === "textFirst"
+                  ? `All text shows first; your host controller gets a "Reveal ${mediaLabel} & open buzzers" button.`
+                  : `Images and clips show first; your host controller gets a "📝 Reveal text & open buzzers" button.`}
+              </p>
             )}
           </div>
         )}
-
-        {showQMedia && (
-          <MediaBlockEditor gameId={gameId} blockId={`${tileKey}-qmedia`}
-            block={qMedia} onChange={setQMedia} />
-        )}
-
-        {(showQImage || showQMedia) && (() => {
-          const mediaLabel = showQMedia
-            ? (qMedia?.type === "video" ? "video" : "audio")
-            : "image";
-          const mediaIcon  = showQMedia
-            ? (qMedia?.type === "video" ? "🎬" : "🎵")
-            : "🖼";
-          return (
-            <div>
-              <p className="text-sm font-medium mb-2" style={labelStyle}>Reveal order</p>
-              <Toggle
-                options={[
-                  { value: "together",   label: "Together" },
-                  { value: "textFirst",  label: `Text → then ${mediaLabel}` },
-                  { value: "mediaFirst", label: `${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} → then text` },
-                ]}
-                value={order}
-                onChange={v => setOrder(v as JpRevealOrder)}
-              />
-              {order === "textFirst" && (
-                <p className="text-xs mt-1" style={labelStyle}>
-                  Question text appears first. Your host controller gets a "{mediaIcon} Reveal {mediaLabel} &amp; open buzzers" button.
-                </p>
-              )}
-              {order === "mediaFirst" && (
-                <p className="text-xs mt-1" style={labelStyle}>
-                  {mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} appears first. Your host controller gets a "📝 Reveal text &amp; open buzzers" button.
-                </p>
-              )}
-            </div>
-          );
-        })()}
 
         {/* ── Answer mode ───────────────────────────────────────────── */}
         {!simple && (
@@ -431,57 +516,89 @@ export default function TileEditorModal({ gameId, tileKey, title, tile, onSave, 
 
         {/* ── Answer side ───────────────────────────────────────────── */}
         <div>
-          <p className="text-sm font-medium mb-2" style={labelStyle}>Answer (host only)</p>
-          <Toggle
-            options={[
-              { value: "none",  label: "📝 Text only" },
-              { value: "image", label: "🖼 + Image" },
-              { value: "media", label: "🎵 + Audio / Video" },
-            ]}
-            value={aExtra}
-            onChange={v => setAExtra(v as ExtraContent)}
-          />
+          <p className="text-sm font-medium mb-2" style={labelStyle}>Answer (revealed after the question)</p>
+          <BlockListEditor gameId={gameId} tileKey={tileKey} side="a"
+            blocks={aBlocks} setBlocks={setABlocks} allowRevealMode={false} />
         </div>
-
-        <textarea value={aText} onChange={e => setAText(e.target.value)} rows={2}
-          placeholder="Answer text…"
-          className="w-full px-4 py-2.5 rounded-md font-sans text-base outline-none" style={inputStyle} />
-
-        {showAImage && (
-          <div className="flex flex-wrap items-center gap-3">
-            {aImage ? (
-              <>
-                <img src={aImage.url} alt="" className="h-12 rounded-md object-cover" />
-                <Button variant="danger" size="sm" onClick={() => setAImage(null)}>Remove image</Button>
-              </>
-            ) : (
-              <Button variant="ghost" size="sm" loading={uploading === "a"}
-                onClick={() => aFileRef.current?.click()}>
-                Upload answer image
-              </Button>
-            )}
-            <input ref={aFileRef} type="file" accept="image/*" className="hidden"
-              onChange={e => e.target.files?.[0] && upload("a", e.target.files[0])} />
-          </div>
-        )}
-
-        {showAMedia && (
-          <MediaBlockEditor gameId={gameId} blockId={`${tileKey}-amedia`}
-            block={aMedia} onChange={setAMedia} />
-        )}
 
         {error && <p className="text-sm" style={{ color: "rgb(var(--color-danger-rgb))" }}>{error}</p>}
 
-        <div className="flex justify-between gap-2">
+        <div className="flex flex-wrap justify-between gap-2">
           {tile && (
             <Button variant="danger" onClick={clearTile}>Clear tile</Button>
           )}
           <div className="flex gap-2 ml-auto">
+            <Button variant="ghost" disabled={!hasQuestion}
+              onClick={() => { setPvSide("q"); setPvStage(0); setPvBuzzed(false); setPreview(true); }}>
+              👁 Preview
+            </Button>
             <Button variant="ghost" onClick={handleClose}>Cancel</Button>
             <Button onClick={save}>Save tile</Button>
           </div>
         </div>
       </div>
+
+      {/* ── Preview-as-player ──────────────────────────────────────────
+          The actual big-screen component, so what you see here is what the
+          room sees — including staged reveal and the on-buzz display mode. */}
+      {preview && (
+        <Modal open onClose={() => setPreview(false)} maxWidth="900px">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-bold">Big screen preview</h3>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Toggle
+                  options={[
+                    { value: "q", label: "Question" },
+                    { value: "a", label: "Answer" },
+                  ]}
+                  value={pvSide}
+                  onChange={v => setPvSide(v as Side)}
+                />
+              </div>
+            </div>
+
+            <div className="relative w-full rounded-xl overflow-hidden"
+              style={{ height: "min(60vh, 460px)", background: "rgb(var(--bg-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
+              <QuestionOverlay
+                category={category ?? "Category"}
+                categoryDesc={categoryDesc}
+                value={value ?? 0}
+                blocks={pvSide === "q" ? cleanQ : cleanA}
+                questionRevealed
+                displayMode={display === "default" ? "stay" : display}
+                buzzed={pvSide === "q" && pvBuzzed}
+                mediaNonce={pvNonce}
+                soundOn
+                revealOrder={pvSide === "q" ? order : "together"}
+                revealStage={pvSide === "q" ? pvStage : 1}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {pvSide === "q" && order !== "together" && (
+                <Toggle
+                  options={[
+                    { value: "0", label: "Before reveal" },
+                    { value: "1", label: "After reveal" },
+                  ]}
+                  value={String(pvStage)}
+                  onChange={v => setPvStage(Number(v))}
+                />
+              )}
+              {pvSide === "q" && mode === "standard" && (
+                <label className="flex items-center gap-2 text-sm" style={labelStyle}>
+                  <input type="checkbox" checked={pvBuzzed} className="accent-current"
+                    onChange={e => setPvBuzzed(e.target.checked)} />
+                  Someone buzzed in
+                </label>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => setPvNonce(n => n + 1)}>↻ Replay media</Button>
+              <Button className="ml-auto" onClick={() => setPreview(false)}>Done</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </Modal>
   );
 }

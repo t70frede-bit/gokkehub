@@ -6,6 +6,8 @@ import MediaPlayer from "../MediaPlayer";
 
 interface QuestionOverlayProps {
   category: string;
+  /** Optional blurb shown under the category header while the question is open. */
+  categoryDesc?: string;
   value:    number;
   blocks:   JpBlock[];
   /** When false, the question content is hidden (pre-reveal step). */
@@ -24,7 +26,7 @@ interface QuestionOverlayProps {
 }
 
 export default function QuestionOverlay({
-  category, value, blocks, questionRevealed = true, displayMode, buzzed, mediaNonce, soundOn,
+  category, categoryDesc, value, blocks, questionRevealed = true, displayMode, buzzed, mediaNonce, soundOn,
   revealOrder = "together", revealStage, children,
 }: QuestionOverlayProps) {
   const hidden = displayMode === "disappear" && buzzed;
@@ -44,10 +46,19 @@ export default function QuestionOverlay({
     <div className="jp-overlay absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 p-6 sm:p-12"
       style={{ background: "rgba(var(--bg-rgb), 0.96)" }}
     >
-      <div className="text-sm sm:text-lg font-bold uppercase tracking-widest"
-        style={{ color: "rgb(var(--text-secondary-rgb))" }}
-      >
-        {category} — {value}
+      <div className="flex flex-col items-center gap-1">
+        <div className="text-sm sm:text-lg font-bold uppercase tracking-widest"
+          style={{ color: "rgb(var(--text-secondary-rgb))" }}
+        >
+          {category} — {value}
+        </div>
+        {categoryDesc && (
+          <p className="text-xs sm:text-base font-medium max-w-2xl text-center"
+            style={{ color: "rgba(var(--text-secondary-rgb), 0.7)" }}
+          >
+            {categoryDesc}
+          </p>
+        )}
       </div>
 
       {questionRevealed && (!hidden ? (

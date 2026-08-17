@@ -64,6 +64,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!state.buzzersOpen || q.buzzedBy !== null) {
       return json({ error: "Buzzers are closed" }, 409, req);
     }
+    // Reading delay (buzzer.openDelayMs): buzzers are open but not yet live.
+    // Enforced here, not just in the UI — a tampered client must not get in early.
+    const openAt = state.buzzersOpenAt ?? 0;
+    if (openAt && Date.now() < openAt) {
+      return json({ error: "Buzzers aren't live yet" }, 409, req);
+    }
     if (q.buzzedBy === player.team_id) {
       return json({ error: "You're already in" }, 409, req);
     }

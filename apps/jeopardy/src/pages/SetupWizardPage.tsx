@@ -1,15 +1,23 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button, Input, Panel, Toggle, useToast } from "@gokkehub/ui";
-import { useSession } from "../hooks/useSession";
+import { useSession, goToLogin } from "../hooks/useSession";
 import { storePlayerId } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import TileEditorModal from "../components/TileEditorModal";
 import type {
   JpBoardConfig, JpBuzzDisplayMode, JpCollaborator, JpGame, JpGameConfig,
-  JpPowerupType, JpTileConfig, LaunchGameResponse, CollabPermissions,
+  JpPowerupType, JpSpecialPlacement, JpSpecialTile, JpSpecialTiles,
+  JpTileConfig, LaunchGameResponse, CollabPermissions,
 } from "../lib/types";
-import { DEFAULT_JP_CONFIG, POWERUP_META } from "../lib/types";
+import { DEFAULT_JP_CONFIG, POWERUP_META, boardCount, getBoard, powerupSpecial } from "../lib/types";
+
+const SPECIAL_ICON: Record<JpSpecialTile, string> = {
+  buzzed:               "💥",
+  powerup_sniper:       POWERUP_META.sniper.icon,
+  powerup_buffer:       POWERUP_META.buffer.icon,
+  powerup_secondChance: POWERUP_META.secondChance.icon,
+};
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -53,10 +61,7 @@ export default function SetupWizardPage() {
 
   const acceptInvite = async () => {
     if (!gameId || !inviteToken) return;
-    if (!session) {
-      window.location.href = `https://account.gokkehub.com/login?redirect=${encodeURIComponent(window.location.href)}`;
-      return;
-    }
+    if (!session) { goToLogin(); return; }
     setCollabBusy(true);
     const res = await fetch(`/game/${gameId}/accept-invite`, {
       method: "POST",
@@ -66,10 +71,7 @@ export default function SetupWizardPage() {
     });
     setCollabBusy(false);
     const body = await res.json().catch(() => null) as { error?: string; gameId?: string } | null;
-    if (res.status === 401) {
-      window.location.href = `https://account.gokkehub.com/login?redirect=${encodeURIComponent(window.location.href)}`;
-      return;
-    }
+    if (res.status === 401) { goToLogin(); return; }
     if (!res.ok) { addToast(body?.error ?? "Failed to accept invite"); return; }
     setSearchParams({}, { replace: true });
     addToast("You've been added as a collaborator!");
@@ -158,7 +160,7 @@ export default function SetupWizardPage() {
       const pointValues = mode === "doubleUp"
         ? b0.pointValues.map(v => v * 2)
         : [...b0.pointValues];
-      boards[1] = { categories: [...b0.categories], rows: b0.rows, pointValues, tiles: {} };
+      boards[1] = { categories: [...b0.categories], categoryDescriptions: [...(b0.categoryDescriptions ?? [])], rows: b0.rows, pointValues, tiles: {} };
     }
     patch({ board2Mode: mode, boards });
   };
@@ -257,14 +259,23 @@ export default function SetupWizardPage() {
         <h3 className="text-sm font-bold uppercase tracking-widest mb-2" style={labelStyle}>Categories</h3>
         <div className="flex flex-col gap-2">
           {board.categories.map((cat, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <div className="flex-1">
+            <div key={i} className="flex gap-2 items-start">
+              <div className="flex-1 flex flex-col gap-1">
                 <Input value={cat} readOnly={!canEdit} onChange={e => {
                   if (!canEdit) return;
                   const categories = [...board.categories];
                   categories[i] = e.target.value;
                   patchBoard(idx, { categories });
                 }} />
+                <Input value={board.categoryDescriptions?.[i] ?? ""} readOnly={!canEdit}
+                  placeholder="Description (optional) — shown on the big screen"
+                  onChange={e => {
+                    if (!canEdit) return;
+                    const descriptions = [...(board.categoryDescriptions ?? [])];
+                    while (descriptions.length < board.categories.length) descriptions.push("");
+                    descriptions[i] = e.target.value;
+                    patchBoard(idx, { categoryDescriptions: descriptions });
+                  }} />
               </div>
               <Button variant="danger" size="sm" disabled={!canEdit || board.categories.length <= 1}
                 onClick={() => {
@@ -278,14 +289,21 @@ export default function SetupWizardPage() {
                     if (col === i) continue;
                     tiles[`${col > i ? col - 1 : col}-${row}`] = tile;
                   }
-                  patchBoard(idx, { categories: board.categories.filter((_, c) => c !== i), tiles });
+                  patchBoard(idx, {
+                    categories: board.categories.filter((_, c) => c !== i),
+                    categoryDescriptions: (board.categoryDescriptions ?? []).filter((_, c) => c !== i),
+                    tiles,
+                  });
                 }}>
                 ✕
               </Button>
             </div>
           ))}
           <Button variant="ghost" size="sm" disabled={!canEdit || board.categories.length >= 8}
-            onClick={() => patchBoard(idx, { categories: [...board.categories, `Category ${board.categories.length + 1}`] })}>
+            onClick={() => patchBoard(idx, {
+              categories: [...board.categories, `Category ${board.categories.length + 1}`],
+              categoryDescriptions: [...(board.categoryDescriptions ?? []), ""],
+            })}>
             + Add category
           </Button>
         </div>
@@ -365,6 +383,91 @@ export default function SetupWizardPage() {
           )}
         </div>
       </>
+    );
+  };
+
+  // ── Manual special-tile placement ────────────────────────────────────
+  // Every filled tile is a button that cycles through the specials that are
+  // currently enabled: none → 💥 → each power-up → none. Power-ups are one per
+  // board, so assigning one moves it off whatever tile held it before.
+  const placement   = config.specialPlacement ?? "random";
+  const manual      = config.manualSpecials ?? {};
+  const anySpecialOn = dangerous.buzzed.enabled
+    || (Object.keys(POWERUP_META) as JpPowerupType[]).some(t => powerups[t].enabled);
+
+  const specialOptions = (tile: JpTileConfig): JpSpecialTile[] => {
+    const opts: JpSpecialTile[] = [];
+    // Buzzed is a buzz-in mechanic — submission tiles can't be buzzed.
+    if (dangerous.buzzed.enabled && (tile.answerMode ?? "standard") === "standard") opts.push("buzzed");
+    for (const type of Object.keys(POWERUP_META) as JpPowerupType[]) {
+      if (powerups[type].enabled) opts.push(powerupSpecial(type));
+    }
+    return opts;
+  };
+
+  const cycleSpecial = (boardIdx: number, key: string, tile: JpTileConfig) => {
+    if (!canEdit) return;
+    const boardKey = `board${boardIdx}`;
+    const opts     = specialOptions(tile);
+    const current  = manual[boardKey]?.[key] ?? null;
+    const at       = current ? opts.indexOf(current) : -1;
+    const next     = at + 1 >= opts.length ? null : opts[at + 1];
+
+    const boardMap: Record<string, JpSpecialTile> = { ...(manual[boardKey] ?? {}) };
+    delete boardMap[key];
+    if (next) {
+      if (next !== "buzzed") {
+        for (const [k, v] of Object.entries(boardMap)) if (v === next) delete boardMap[k];
+      }
+      boardMap[key] = next;
+    }
+    patch({ manualSpecials: { ...manual, [boardKey]: boardMap } as JpSpecialTiles });
+  };
+
+  const manualBoardGrid = (boardIdx: number): ReactNode => {
+    const board = getBoard(config, boardIdx);
+    if (!board) return null;
+    const boardKey = `board${boardIdx}`;
+    return (
+      <div key={boardKey}>
+        {boardCount(config) > 1 && (
+          <p className="text-xs font-bold uppercase tracking-widest mb-1.5" style={labelStyle}>
+            Board {boardIdx + 1}
+          </p>
+        )}
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${board.categories.length}, minmax(0, 1fr))` }}>
+          {board.categories.map((cat, col) => (
+            <div key={`mh-${col}`} className="text-[10px] font-bold text-center uppercase truncate py-0.5" style={labelStyle}>
+              {cat}
+            </div>
+          ))}
+          {Array.from({ length: board.rows }, (_, row) =>
+            board.categories.map((_, col) => {
+              const key     = `${col}-${row}`;
+              const tile    = board.tiles[key];
+              const special = manual[boardKey]?.[key] ?? null;
+              const usable  = !!tile && specialOptions(tile).length > 0;
+              return (
+                <button key={key} type="button" disabled={!usable}
+                  title={tile ? undefined : "Empty tile — write a question first"}
+                  onClick={() => tile && cycleSpecial(boardIdx, key, tile)}
+                  className="rounded-md py-2 text-sm font-bold transition-colors"
+                  style={{
+                    background: special ? "rgba(var(--color-primary-rgb), 0.18)" : "rgb(var(--surface-input-rgb))",
+                    border: special
+                      ? "1px solid rgba(var(--color-primary-rgb), 0.6)"
+                      : "1px dashed rgb(var(--border-rgb))",
+                    color:  "rgba(var(--text-secondary-rgb), 0.7)",
+                    cursor: usable ? "pointer" : "not-allowed",
+                    opacity: tile ? 1 : 0.45,
+                  }}>
+                  {special ? SPECIAL_ICON[special] : board.pointValues[row]}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
     );
   };
 
@@ -498,6 +601,24 @@ export default function SetupWizardPage() {
               onChange={v => patch({ buzzer: { ...config.buzzer, defaultBuzzDisplayMode: v as JpBuzzDisplayMode } })}
             />
           </div>
+          <div>
+            <p className="text-sm font-medium mb-2" style={labelStyle}>Reading time before buzzers go live</p>
+            <Toggle
+              options={[
+                { value: "0",    label: "Instant" },
+                { value: "2000", label: "2s" },
+                { value: "3000", label: "3s" },
+                { value: "5000", label: "5s" },
+              ]}
+              value={String(config.buzzer.openDelayMs ?? 0)}
+              onChange={v => canEdit && patch({ buzzer: { ...config.buzzer, openDelayMs: Number(v) } })}
+            />
+            <p className="text-xs mt-1" style={labelStyle}>
+              {(config.buzzer.openDelayMs ?? 0) === 0
+                ? "Buzzers are live the moment you open them — whoever reads fastest wins the race."
+                : "Everyone gets the same head start to read the question. The buzzer counts down, then goes live for everyone at once."}
+            </p>
+          </div>
           <div className="flex flex-col gap-3">
             <p className="text-sm font-medium" style={labelStyle}>After a wrong answer</p>
             <label className="flex items-start gap-3 cursor-pointer">
@@ -538,10 +659,26 @@ export default function SetupWizardPage() {
       {/* ── Power-ups & dangerous tiles ────────────────────────────────── */}
       <Panel>
         <h2 className="text-lg font-bold mb-1">Special tiles</h2>
-        <p className="text-sm mb-4" style={labelStyle}>
-          Hidden on random filled tiles at launch — completely invisible until someone answers them.
+        <p className="text-sm mb-3" style={labelStyle}>
+          Completely invisible on the board — players only find out when someone picks one.
           Answer a power-up tile correctly and you choose: take the points, or claim the power-up.
         </p>
+        <div className="mb-4">
+          <p className="text-sm font-medium mb-2" style={labelStyle}>Placement</p>
+          <Toggle
+            options={[
+              { value: "random", label: "🎲 Random at launch" },
+              { value: "manual", label: "📍 Pick tiles myself" },
+            ]}
+            value={placement}
+            onChange={v => canEdit && patch({ specialPlacement: v as JpSpecialPlacement })}
+          />
+          <p className="text-xs mt-1" style={labelStyle}>
+            {placement === "random"
+              ? "Rolled fresh every launch (and on rematch) within each row range below."
+              : "Exactly the tiles you pin below — the same every launch. Turning a special off here removes it without losing your pins."}
+          </p>
+        </div>
         <div className="flex flex-col gap-3">
           {(Object.keys(POWERUP_META) as JpPowerupType[]).map(type => {
             const meta = POWERUP_META[type];
@@ -573,7 +710,7 @@ export default function SetupWizardPage() {
                         pts less loss
                       </span>
                     )}
-                    {rowRangeEditor(cfg.rowRange, config.boards[0].rows, r =>
+                    {placement === "random" && rowRangeEditor(cfg.rowRange, config.boards[0].rows, r =>
                       patch({ powerups: { ...powerups, [type]: { ...cfg, rowRange: r } } }))}
                   </>
                 )}
@@ -591,7 +728,7 @@ export default function SetupWizardPage() {
             <span className="text-xs flex-1 min-w-40" style={labelStyle}>
               Whoever picks this tile is instantly buzzed in and must answer
             </span>
-            {dangerous.buzzed.enabled && (
+            {dangerous.buzzed.enabled && placement === "random" && (
               <>
                 <span className="flex items-center gap-1 text-sm" style={labelStyle}>
                   <input type="number" min={1} max={5} value={dangerous.buzzed.count}
@@ -604,6 +741,30 @@ export default function SetupWizardPage() {
               </>
             )}
           </div>
+
+          {/* Manual placement grid — one per board */}
+          {placement === "manual" && (
+            anySpecialOn ? (
+              <div className="flex flex-col gap-3 rounded-md px-3 py-3"
+                style={{ border: "1px solid rgb(var(--border-rgb))" }}>
+                <p className="text-sm" style={labelStyle}>
+                  Tap a tile to cycle: none →{" "}
+                  {[
+                    ...(dangerous.buzzed.enabled ? ["💥 Buzzed"] : []),
+                    ...(Object.keys(POWERUP_META) as JpPowerupType[])
+                      .filter(t => powerups[t].enabled)
+                      .map(t => `${POWERUP_META[t].icon} ${POWERUP_META[t].name}`),
+                  ].join(" → ")}{" "}
+                  → none. Each power-up sits on one tile per board; 💥 Buzzed can be on as many as you like.
+                </p>
+                {Array.from({ length: boardCount(config) }, (_, i) => manualBoardGrid(i))}
+              </div>
+            ) : (
+              <p className="text-sm rounded-md px-3 py-2" style={{ ...labelStyle, border: "1px dashed rgb(var(--border-rgb))" }}>
+                Tick a power-up or 💥 Buzzed above to start pinning tiles.
+              </p>
+            )
+          )}
 
           {board2Mode !== "off" && (
             <div>
@@ -750,6 +911,9 @@ export default function SetupWizardPage() {
           gameId={game.id}
           tileKey={`b${editTile.boardIdx}-${editTile.key}`}
           title={`Board ${editTile.boardIdx + 1}: ${editingBoard.categories[Number(editTile.key.split("-")[0])]} — ${editingBoard.pointValues[Number(editTile.key.split("-")[1])]}`}
+          category={editingBoard.categories[Number(editTile.key.split("-")[0])]}
+          categoryDesc={editingBoard.categoryDescriptions?.[Number(editTile.key.split("-")[0])]}
+          value={editingBoard.pointValues[Number(editTile.key.split("-")[1])]}
           tile={editingBoard.tiles[editTile.key]}
           onSave={saveTile}
           onClose={() => setEditTile(null)}

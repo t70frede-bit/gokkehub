@@ -8,11 +8,64 @@ import PodiumStrip from "../components/Podium/PodiumStrip";
 import AnswerTimer from "../components/AnswerTimer";
 import PowerUpPrompt from "../components/PowerUpPrompt";
 import MediaPlayer from "../components/MediaPlayer";
-import { POWERUP_META, getBoard } from "../lib/types";
-import type { JpPowerupType, JpRankingConfig } from "../lib/types";
+import { POWERUP_META, getBoard, getTeamColor } from "../lib/types";
+import type { JpClosestNumberConfig, JpMultipleChoiceConfig, JpPowerupType, JpRankingConfig, JpResolutionSummary } from "../lib/types";
 
 const secondary = { color: "rgb(var(--text-secondary-rgb))" } as const;
 const primary   = { color: "rgb(var(--color-primary-rgb))" } as const;
+
+// Animate a score total counting from `from` up/down to `to`.
+function ScoreCountUp({ from, to }: { from: number; to: number }) {
+  const [val, setVal] = useState(from);
+  useEffect(() => {
+    let raf = 0, startTs = 0;
+    // Choreography: card + starting total fade in, hold ~1s, the delta fades in
+    // above the box, then ~0.5s later (1.5s total) it drops down and the total
+    // counts up/down to its new value. Deliberate rather than hasty.
+    const DUR = 800, DELAY = 1500;
+    const tick = (ts: number) => {
+      if (!startTs) startTs = ts;
+      const t = Math.min(1, (ts - startTs) / DUR);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(Math.round(from + (to - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    const timer = window.setTimeout(() => { raf = requestAnimationFrame(tick); }, DELAY);
+    return () => { window.clearTimeout(timer); cancelAnimationFrame(raf); };
+  }, [from, to]);
+  return <>{val}</>;
+}
+
+// Reading delay: buzzers are open but not live until `openAt`. Counts down on
+// the big screen so the room can see the race start fairly, then flips to BUZZ
+// NOW. Self-ticking so the rest of the page doesn't re-render every 100ms.
+function BuzzArming({ openAt }: { openAt: number | null }) {
+  const [left, setLeft] = useState(() => (openAt ? Math.max(0, openAt - Date.now()) : 0));
+  useEffect(() => {
+    if (!openAt) { setLeft(0); return; }
+    setLeft(Math.max(0, openAt - Date.now()));
+    const tick = setInterval(() => {
+      const ms = Math.max(0, openAt - Date.now());
+      setLeft(ms);
+      if (ms === 0) clearInterval(tick);
+    }, 100);
+    return () => clearInterval(tick);
+  }, [openAt]);
+
+  if (left <= 0) {
+    return <p className="font-bold text-xl sm:text-3xl animate-pulse" style={primary}>BUZZ NOW!</p>;
+  }
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <p className="text-sm sm:text-lg uppercase tracking-widest font-bold" style={secondary}>
+        Buzzers open in
+      </p>
+      <p className="font-black tabular-nums leading-none" style={{ fontSize: "clamp(3rem, 9vw, 6rem)", ...primary }}>
+        {Math.ceil(left / 1000)}
+      </p>
+    </div>
+  );
+}
 
 // Passive TV display: no interaction, driven entirely by realtime state.
 export default function BigScreenPage() {
@@ -36,45 +89,97 @@ export default function BigScreenPage() {
   const prevRevealedCats = useRef<number[]>([]);
   const catTimers        = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [catAnim, setCatAnim] = useState<{
-    index: number; name: string; total: number; phase: "show" | "fly";
+    index: number; name: string; desc: string; total: number; phase: "show" | "hide";
   } | null>(null);
+
+  // ── Score award announcement ────────────────────────────────────────
+  // A bottom-of-screen pop-up (no blur) fired on any score change: the delta
+  // is "pulled down" into the team's running total, which counts up/down to
+  // its new value. Keeps the question/answer front-and-centre.
+  const prevTeamScores   = useRef<Record<number, number>>({});
+  const announceTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
+  type ScoreEntry = { name: string; delta: number; color: string; from: number; to: number };
+  const [scoreAnnounce, setScoreAnnounce] = useState<
+    { entries: ScoreEntry[]; key: number; phase: "in" | "out" } | null
+  >(null);
+
+  useEffect(() => {
+    const changed: ScoreEntry[] = [];
+    for (const team of teams) {
+      const prev = prevTeamScores.current[team.id];
+      if (prev !== undefined && prev !== team.score) {
+        const idx = teams.findIndex(t => t.id === team.id);
+        changed.push({ name: team.name, delta: team.score - prev, color: getTeamColor(team, idx), from: prev, to: team.score });
+      }
+      prevTeamScores.current[team.id] = team.score;
+    }
+    if (changed.length === 0) return;
+    announceTimers.current.forEach(clearTimeout);
+    const holdMs = 3900;   // fade-in + ~1s pause + count-up + time to read the new total
+    const fadeMs = 420;
+    setScoreAnnounce({ entries: changed, key: Date.now(), phase: "in" });
+    announceTimers.current = [
+      setTimeout(() => setScoreAnnounce(a => (a ? { ...a, phase: "out" } : null)), holdMs),
+      setTimeout(() => setScoreAnnounce(null), holdMs + fadeMs),
+    ];
+  }, [teams]);
+
+  // ── Powerup claim animation ─────────────────────────────────────────
+  const prevTeamPowerups   = useRef<Record<number, JpPowerupType | null>>({});
+  const powerupClaimTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  type PowerupClaim = { teamName: string; kind: JpPowerupType; key: number };
+  const [powerupClaim, setPowerupClaim] = useState<PowerupClaim | null>(null);
+
+  useEffect(() => {
+    for (const team of teams) {
+      const prev = prevTeamPowerups.current[team.id];
+      if (prev !== undefined && prev === null && team.powerup !== null) {
+        if (powerupClaimTimer.current) clearTimeout(powerupClaimTimer.current);
+        setPowerupClaim({ teamName: team.name, kind: team.powerup, key: Date.now() });
+        powerupClaimTimer.current = setTimeout(() => setPowerupClaim(null), 3200);
+      }
+      prevTeamPowerups.current[team.id] = team.powerup ?? null;
+    }
+  }, [teams]);
 
   // ── Special tile reveal overlay ─────────────────────────────────────
   // Full-screen dramatic splash when a buzzed or power-up tile is first hit.
-  const prevSpecial    = useRef<string | null>(null);
-  const prevPromptType = useRef<string | null>(null);
-  const specialTimers  = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const prevSpecial   = useRef<string | null>(null);
+  const prevAcked     = useRef(false);
+  const specialTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   type SpecialReveal = { kind: "buzzed" | JpPowerupType; phase: "in" | "out"; key: number } | null;
-  const [specialReveal,   setSpecialReveal]   = useState<SpecialReveal>(null);
-  const [powerupRevealing, setPowerupRevealing] = useState(false);
+  const [specialReveal, setSpecialReveal] = useState<SpecialReveal>(null);
 
-  const special    = room?.board_state.activeQuestion?.special ?? null;
-  const promptType = room?.board_state.powerupPrompt?.powerupType ?? null;
+  const special            = room?.board_state.activeQuestion?.special ?? null;
+  const specialRevealAcked = room?.board_state.activeQuestion?.specialRevealAcked ?? false;
 
-  const triggerReveal = (kind: "buzzed" | JpPowerupType, isPowerup: boolean) => {
-    specialTimers.current.forEach(clearTimeout);
-    if (isPowerup) setPowerupRevealing(true);
-    setSpecialReveal({ kind, phase: "in", key: Date.now() });
-    specialTimers.current = [
-      setTimeout(() => setSpecialReveal(r => r ? { ...r, phase: "out" } : null), 2400),
-      setTimeout(() => { setSpecialReveal(null); if (isPowerup) setPowerupRevealing(false); }, 3000),
-    ];
-  };
-
+  // New special tile selected → play in animation, hold until host acks.
   useEffect(() => {
-    if (special !== prevSpecial.current) {
-      if (special === "buzzed") triggerReveal("buzzed", false);
-      prevSpecial.current = special;
+    if (special === prevSpecial.current) return;
+    const prev = prevSpecial.current;
+    prevSpecial.current = special;
+    specialTimers.current.forEach(clearTimeout);
+    specialTimers.current = [];
+    if (special && !specialRevealAcked) {
+      const kind = special === "buzzed" ? "buzzed" : special.slice("powerup_".length) as JpPowerupType;
+      setSpecialReveal({ kind, phase: "in", key: Date.now() });
+    } else if (!special && prev) {
+      // Question dismissed before ack — clear immediately.
+      setSpecialReveal(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [special]);
 
+  // Host presses Continue (ack_special) → play out animation.
   useEffect(() => {
-    if (promptType !== prevPromptType.current) {
-      if (promptType) triggerReveal(promptType as JpPowerupType, true);
-      prevPromptType.current = promptType;
-    }
-  }, [promptType]);
+    if (!specialRevealAcked) { prevAcked.current = false; return; }
+    if (prevAcked.current) return;
+    prevAcked.current = true;
+    specialTimers.current.forEach(clearTimeout);
+    setSpecialReveal(r => r ? { ...r, phase: "out" } : null);
+    specialTimers.current = [setTimeout(() => setSpecialReveal(null), 620)];
+  }, [specialRevealAcked]);
 
   const buzzedPlayerId = room?.board_state.activeQuestion?.buzzedPlayerId ?? null;
   useEffect(() => {
@@ -119,14 +224,43 @@ export default function BigScreenPage() {
     catTimers.current.forEach(clearTimeout);
     catTimers.current = [];
 
-    setCatAnim({ index: newIdx, name: cats[newIdx] ?? "", total: cats.length, phase: "show" });
+    setCatAnim({ index: newIdx, name: cats[newIdx] ?? "", desc: board?.categoryDescriptions?.[newIdx] ?? "", total: cats.length, phase: "show" });
 
-    const t1 = setTimeout(() => setCatAnim(a => a ? { ...a, phase: "fly" } : null), 1900);
-    const t2 = setTimeout(() => setCatAnim(null), 2750);
+    const t1 = setTimeout(() => setCatAnim(a => a ? { ...a, phase: "hide" } : null), 1900);
+    const t2 = setTimeout(() => setCatAnim(null), 2360);
     catTimers.current = [t1, t2];
 
     return () => { catTimers.current.forEach(clearTimeout); catTimers.current = []; };
   }, [revealedKey]);
+
+  // ── Answer-reveal overlay fade in/out ──────────────────────────────
+  // Mirror the server's lastResolution locally so the blurry board overlay
+  // can fade OUT after the host dismisses it (once lastResolution clears),
+  // rather than snapping away.
+  const bs           = room?.board_state;
+  const answerShown  = !!(bs && !bs.activeQuestion && !bs.powerupPrompt && bs.lastResolution);
+  const answerResKey = answerShown ? bs!.lastResolution!.tileKey : null;
+  const [answerReveal, setAnswerReveal] =
+    useState<{ res: JpResolutionSummary; phase: "in" | "out"; key: number } | null>(null);
+  const answerRevealTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    if (answerShown && bs?.lastResolution) {
+      answerRevealTimers.current.forEach(clearTimeout);
+      answerRevealTimers.current = [];
+      const res = bs.lastResolution;
+      setAnswerReveal(prev =>
+        prev && prev.phase === "in" ? { ...prev, res } : { res, phase: "in", key: Date.now() });
+    } else {
+      setAnswerReveal(prev => {
+        if (!prev || prev.phase === "out") return prev;
+        answerRevealTimers.current.forEach(clearTimeout);
+        answerRevealTimers.current = [setTimeout(() => setAnswerReveal(null), 440)];
+        return { ...prev, phase: "out" };
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerShown, answerResKey]);
 
   if (loading) return <div className="flex-1 flex items-center justify-center opacity-60">Loading…</div>;
   if (error || !room || !game) {
@@ -367,38 +501,58 @@ export default function BigScreenPage() {
       })()}
 
       {/* Category reveal overlay */}
-      {catAnim && (() => {
-        const offsetPct = ((catAnim.index + 0.5) / catAnim.total - 0.5) * 78;
-        const flying    = catAnim.phase === "fly";
-        return (
-          <div className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden pointer-events-none"
-            style={{
-              backdropFilter: flying ? "blur(0)"   : "blur(14px)",
-              background:     flying ? "transparent" : "rgba(var(--bg-rgb), 0.45)",
-              transition: flying ? "backdrop-filter 0.75s ease, background 0.75s ease" : "none",
+      {catAnim && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden pointer-events-none"
+          style={{
+            backdropFilter: "blur(14px)",
+            background:     "rgba(var(--bg-rgb), 0.45)",
+            opacity:        catAnim.phase === "hide" ? 0 : 1,
+            transition:     "opacity 0.4s ease-in",
+          }}>
+          <div className={catAnim.phase === "show" ? "jp-cat-appear" : "jp-cat-disappear"}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem", maxWidth: "80vw" }}>
+            <p style={{
+              color:         "rgb(var(--color-primary-rgb))",
+              fontWeight:    900,
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+              textAlign:     "center",
+              textShadow:    "0 2px 24px rgba(0,0,0,0.55)",
+              fontSize:      "clamp(2.5rem, 7vw, 5.5rem)",
             }}>
-            <p
-              className={catAnim.phase === "show" ? "jp-cat-appear" : undefined}
-              style={{
-                color:         "rgb(var(--color-primary-rgb))",
-                fontWeight:    900,
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-                textAlign:     "center",
-                textShadow:    "0 2px 24px rgba(0,0,0,0.55)",
-                fontSize:      flying ? "1.1rem"                    : "clamp(2.5rem, 7vw, 5.5rem)",
-                maxWidth:      flying ? `${100 / catAnim.total}vw`  : "80vw",
-                transform:     flying ? `translate(${offsetPct}vw, -38vh) scale(1)` : "none",
-                opacity:       flying ? 0                           : 1,
-                transition:    flying ? "all 0.85s cubic-bezier(0.4, 0, 0.2, 1)" : "none",
-              }}>
               {catAnim.name}
             </p>
+            {catAnim.desc && (
+              <p style={{
+                color:      "rgb(var(--text-secondary-rgb))",
+                fontWeight: 600,
+                textAlign:  "center",
+                fontSize:   "clamp(1rem, 2.6vw, 1.7rem)",
+                lineHeight: 1.4,
+              }}>
+                {catAnim.desc}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {soundChip}
+
+      {/* Whose turn it is to pick — shown at the top whenever a board owner is set */}
+      {(state.activeBoardTeamId ?? null) !== null && (() => {
+        const idx   = teams.findIndex(t => t.id === state.activeBoardTeamId);
+        const owner = teams[idx];
+        if (!owner) return null;
+        const color = getTeamColor(owner, idx);
+        return (
+          <div className="text-center rounded-lg py-1.5 px-4 font-bold text-sm"
+            style={{ background: `${color}1a`, border: `1px solid ${color}55`, color }}>
+            🎯 {owner.name}'s turn to pick
           </div>
         );
       })()}
 
-      {soundChip}
       {game.config.board2Mode !== "off" && (
         <p className="text-center text-sm font-bold uppercase tracking-widest" style={secondary}>
           Board {state.currentBoard + 1}
@@ -409,18 +563,89 @@ export default function BigScreenPage() {
       </div>
       <PodiumStrip teams={teams} players={players} buzzedTeamId={q?.buzzedBy ?? null} />
 
-      {/* Last submission-round results, until the next tile is picked */}
-      {!q && !prompt && state.lastResolution && (
-        <div className="absolute left-1/2 top-6 -translate-x-1/2 z-10 rounded-xl px-6 py-4 max-w-xl"
-          style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
-          {state.lastResolution.lines.map((line, i) => (
-            <p key={i} className="font-bold text-lg">{line}</p>
-          ))}
-        </div>
-      )}
+      {/* Answer reveal — shown after every question resolves, until the next tile is picked.
+          Driven by the local mirror so it can fade out on dismiss. */}
+      {answerReveal && (() => {
+        const res       = answerReveal.res;
+        const revTile   = board?.tiles[res.tileKey];
 
-      {/* Power-up choice pending — suppressed during reveal animation */}
-      {prompt && !powerupRevealing && (
+        const hasAnswerContent = !!(
+          revTile && (
+            revTile.answerBlocks.length > 0 ||
+            res.mode === "multipleChoice" ||
+            res.mode === "closestNumber" ||
+            res.mode === "ranking"
+          )
+        );
+        // Who-scored feedback now lives in the bottom score pop-up. With no
+        // answer to display, there's nothing for this overlay to add — skip it
+        // so the board stays clear.
+        if (!hasAnswerContent || !revTile) return null;
+
+        return (
+          <div className={`absolute inset-0 z-10 flex items-center justify-center p-4 sm:p-10 ${
+            answerReveal.phase === "out" ? "jp-blur-out" : "jp-blur-in"}`}
+            style={{ backdropFilter: "blur(6px)", background: "rgba(var(--bg-rgb), 0.6)" }}>
+            <div className="w-full max-w-3xl rounded-2xl overflow-hidden"
+              style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))", boxShadow: "0 24px 80px rgba(0,0,0,0.75)" }}>
+
+              {/* Answer section */}
+              {(
+                <div className="px-8 py-6">
+                  <p className="text-xs uppercase tracking-widest mb-4 font-bold" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                    Answer
+                  </p>
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    {/* Explicit answer blocks (text / image / audio / video) */}
+                    {revTile.answerBlocks.map(b =>
+                      b.type === "text"
+                        ? <p key={b.id} className="font-black" style={{ fontSize: "clamp(1.5rem, 5vw, 3rem)", color: "rgb(var(--color-primary-rgb))" }}>{b.text}</p>
+                        : b.type === "image"
+                          ? <img key={b.id} src={b.url} alt="" className="max-h-[55vh] max-w-[80vw] rounded-lg object-contain" />
+                          : <MediaPlayer key={b.id} block={b} buzzed={false} nonce={0} soundOn={soundOn} controls />)}
+                    {/* MC: show the correct option */}
+                    {res.mode === "multipleChoice" && revTile.answerModeConfig && (
+                      <p className="font-black" style={{ fontSize: "clamp(1.2rem, 3.5vw, 2.5rem)", color: "rgb(var(--color-primary-rgb))" }}>
+                        ✓ {(revTile.answerModeConfig as JpMultipleChoiceConfig).options[
+                          (revTile.answerModeConfig as JpMultipleChoiceConfig).correctIndex
+                        ]}
+                      </p>
+                    )}
+                    {/* Closest number: show correct value */}
+                    {res.mode === "closestNumber" && revTile.answerModeConfig && (
+                      <p className="font-black" style={{ fontSize: "clamp(1.5rem, 5vw, 3rem)", color: "rgb(var(--color-primary-rgb))" }}>
+                        {(revTile.answerModeConfig as JpClosestNumberConfig).correct}{" "}
+                        {(revTile.answerModeConfig as JpClosestNumberConfig).unit}
+                      </p>
+                    )}
+                    {/* Ranking: show correct order */}
+                    {res.mode === "ranking" && revTile.answerModeConfig && (
+                      <ol className="list-decimal list-inside text-left" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                        {(revTile.answerModeConfig as JpRankingConfig).items.map((item, i) => (
+                          <li key={i} className="font-bold" style={{ fontSize: "clamp(0.95rem, 2.5vw, 1.6rem)" }}>{item}</li>
+                        ))}
+                      </ol>
+                    )}
+                    {/* Submission-mode per-team results (each team's guess + outcome). */}
+                    {res.mode !== "standard" && res.lines.length > 0 && (
+                      <div className="mt-4 pt-4 w-full max-w-lg flex flex-col gap-1"
+                        style={{ borderTop: "1px solid rgb(var(--border-rgb))" }}>
+                        {res.lines.map((line, i) => (
+                          <p key={i} className="font-semibold text-center" style={{ fontSize: "clamp(0.85rem, 2.2vw, 1.25rem)", color: "rgb(var(--text-secondary-rgb))" }}>{line}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Power-up choice pending */}
+      {prompt && (
         <div className="absolute inset-0 z-20 flex items-center justify-center p-10"
           style={{ background: "rgba(var(--bg-rgb), 0.9)" }}>
           <div className="w-full max-w-lg">
@@ -432,11 +657,85 @@ export default function BigScreenPage() {
         </div>
       )}
 
+      {/* Score pop-up — bottom of screen, no blur. The delta drops into the
+          team's running total, which counts up/down to its new value. */}
+      {scoreAnnounce && (
+        <div className={`absolute inset-x-0 bottom-8 z-30 flex justify-center flex-wrap gap-5 px-4 pointer-events-none ${
+          scoreAnnounce.phase === "out" ? "jp-blur-out" : "jp-blur-in"}`}>
+          {scoreAnnounce.entries.map((e, i) => {
+            const pos    = e.delta >= 0;
+            const dColor = pos ? e.color : "rgb(var(--color-danger-rgb))";
+            return (
+              <div key={i} className="relative flex flex-col items-center rounded-2xl px-8 pt-8 pb-4"
+                style={{
+                  background: "rgb(var(--surface-raised-rgb))",
+                  border:     `1px solid ${e.color}66`,
+                  boxShadow:  "0 12px 48px rgba(0,0,0,0.6)",
+                  minWidth:   "clamp(9rem, 18vw, 13rem)",
+                }}>
+                {/* The delta appears above the box, then is "pulled down" into the total. */}
+                <span key={scoreAnnounce.key} className="jp-delta-drop absolute left-0 right-0 text-center font-black tabular-nums"
+                  style={{ bottom: "100%", fontSize: "clamp(1.4rem, 3.4vw, 2.3rem)", color: dColor, textShadow: `0 0 24px ${dColor}99` }}>
+                  {pos ? "+" : ""}{e.delta}
+                </span>
+                <span className="font-bold uppercase tracking-wide"
+                  style={{ fontSize: "clamp(0.8rem, 1.6vw, 1.05rem)", color: e.color }}>
+                  {e.name}
+                </span>
+                <span className="font-black tabular-nums leading-none mt-1"
+                  style={{ fontSize: "clamp(2.4rem, 6vw, 4rem)", color: "rgb(var(--text-primary-rgb))" }}>
+                  <ScoreCountUp from={e.from} to={e.to} />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Powerup claim celebration */}
+      {powerupClaim && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          style={{ zIndex: 32 }}>
+          <div
+            key={powerupClaim.key}
+            className="jp-powerup-claim flex flex-col items-center gap-4 rounded-2xl px-12 py-8 text-center"
+            style={{
+              background:     "rgba(var(--bg-rgb), 0.93)",
+              border:         "1px solid rgba(var(--color-primary-rgb), 0.5)",
+              backdropFilter: "blur(12px)",
+              boxShadow:      "0 12px 48px rgba(0,0,0,0.55), 0 0 60px rgba(var(--color-primary-rgb), 0.2)",
+            }}
+          >
+            <div style={{ fontSize: "clamp(4rem, 12vw, 7rem)", lineHeight: 1 }}>
+              {POWERUP_META[powerupClaim.kind].icon}
+            </div>
+            <div>
+              <p className="font-black" style={{
+                fontSize: "clamp(1.8rem, 5vw, 3.5rem)",
+                color:    "rgb(var(--color-primary-rgb))",
+              }}>
+                {powerupClaim.teamName}
+              </p>
+              <p style={{
+                fontSize:  "clamp(1rem, 2.8vw, 2rem)",
+                color:     "rgb(var(--text-secondary-rgb))",
+                marginTop: "0.25rem",
+              }}>
+                claimed {POWERUP_META[powerupClaim.kind].name}!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {q && tile && (
         <QuestionOverlay
           category={state.revealedCategories.includes(Number(q.tileKey.split("-")[0]))
             ? board!.categories[Number(q.tileKey.split("-")[0])]
             : "???"}
+          categoryDesc={state.revealedCategories.includes(Number(q.tileKey.split("-")[0]))
+            ? board!.categoryDescriptions?.[Number(q.tileKey.split("-")[0])]
+            : undefined}
           value={board!.pointValues[Number(q.tileKey.split("-")[1])] ?? 0}
           blocks={tile.questionBlocks}
           questionRevealed={questionRevealed}
@@ -449,11 +748,11 @@ export default function BigScreenPage() {
         >
           <div className="min-h-20 flex flex-col items-center justify-center gap-2 text-center">
             {!questionRevealed ? (
-              // Pre-reveal: show context while host gets ready
-              q.special === "buzzed" ? (
-                <p className="font-black text-2xl sm:text-4xl animate-pulse"
-                  style={{ color: "rgb(var(--color-danger-rgb))" }}>
-                  💥 Special tile! Host is revealing…
+              // Pre-reveal: power-up tile waiting for host to press Continue.
+              // Buzzed tiles always have questionRevealed=true so never reach here.
+              q.special && q.special !== "buzzed" ? (
+                <p className="font-black text-2xl sm:text-4xl animate-pulse" style={{ color: "rgb(var(--color-primary-rgb))" }}>
+                  {POWERUP_META[(q.special as string).slice("powerup_".length) as JpPowerupType].icon} Special tile! Get ready…
                 </p>
               ) : (
                 <p className="text-lg sm:text-2xl animate-pulse" style={secondary}>
@@ -500,9 +799,7 @@ export default function BigScreenPage() {
                     <AnswerTimer startMs={q.timerStart} />
                   </>
                 ) : state.buzzersOpen ? (
-                  <p className="font-bold text-xl sm:text-3xl animate-pulse" style={primary}>
-                    BUZZ NOW!
-                  </p>
+                  <BuzzArming openAt={state.buzzersOpenAt ?? null} />
                 ) : (
                   <p className="text-lg sm:text-2xl" style={secondary}>Get ready…</p>
                 )}
