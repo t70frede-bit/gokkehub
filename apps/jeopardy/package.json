@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev":        "vite",
+    "predev:functions": "node ../../scripts/dev-doctor.mjs jeopardy",
     "dev:functions": "wrangler pages dev public --port 8788 --kv SESSIONS",
     "build":      "tsc -b && npm run type-check:functions && vite build",
     "preview":    "vite preview",

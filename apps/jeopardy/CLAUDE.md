@@ -20,7 +20,10 @@ to localhost — you are permanently signed out. Two terminals:
 
 1. `npm run dev:functions --workspace=apps/jeopardy` — wrangler on :8788 serving
    the real Pages Functions. Needs `apps/jeopardy/.dev.vars` (see
-   `.dev.vars.example`): the service-role key plus `DEV_USER_ID`.
+   `.dev.vars.example`): the service-role key plus `DEV_USER_ID`. A `pre` script
+   runs `scripts/dev-doctor.mjs jeopardy` first and refuses to start on a broken
+   config — read its output before debugging anything else. See the
+   `dev-jeopardy` skill.
 2. `npm run dev --workspace=apps/jeopardy` — Vite on :5173 with HMR; its proxy
    forwards `/game/*` and `/room/*` to :8788.
 
