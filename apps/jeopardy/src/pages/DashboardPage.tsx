@@ -32,7 +32,8 @@ export default function DashboardPage() {
   const [title,        setTitle]        = useState("");
   const [busy,         setBusy]         = useState(false);
   const [error,        setError]        = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<JpGame | null>(null);
+  const [confirmDelete,  setConfirmDelete]  = useState<JpGame | null>(null);
+  const [confirmEndRoom, setConfirmEndRoom] = useState<JpRoom | null>(null);
 
   useEffect(() => {
     if (!session) { setLoading(false); return; }
@@ -44,7 +45,7 @@ export default function DashboardPage() {
           .neq("status", "archived")
           .order("updated_at", { ascending: false }),
         supabase.from("jp_games").select("*")
-          .contains("collaborators", [{ userId: session.userId }])
+          .filter("collaborators", "cs", JSON.stringify([{ userId: session.userId }]))
           .neq("status", "archived")
           .order("updated_at", { ascending: false }),
       ]);
@@ -115,6 +116,38 @@ export default function DashboardPage() {
       addToast("Host control moved to this device");
     }
     navigate(room.status === "lobby" ? `/lobby/${room.id}` : `/host/${room.id}`);
+  };
+
+  const endRoom = async (room: JpRoom) => {
+    setBusy(true);
+    setError(null);
+    let playerId = getStoredPlayerId(room.id);
+    if (!playerId) {
+      const claimRes  = await fetch(`/room/${room.id}/claim-host`, { method: "POST", credentials: "include" });
+      const claimBody = await claimRes.json().catch(() => null) as { player_id?: string; error?: string } | null;
+      if (!claimRes.ok || !claimBody?.player_id) {
+        setBusy(false);
+        setError(claimBody?.error ?? "Could not take over hosting");
+        return;
+      }
+      storePlayerId(room.id, claimBody.player_id);
+      playerId = claimBody.player_id;
+    }
+    const res = await fetch(`/room/${room.id}/action`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ player_id: playerId, action: { type: "end_game" } }),
+    });
+    setBusy(false);
+    setConfirmEndRoom(null);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      addToast(body?.error ?? "Could not end game");
+      return;
+    }
+    setRooms(rs => rs.filter(r => r.id !== room.id));
+    addToast("Game ended");
   };
 
   const deleteGame = async (game: JpGame) => {
@@ -217,9 +250,14 @@ export default function DashboardPage() {
                       Edit
                     </Button>
                     {liveRoom ? (
-                      <Button size="sm" loading={busy} onClick={() => resumeRoom(liveRoom)}>
-                        {getStoredPlayerId(liveRoom.id) ? `Resume (${liveRoom.id})` : `Host here (${liveRoom.id})`}
-                      </Button>
+                      <>
+                        <Button size="sm" loading={busy} onClick={() => resumeRoom(liveRoom)}>
+                          {getStoredPlayerId(liveRoom.id) ? `Resume (${liveRoom.id})` : `Host here (${liveRoom.id})`}
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => setConfirmEndRoom(liveRoom)}>
+                          End game
+                        </Button>
+                      </>
                     ) : (
                       <Button size="sm" onClick={() => launchGame(game.id)} loading={busy}>
                         Launch
@@ -263,6 +301,23 @@ export default function DashboardPage() {
           </>
         )}
       </Panel>
+
+      <Modal open={confirmEndRoom !== null} onClose={() => setConfirmEndRoom(null)}>
+        {confirmEndRoom && (
+          <div className="flex flex-col gap-4">
+            <h3 className="text-lg font-bold">End room {confirmEndRoom.id}?</h3>
+            <p style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+              The room will be marked as finished and players will see the post-game screen. The game stays in your dashboard.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmEndRoom(null)}>Cancel</Button>
+              <Button variant="danger" loading={busy} onClick={() => endRoom(confirmEndRoom)}>
+                End game
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={confirmDelete !== null} onClose={() => setConfirmDelete(null)}>
         {confirmDelete && (
