@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2020"],
+    "types": ["@cloudflare/workers-types"],
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "paths": {
+      "@gokkehub/auth/*": ["../../packages/auth/src/*"]
+    }
+  },
+  "include": ["functions"]
+}

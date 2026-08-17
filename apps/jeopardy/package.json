@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev":        "vite",
-    "build":      "tsc -b && vite build",
+    "dev:functions": "wrangler pages dev public --port 8788 --kv SESSIONS",
+    "build":      "tsc -b && npm run type-check:functions && vite build",
     "preview":    "vite preview",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit && npm run type-check:functions",
+    "type-check:functions": "tsc -p tsconfig.functions.json"
   },
   "dependencies": {
     "@gokkehub/ui":          "*",

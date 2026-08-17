@@ -1,5 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { getSession } from "@gokkehub/auth/session";
+import { readSession } from "../../_session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import {
@@ -27,7 +27,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
     if (!room) return json({ error: "Room not found" }, 404, req);
     if (room.status === "finished") return json({ error: "Game already ended" }, 409, req);
 
-    const session  = await getSession(env.SESSIONS, req);
+    const session  = await readSession(env, req);
     const playerId = crypto.randomUUID();
     const game     = await getGame(env, room.game_id);
     const teamMode = game?.config.teams?.mode === "teams";

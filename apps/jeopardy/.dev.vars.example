@@ -1,0 +1,22 @@
+# apps/jeopardy — local Pages Functions config for `npm run dev:functions`.
+# Copy to `.dev.vars` (gitignored) and fill in. NEVER commit the real file.
+#
+# SUPABASE_URL already comes from wrangler.toml [vars] — only the secret and
+# the dev identity belong here.
+
+# Service-role key. You already have a copy in bots/musix-discord/.env, and it
+# is a Pages secret on the account project. Server-side only — it must never
+# appear in src/ or in a VITE_ variable.
+SUPABASE_SERVICE_ROLE_KEY=<paste-the-service-role-key>
+
+# ── Local dev identity ───────────────────────────────────────────────────────
+# The real session cookie is Domain=.gokkehub.com + Secure, so the browser will
+# never send it to http://localhost — you cannot log in locally. With this set,
+# functions/_session.ts treats requests as coming from this user, but ONLY when
+# the request arrives at localhost/127.0.0.1. Leave it unset to test the real
+# "signed out" behaviour.
+#
+# Use your own user id (= your Discord id — there is no Supabase auth user), so
+# the games you already own show up in the dashboard.
+DEV_USER_ID=<your-discord-user-id>
+DEV_USER_NAME=Dev Host

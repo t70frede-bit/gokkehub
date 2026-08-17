@@ -1,5 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { getSession } from "@gokkehub/auth/session";
+import { readSession } from "../../_session";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import { getGame, updateGame } from "../../_supabase";
@@ -14,7 +14,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   const gameId = params.id as string;
 
   try {
-    const session = await getSession(env.SESSIONS, req);
+    const session = await readSession(env, req);
     if (!session) return json({ error: "Login required" }, 401, req);
 
     const game = await getGame(env, gameId);
