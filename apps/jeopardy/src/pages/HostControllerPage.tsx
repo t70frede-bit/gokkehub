@@ -554,10 +554,17 @@ export default function HostControllerPage() {
                   <li key={t.id}>
                     <button type="button" className="w-full flex justify-between rounded-md px-3 py-2 font-semibold"
                       style={{
-                        border:     `1px solid ${isOwner ? `${color}88` : "rgb(var(--border-rgb))"}`,
-                        // Every team is colour-keyed down its edge; the owner
-                        // additionally gets the tinted fill and the 🎯.
-                        borderLeft: `3px solid ${color}`,
+                        // Every team is colour-keyed down its left edge; the owner
+                        // additionally gets the tinted fill and the 🎯. Per-side
+                        // longhands so the owner toggling can't reset the left
+                        // rule — React only re-applies the keys that changed.
+                        borderStyle:       "solid",
+                        borderWidth:       "1px",
+                        borderLeftWidth:   "3px",
+                        borderLeftColor:   color,
+                        borderTopColor:    isOwner ? `${color}88` : "rgb(var(--border-rgb))",
+                        borderRightColor:  isOwner ? `${color}88` : "rgb(var(--border-rgb))",
+                        borderBottomColor: isOwner ? `${color}88` : "rgb(var(--border-rgb))",
                         background: isOwner ? `${color}11` : "transparent",
                       }}
                       onClick={() => setScoreEdit({ teamId: t.id, value: String(t.score) })}>

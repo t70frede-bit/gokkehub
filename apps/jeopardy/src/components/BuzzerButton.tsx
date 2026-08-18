@@ -29,10 +29,12 @@ export default function BuzzerButton({
   const you    = phase === "you-buzzed";
   const arming = phase === "arming";
 
-  // Fall back to the app amber when the team has no colour resolved yet.
+  // Fall back to the app amber when the team has no colour resolved yet — that
+  // path has to look exactly as it did before the team colour existed.
   const live    = teamColor ?? "rgb(var(--color-primary-rgb))";
   const onLive  = teamColor ? readableTextOn(teamColor) : "rgb(var(--bg-rgb))";
-  // A hex takes an alpha suffix; the CSS-var fallback can't, so it dims via opacity.
+  // Dim the BACKGROUND, never the element: opacity would fade the label with it.
+  const liveDim = teamColor ? `${teamColor}d9` : "rgba(var(--color-primary-rgb), 0.85)";
   const armTint = teamColor ? `${teamColor}80` : "rgba(var(--color-primary-rgb), 0.5)";
 
   return (
@@ -42,9 +44,8 @@ export default function BuzzerButton({
       onClick={onBuzz}
       className="jp-buzzer w-full flex-1 min-h-64 rounded-2xl font-black text-3xl sm:text-5xl uppercase tracking-wide transition-transform flex flex-col items-center justify-center gap-2"
       style={{
-        background: you || open ? live : "rgb(var(--surface-input-rgb))",
         // Live but not yet pressed sits slightly back from the won state.
-        opacity: open && !you ? 0.85 : 1,
+        background: you ? live : open ? liveDim : "rgb(var(--surface-input-rgb))",
         color: you || open ? onLive : "rgba(var(--text-secondary-rgb), 0.6)",
         border: `1px solid ${arming ? armTint : "rgb(var(--border-rgb))"}`,
       }}

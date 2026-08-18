@@ -558,7 +558,9 @@ export default function BigScreenPage() {
         {/* The board owner's colour frames the whole board. An outline rather
             than a border so nothing reflows when the owner changes, and the
             name rides the frame so the colour still says WHO. */}
-        <div className="relative w-full rounded-xl transition-all duration-300"
+        {/* Transition only the frame — `transition-all` here would also animate
+            the board's own layout every time a tile is spent. */}
+        <div className="relative w-full rounded-xl transition-[outline-color,box-shadow] duration-300"
           style={boardOwner ? {
             outline:       `3px solid ${boardOwner.color}`,
             outlineOffset: "8px",

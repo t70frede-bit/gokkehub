@@ -53,9 +53,19 @@ export default function PodiumStrip({ teams, players, buzzedTeamId }: PodiumStri
               // The colour identifies the team from the edge; the surface stays
               // neutral so eight of these side by side don't fight, and the
               // score underneath stays the most readable thing on the tile.
-              // `border` first, `borderTop` after — the longhand must win.
-              border:    buzzed ? `1px solid ${color}` : "1px solid rgb(var(--border-rgb))",
-              borderTop: `3px solid ${color}`,
+              //
+              // Per-side longhands, deliberately: React only re-applies the
+              // style keys that CHANGED, so mixing `border` with `borderTop`
+              // would drop the top rule the moment `buzzed` flips. Widths and
+              // style never change, so only the three side colours are diffed.
+              // (box-shadow isn't an option either — jp-podium-buzzed animates it.)
+              borderStyle:       "solid",
+              borderWidth:       "1px",
+              borderTopWidth:    "3px",
+              borderTopColor:    color,
+              borderRightColor:  buzzed ? color : "rgb(var(--border-rgb))",
+              borderBottomColor: buzzed ? color : "rgb(var(--border-rgb))",
+              borderLeftColor:   buzzed ? color : "rgb(var(--border-rgb))",
             }}
           >
             <div className="font-bold text-sm sm:text-lg truncate max-w-40"
