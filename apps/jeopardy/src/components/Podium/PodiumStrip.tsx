@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { JpPlayer, JpTeam } from "../../lib/types";
-import { POWERUP_META } from "../../lib/types";
+import { POWERUP_META, getTeamColor } from "../../lib/types";
 
 interface PodiumStripProps {
   teams:        JpTeam[];
@@ -38,10 +38,11 @@ export default function PodiumStrip({ teams, players, buzzedTeamId }: PodiumStri
 
   return (
     <div className="flex gap-2 sm:gap-4 w-full justify-center flex-wrap">
-      {teams.map(team => {
+      {teams.map((team, idx) => {
         const members = players.filter(p => p.team_id === team.id);
         const buzzed  = team.id === buzzedTeamId;
         const flash   = flashes[team.id];
+        const color   = getTeamColor(team, idx);
         return (
           <div
             key={team.id}
@@ -49,14 +50,17 @@ export default function PodiumStrip({ teams, players, buzzedTeamId }: PodiumStri
               ${buzzed ? "jp-podium-buzzed" : ""}`}
             style={{
               background: "rgb(var(--surface-raised-rgb))",
-              border: buzzed
-                ? "1px solid rgb(var(--color-primary-rgb))"
-                : "1px solid rgb(var(--border-rgb))",
+              // The colour identifies the team from the edge; the surface stays
+              // neutral so eight of these side by side don't fight, and the
+              // score underneath stays the most readable thing on the tile.
+              // `border` first, `borderTop` after — the longhand must win.
+              border:    buzzed ? `1px solid ${color}` : "1px solid rgb(var(--border-rgb))",
+              borderTop: `3px solid ${color}`,
             }}
           >
             <div className="font-bold text-sm sm:text-lg truncate max-w-40"
               title={team.name}
-              style={{ color: "rgb(var(--text-primary-rgb))" }}
+              style={{ color }}
             >
               {team.powerup && (
                 <span className="mr-1" title={POWERUP_META[team.powerup].name}>

@@ -1,4 +1,5 @@
 import type { BuzzerPhase } from "../hooks/useBuzzer";
+import { readableTextOn } from "../lib/color";
 
 interface BuzzerButtonProps {
   phase:    BuzzerPhase;
@@ -6,6 +7,9 @@ interface BuzzerButtonProps {
   onBuzz:   () => void;
   /** Reading delay remaining, in ms — only meaningful in the "arming" phase. */
   armingMsLeft?: number;
+  /** The team's colour. The buzzer is the one thing a captain stares at, so it
+   *  wears the team's identity rather than the app's amber. */
+  teamColor?: string;
 }
 
 const LABELS: Record<BuzzerPhase, string> = {
@@ -18,10 +22,19 @@ const LABELS: Record<BuzzerPhase, string> = {
   "other-buzzed": "Too late!",
 };
 
-export default function BuzzerButton({ phase, inFlight, onBuzz, armingMsLeft = 0 }: BuzzerButtonProps) {
+export default function BuzzerButton({
+  phase, inFlight, onBuzz, armingMsLeft = 0, teamColor,
+}: BuzzerButtonProps) {
   const open   = phase === "open" && !inFlight;
   const you    = phase === "you-buzzed";
   const arming = phase === "arming";
+
+  // Fall back to the app amber when the team has no colour resolved yet.
+  const live    = teamColor ?? "rgb(var(--color-primary-rgb))";
+  const onLive  = teamColor ? readableTextOn(teamColor) : "rgb(var(--bg-rgb))";
+  // A hex takes an alpha suffix; the CSS-var fallback can't, so it dims via opacity.
+  const armTint = teamColor ? `${teamColor}80` : "rgba(var(--color-primary-rgb), 0.5)";
+
   return (
     <button
       type="button"
@@ -29,22 +42,17 @@ export default function BuzzerButton({ phase, inFlight, onBuzz, armingMsLeft = 0
       onClick={onBuzz}
       className="jp-buzzer w-full flex-1 min-h-64 rounded-2xl font-black text-3xl sm:text-5xl uppercase tracking-wide transition-transform flex flex-col items-center justify-center gap-2"
       style={{
-        background: you
-          ? "rgb(var(--color-primary-rgb))"
-          : open
-            ? "rgba(var(--color-primary-rgb), 0.85)"
-            : "rgb(var(--surface-input-rgb))",
-        color: you || open ? "rgb(var(--bg-rgb))" : "rgba(var(--text-secondary-rgb), 0.6)",
-        border: arming
-          ? "1px solid rgba(var(--color-primary-rgb), 0.5)"
-          : "1px solid rgb(var(--border-rgb))",
+        background: you || open ? live : "rgb(var(--surface-input-rgb))",
+        // Live but not yet pressed sits slightly back from the won state.
+        opacity: open && !you ? 0.85 : 1,
+        color: you || open ? onLive : "rgba(var(--text-secondary-rgb), 0.6)",
+        border: `1px solid ${arming ? armTint : "rgb(var(--border-rgb))"}`,
       }}
     >
       {LABELS[phase]}
       {/* Counting down to live keeps the wait honest — nobody's tap is being eaten. */}
       {arming && (
-        <span className="text-5xl sm:text-7xl tabular-nums"
-          style={{ color: "rgb(var(--color-primary-rgb))" }}>
+        <span className="text-5xl sm:text-7xl tabular-nums" style={{ color: live }}>
           {Math.ceil(armingMsLeft / 1000)}
         </span>
       )}

@@ -555,12 +555,15 @@ export default function HostControllerPage() {
                     <button type="button" className="w-full flex justify-between rounded-md px-3 py-2 font-semibold"
                       style={{
                         border:     `1px solid ${isOwner ? `${color}88` : "rgb(var(--border-rgb))"}`,
+                        // Every team is colour-keyed down its edge; the owner
+                        // additionally gets the tinted fill and the 🎯.
+                        borderLeft: `3px solid ${color}`,
                         background: isOwner ? `${color}11` : "transparent",
                       }}
                       onClick={() => setScoreEdit({ teamId: t.id, value: String(t.score) })}>
                       <span>
                         {t.powerup && <span className="mr-1.5">{POWERUP_META[t.powerup].icon}</span>}
-                        <span style={{ color: isOwner ? color : undefined }}>{t.name}</span>
+                        <span style={{ color }}>{t.name}</span>
                         {isOwner && <span className="ml-1.5 text-xs" style={{ color }}>🎯</span>}
                       </span>
                       <span className="tabular-nums"
@@ -586,13 +589,16 @@ export default function HostControllerPage() {
                 return (
                   <button key={t.id}
                     onClick={() => dispatch({ type: "set_board_team", teamId: t.id })}
-                    className="px-3 py-1 rounded-full text-sm font-bold transition-all"
+                    className="px-3 py-1 rounded-full text-sm font-bold transition-all flex items-center gap-1.5"
                     style={{
                       background:  isOwner ? `${color}22` : "transparent",
                       border:      `1px solid ${isOwner ? color : "rgb(var(--border-rgb))"}`,
                       color:       isOwner ? color : "rgb(var(--text-secondary-rgb))",
                       cursor:      "pointer",
                     }}>
+                    {/* A dot rather than tinted text: these read as a row of
+                        choices, and only the current owner should look chosen. */}
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
                     {t.name}
                   </button>
                 );

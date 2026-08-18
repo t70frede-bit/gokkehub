@@ -9,6 +9,7 @@ import AnswerTimer from "../components/AnswerTimer";
 import PowerUpPrompt from "../components/PowerUpPrompt";
 import MediaPlayer from "../components/MediaPlayer";
 import { POWERUP_META, getBoard, getTeamColor } from "../lib/types";
+import { readableTextOn } from "../lib/color";
 import type { JpClosestNumberConfig, JpMultipleChoiceConfig, JpPowerupType, JpRankingConfig, JpResolutionSummary } from "../lib/types";
 
 const secondary = { color: "rgb(var(--text-secondary-rgb))" } as const;
@@ -296,6 +297,15 @@ export default function BigScreenPage() {
   const ranked      = [...teams].sort((a, b) => b.score - a.score);
   const questionRevealed = q?.questionRevealed ?? true;
 
+  // Whose turn it is to pick. Read from across the room as a coloured frame
+  // around the whole board rather than a line of text near it.
+  const boardOwner = (() => {
+    if ((state.activeBoardTeamId ?? null) === null) return null;
+    const idx  = teams.findIndex(t => t.id === state.activeBoardTeamId);
+    const team = teams[idx];
+    return team ? { name: team.name, color: getTeamColor(team, idx) } : null;
+  })();
+
   const rankingCfg  = mode === "ranking" ? tile?.answerModeConfig as JpRankingConfig | undefined : undefined;
   const modeLabel   = mode === "multipleChoice" ? "Multiple choice"
                     : mode === "ranking"         ? "Rank the answers"
@@ -539,27 +549,29 @@ export default function BigScreenPage() {
 
       {soundChip}
 
-      {/* Whose turn it is to pick — shown at the top whenever a board owner is set */}
-      {(state.activeBoardTeamId ?? null) !== null && (() => {
-        const idx   = teams.findIndex(t => t.id === state.activeBoardTeamId);
-        const owner = teams[idx];
-        if (!owner) return null;
-        const color = getTeamColor(owner, idx);
-        return (
-          <div className="text-center rounded-lg py-1.5 px-4 font-bold text-sm"
-            style={{ background: `${color}1a`, border: `1px solid ${color}55`, color }}>
-            🎯 {owner.name}'s turn to pick
-          </div>
-        );
-      })()}
-
       {game.config.board2Mode !== "off" && (
         <p className="text-center text-sm font-bold uppercase tracking-widest" style={secondary}>
           Board {state.currentBoard + 1}
         </p>
       )}
       <div className="flex-1 flex items-center">
-        {board && <BoardGrid board={board} state={state} />}
+        {/* The board owner's colour frames the whole board. An outline rather
+            than a border so nothing reflows when the owner changes, and the
+            name rides the frame so the colour still says WHO. */}
+        <div className="relative w-full rounded-xl transition-all duration-300"
+          style={boardOwner ? {
+            outline:       `3px solid ${boardOwner.color}`,
+            outlineOffset: "8px",
+            boxShadow:     `0 0 48px ${boardOwner.color}33`,
+          } : undefined}>
+          {boardOwner && (
+            <div className="absolute -top-4 left-8 px-3 py-0.5 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap"
+              style={{ background: boardOwner.color, color: readableTextOn(boardOwner.color) }}>
+              {boardOwner.name} picks
+            </div>
+          )}
+          {board && <BoardGrid board={board} state={state} />}
+        </div>
       </div>
       <PodiumStrip teams={teams} players={players} buzzedTeamId={q?.buzzedBy ?? null} />
 

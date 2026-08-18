@@ -416,7 +416,8 @@ export default function PlayerPage() {
           ⭐ {captainName} buzzes for your team
         </div>
       ) : (
-        <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} armingMsLeft={armingMsLeft} />
+        <BuzzerButton phase={phase} inFlight={inFlight} onBuzz={buzz} armingMsLeft={armingMsLeft}
+          teamColor={myTeamColor} />
       )}
       {phase === "you-buzzed" && (
         <div className="text-center">
