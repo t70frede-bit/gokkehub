@@ -6,10 +6,8 @@ import {
   updateRoom, updateTeam, updatePlayer, logEvent, resetRoomData, createSecrets,
 } from "../../_supabase";
 import { tileValue, getSpecial, specialPowerup, resolvePowerupChoice, assignSpecialTiles } from "../../_game";
-import type {
-  HostActionRequest, JpClosestNumberConfig, JpMultipleChoiceConfig,
-  JpRankingConfig, JpRoom,
-} from "../../../src/lib/types";
+import { gradeSubmissions, formatResolutionLines } from "../../_scoring";
+import type { HostActionRequest, JpRoom } from "../../../src/lib/types";
 import { boardCount, getBoard, INITIAL_BOARD_STATE } from "../../../src/lib/types";
 
 // All host-driven state transitions run through here so board_state moves
@@ -422,67 +420,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         const subs  = await getSubmissions(env, roomId, q.tileKey, "answer");
         const name  = (id: number) => teams.find(t => t.id === id)?.name ?? `Team ${id}`;
 
-        // → [{teamId, delta}] plus display lines for the big screen.
-        const awards: { teamId: number; delta: number }[] = [];
-        const lines:  string[] = [];
-
-        if (q.mode === "multipleChoice") {
-          const mc = cfg as JpMultipleChoiceConfig;
-          const correct = subs.filter(s => s.payload.value === mc.correctIndex);
-          const scorers = mc.firstCorrectOnly ? correct.slice(0, 1) : correct;
-          for (const s of subs) {
-            const won = scorers.some(w => w.team_id === s.team_id);
-            if (won) awards.push({ teamId: s.team_id, delta: value });
-            const pick = typeof s.payload.value === "number" ? mc.options[s.payload.value] : "—";
-            lines.push(`${name(s.team_id)}: ${pick ?? "—"} ${won ? `+${value}` : ""}`.trim());
-          }
-        } else if (q.mode === "closestNumber") {
-          const cn = cfg as JpClosestNumberConfig;
-          const valid = subs.filter(s => typeof s.payload.value === "number");
-          const dist  = (s: typeof subs[number]) => Math.abs((s.payload.value as number) - cn.correct);
-          const best  = valid.length ? Math.min(...valid.map(dist)) : null;
-          const winners = best === null ? [] : valid.filter(s => dist(s) === best);
-          // House rule: ties split the points evenly, each share rounded UP
-          // to the nearest 100 (300 two ways → 200 each).
-          const share = winners.length <= 1
-            ? value
-            : Math.ceil(value / winners.length / 100) * 100;
-          for (const s of subs) {
-            const won = winners.some(w => w.team_id === s.team_id);
-            if (won) awards.push({ teamId: s.team_id, delta: share });
-            lines.push(`${name(s.team_id)}: ${s.payload.value} ${cn.unit} ${won ? `+${share}` : ""}`.trim());
-          }
-          lines.push(`Answer: ${cn.correct} ${cn.unit}`);
-        } else if (q.mode === "ranking") {
-          const rk = cfg as JpRankingConfig;
-          const n  = rk.items.length;
-          if (rk.scoring === "exact") {
-            // All-or-nothing: perfect orders "win the round"; multiple
-            // perfects tie and split under the same round-up-to-100 rule.
-            const perfect = subs.filter(s => {
-              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
-              return order.length === n && order.every((v, i) => v === i);
-            });
-            const share = perfect.length <= 1
-              ? value
-              : Math.ceil(value / perfect.length / 100) * 100;
-            for (const s of subs) {
-              const won = perfect.some(w => w.team_id === s.team_id);
-              if (won) awards.push({ teamId: s.team_id, delta: share });
-              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
-              const correctCount = order.filter((v, i) => v === i).length;
-              lines.push(`${name(s.team_id)}: ${correctCount}/${n} in place ${won ? `+${share}` : ""}`.trim());
-            }
-          } else {
-            for (const s of subs) {
-              const order = Array.isArray(s.payload.value) ? s.payload.value as number[] : [];
-              const correctCount = order.filter((v, i) => v === i).length;
-              const delta = Math.floor((value * correctCount) / n);
-              if (delta > 0) awards.push({ teamId: s.team_id, delta });
-              lines.push(`${name(s.team_id)}: ${correctCount}/${n} in place ${delta > 0 ? `+${delta}` : ""}`.trim());
-            }
-          }
-        }
+        // Grading lives in _scoring.ts so the payout rules can be tested on
+        // their own. `awards` order is load-bearing below: the top award (stable
+        // sort) claims a power-up prompt, and the first winner takes the board.
+        const graded = gradeSubmissions(q.mode ?? "standard", cfg, value, subs);
+        const awards = graded.awards;
+        const lines  = formatResolutionLines(graded, name);
 
         // Power-up tile in a submission mode: the top scorer gets the choice
         // (their award is held back inside the prompt).
