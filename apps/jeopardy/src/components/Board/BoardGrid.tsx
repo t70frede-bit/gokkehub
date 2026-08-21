@@ -1,4 +1,5 @@
 import type { JpBoardConfig, JpBoardState } from "../../lib/types";
+import { ANSWER_MODE_META } from "../../lib/types";
 
 interface BoardGridProps {
   board:  JpBoardConfig;
@@ -7,9 +8,17 @@ interface BoardGridProps {
   onTileSelect?: (tileKey: string) => void;
   /** Smaller text/padding for the host's phone. */
   compact?: boolean;
+  /**
+   * Mark each unplayed tile with its answer-mode glyph. HOST ONLY — its own
+   * flag rather than piggybacking on `compact`, because showing this on the big
+   * screen would tell the room a tile is a ranking question before it's picked.
+   */
+  showTypes?: boolean;
 }
 
-export default function BoardGrid({ board, state, onTileSelect, compact = false }: BoardGridProps) {
+export default function BoardGrid({
+  board, state, onTileSelect, compact = false, showTypes = false,
+}: BoardGridProps) {
   const cols = board.categories.length;
   return (
     <div
@@ -35,16 +44,25 @@ export default function BoardGrid({ board, state, onTileSelect, compact = false 
           const key      = `${col}-${row}`;
           const spent    = state.spentTiles.includes(key);
           const active   = state.activeQuestion?.tileKey === key;
-          const hasQ     = !!board.tiles[key]?.questionBlocks?.length;
+          const tile     = board.tiles[key];
+          const hasQ     = !!tile?.questionBlocks?.length;
           const canPick  = !!onTileSelect && !spent && !state.activeQuestion && hasQ;
+          // Only worth showing while the tile is still in play.
+          const modeMeta = showTypes && hasQ && !spent
+            ? ANSWER_MODE_META[tile?.answerMode ?? "standard"]
+            : null;
           return (
             <button
               key={key}
               type="button"
               disabled={!canPick}
-              title={onTileSelect && !hasQ && !spent ? "No question set" : undefined}
+              title={
+                modeMeta ? modeMeta.label
+                  : onTileSelect && !hasQ && !spent ? "No question set"
+                  : undefined
+              }
               onClick={() => canPick && onTileSelect(key)}
-              className={`jp-tile rounded-md font-black text-center flex items-center justify-center
+              className={`jp-tile relative rounded-md font-black text-center flex items-center justify-center
                 ${compact ? "text-sm py-2 min-h-9" : "text-xl sm:text-3xl py-4 min-h-16 sm:min-h-20"}
                 ${spent ? "jp-tile-spent" : ""}
                 ${canPick ? "jp-tile-selectable cursor-pointer" : "cursor-default"}`}
@@ -60,6 +78,19 @@ export default function BoardGrid({ board, state, onTileSelect, compact = false 
                   : "rgba(var(--text-secondary-rgb), 0.35)",
               }}
             >
+              {modeMeta && (
+                // Absolutely placed so the point value stays optically centred.
+                // Standard buzzer tiles sit back — they're the majority, and the
+                // host is scanning for the ones that behave differently.
+                <span
+                  aria-hidden="true"
+                  className={`absolute leading-none pointer-events-none
+                    ${compact ? "top-0.5 right-1 text-[9px]" : "top-1 right-1.5 text-xs"}`}
+                  style={{ opacity: tile?.answerMode === "standard" || !tile?.answerMode ? 0.4 : 0.9 }}
+                >
+                  {modeMeta.icon}
+                </span>
+              )}
               {spent ? "" : board.pointValues[row] ?? ""}
             </button>
           );

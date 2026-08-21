@@ -538,7 +538,7 @@ export default function HostControllerPage() {
             </Panel>
           ) : (
             <Panel variant="bare" className="p-3">
-              <BoardGrid compact board={board} state={state} onTileSelect={selectTile} />
+              <BoardGrid compact showTypes board={board} state={state} onTileSelect={selectTile} />
             </Panel>
           )}
 

@@ -82,6 +82,19 @@ export interface JpRankingConfig {
 
 export type JpAnswerModeConfig = JpMultipleChoiceConfig | JpClosestNumberConfig | JpRankingConfig;
 
+/**
+ * Host-facing glyph and name for each answer mode, used on the host's board so
+ * they know what a tile turns into before pressing it. These labels are for the
+ * host, not the players — the big screen has its own friendlier copy ("Rank the
+ * answers") aimed at the room.
+ */
+export const ANSWER_MODE_META: Record<JpAnswerMode, { icon: string; label: string }> = {
+  standard:       { icon: "🔔", label: "Buzzer" },
+  multipleChoice: { icon: "🔤", label: "Multiple choice" },
+  closestNumber:  { icon: "📏", label: "Closest number" },
+  ranking:        { icon: "🔢", label: "Ranking" },
+};
+
 // ── Power-ups & dangerous tiles ───────────────────────────────────────────────
 
 export type JpPowerupType = "sniper" | "buffer" | "secondChance";
