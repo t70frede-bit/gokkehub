@@ -4,9 +4,11 @@ import { json, handlePreflight } from "../../_cors";
 import {
   getRoom, getGame, getTeams, getPlayers, getSecrets, getSubmissions,
   updateRoom, updateTeam, updatePlayer, logEvent, resetRoomData, createSecrets,
+  getTileEvents, clearTileAnswers,
 } from "../../_supabase";
 import { tileValue, getSpecial, specialPowerup, resolvePowerupChoice, assignSpecialTiles } from "../../_game";
 import { gradeSubmissions, formatResolutionLines } from "../../_scoring";
+import { planUndo } from "../../_undo";
 import type { HostActionRequest, JpRoom } from "../../../src/lib/types";
 import { boardCount, getBoard, INITIAL_BOARD_STATE } from "../../../src/lib/types";
 
@@ -242,6 +244,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
                 currentPowerup: team.powerup,
               },
               activeBoardTeamId: team.id,
+              prevBoardTeamId:   state.activeBoardTeamId ?? null,
               // Show answer on big screen while the team makes their choice.
               lastResolution: {
                 tileKey:      q.tileKey,
@@ -259,6 +262,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
               spentTiles:     [...state.spentTiles, q.tileKey],
               activeQuestion: null,
               activeBoardTeamId: team.id,
+              prevBoardTeamId:   state.activeBoardTeamId ?? null,
               lastResolution: {
                 tileKey:      q.tileKey,
                 mode:         q.mode ?? "standard",
@@ -472,6 +476,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
           lastResolution: { tileKey: q.tileKey, mode: q.mode ?? "standard", lines, winnerTeamIds },
           // Fastest correct submitter gets the board; keep current owner if no winner.
           activeBoardTeamId: winnerTeamIds.length > 0 ? winnerTeamIds[0] : (state.activeBoardTeamId ?? null),
+          prevBoardTeamId:   state.activeBoardTeamId ?? null,
         };
         break;
       }
@@ -503,6 +508,50 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         break;
       }
 
+      case "undo_last_question": {
+        // Only the most recent tile: the state it reverses is guaranteed to be
+        // the newest, so nothing that happened after it can depend on it.
+        if (state.activeQuestion) {
+          return json({ error: "Finish or dismiss the open question first" }, 409, req);
+        }
+        if (state.powerupPrompt) {
+          return json({ error: "Resolve the power-up choice first" }, 409, req);
+        }
+        const tileKey = state.spentTiles[state.spentTiles.length - 1];
+        if (!tileKey) return json({ error: "Nothing to undo on this board" }, 409, req);
+
+        const teams = await getTeams(env, roomId);
+        const plan  = planUndo(await getTileEvents(env, roomId, tileKey));
+
+        for (const { teamId, delta } of plan.scoreDeltas) {
+          const team = teams.find(t => t.id === teamId);
+          if (team) await updateTeam(env, team.id, { score: team.score - delta });
+        }
+        for (const { teamId, powerup } of plan.powerupRestores) {
+          const team = teams.find(t => t.id === teamId);
+          if (team) await updateTeam(env, team.id, { powerup });
+        }
+
+        await clearTileAnswers(env, roomId, tileKey);
+
+        await logEvent(env, roomId, "question_undone", {
+          payload: { tileKey, reversed: plan.scoreDeltas },
+        });
+
+        updates.board_state = {
+          ...state,
+          spentTiles:     state.spentTiles.filter(k => k !== tileKey),
+          lastResolution: state.lastResolution?.tileKey === tileKey ? null : state.lastResolution,
+          // Hand the board back to whoever held it before this question.
+          activeBoardTeamId: state.prevBoardTeamId ?? null,
+          buzzersOpen:    false,
+          buzzersOpenAt:  null,
+          activeQuestion: null,
+          powerupPrompt:  null,
+        };
+        break;
+      }
+
       case "advance_board": {
         const game = await getGame(env, room.game_id);
         if (!game) return json({ error: "Game config missing" }, 500, req);
@@ -511,7 +560,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         }
         const board0Tiles = Object.keys(getBoard(game.config, 0)?.tiles ?? {});
         const allSpent = board0Tiles.every(k => state.spentTiles.includes(k));
-        if (!allSpent) return json({ error: "All questions must be answered before advancing" }, 409, req);
+        // force: the host has confirmed leaving the rest of board 1 unplayed.
+        if (!allSpent && !action.force) {
+          return json({ error: "All questions must be answered before advancing" }, 409, req);
+        }
         if ((game.config.powerupCarryover ?? "persist") === "reset") {
           const teams = await getTeams(env, roomId);
           for (const t of teams) {
@@ -713,6 +765,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
         updates.board_state = {
           ...state,
           activeBoardTeamId: action.teamId,
+          prevBoardTeamId:   state.activeBoardTeamId ?? null,
         };
         break;
       }

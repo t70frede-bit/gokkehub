@@ -1,6 +1,6 @@
 import type { Env } from "./_env";
 import type {
-  JpGame, JpRoom, JpTeam, JpPlayer, JpEventType,
+  JpGame, JpRoom, JpTeam, JpPlayer, JpEventType, JpGameEvent,
   JpSpecialTiles, JpSubmissionKind, JpSubmissionRow,
 } from "../src/lib/types";
 
@@ -126,6 +126,33 @@ export async function getSecrets(env: Env, roomId: string): Promise<JpSpecialTil
 
 export async function createSecrets(env: Env, roomId: string, specialTiles: JpSpecialTiles): Promise<void> {
   await req(env, "POST", "jp_room_secrets", "", { room_id: roomId, special_tiles: specialTiles });
+}
+
+/**
+ * Every event this tile has produced, oldest first — the raw material for undo.
+ * Score changes all carry `payload.pointsDelta`, and a power-up claim carries
+ * what it `replaced`, so a question can be reversed from the log alone.
+ */
+export async function getTileEvents(
+  env: Env, roomId: string, tileKey: string
+): Promise<JpGameEvent[]> {
+  return req<JpGameEvent>(
+    env, "GET", "jp_game_events",
+    `room_id=eq.${roomId}&payload->>tileKey=eq.${encodeURIComponent(tileKey)}` +
+    `&select=id,room_id,event_type,team_id,player_id,payload,created_at&order=created_at.asc,id.asc`);
+}
+
+/**
+ * Drop a single tile's answers so it can be played again. These are data, not
+ * history: jp_submissions has a unique index per (tile, team), so leaving them
+ * behind would silently reject every re-submission.
+ */
+export async function clearTileAnswers(env: Env, roomId: string, tileKey: string): Promise<void> {
+  const tile = encodeURIComponent(tileKey);
+  await Promise.all([
+    req(env, "DELETE", "jp_submissions",   `room_id=eq.${roomId}&tile_key=eq.${tile}`),
+    req(env, "DELETE", "jp_buzz_attempts", `room_id=eq.${roomId}&tile_key=eq.${tile}`),
+  ]);
 }
 
 /** Rematch: wipe a room's per-game rows so the next round starts clean. */

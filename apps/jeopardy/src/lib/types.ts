@@ -363,6 +363,10 @@ export interface JpBoardState {
   final?:             JpFinalState | null;
   /** The team that last answered correctly and gets to pick the next tile. */
   activeBoardTeamId?: number | null;
+  /** Who owned the board before the current owner. Written whenever
+   *  activeBoardTeamId changes, purely so undo_last_question can hand the board
+   *  back to exactly the right team instead of guessing. */
+  prevBoardTeamId?:   number | null;
 }
 
 export const INITIAL_BOARD_STATE: JpBoardState = {
@@ -439,6 +443,10 @@ export type JpEventType =
   | "powerup_swapped"
   | "powerup_declined"
   | "score_edit"
+  /** A question was rolled back. Kept in the log rather than deleting what it
+   *  reversed, so the history stays honest — and so a tile that is undone,
+   *  replayed and undone again only reverses the replay. */
+  | "question_undone"
   | "board_advance"
   | "final_started"
   | "final_judged"
@@ -478,7 +486,8 @@ export type HostAction =
   | { type: "dismiss_question" }          // close tile with no winner (nobody knew it)
   | { type: "resolve_submissions" }       // grade MC / closest / ranking submissions
   | { type: "force_powerup_choice"; choice: "points" | "powerup" }
-  | { type: "advance_board" }             // show interlude scoreboard, move to board 2
+  | { type: "undo_last_question" }        // put the most recent tile back: scores, power-ups, answers
+  | { type: "advance_board"; force?: boolean } // force: leave board 1 with tiles unplayed
   | { type: "continue_board" }            // dismiss interlude
   | { type: "start_final" }
   | { type: "final_reveal_question" }

@@ -6,9 +6,20 @@ import { useHostController } from "../hooks/useHostController";
 import BoardGrid from "../components/Board/BoardGrid";
 import AnswerTimer from "../components/AnswerTimer";
 import type {
-  JpClosestNumberConfig, JpMultipleChoiceConfig, JpPowerupType, JpRankingConfig, JpSubmissionRow,
+  JpBlock, JpClosestNumberConfig, JpMultipleChoiceConfig, JpPowerupType, JpRankingConfig,
+  JpSubmissionRow,
 } from "../lib/types";
-import { POWERUP_META, boardCount, getBoard, getTeamColor } from "../lib/types";
+import { ANSWER_MODE_META, POWERUP_META, boardCount, getBoard, getTeamColor } from "../lib/types";
+
+/** Flatten a tile's blocks for the host's confirm dialogs. Media can't be shown
+ *  in a small modal, so it's named rather than rendered. */
+function blocksText(blocks: JpBlock[] | undefined): string {
+  if (!blocks?.length) return "—";
+  return blocks
+    .map(b => (b.type === "text" ? b.text.trim() : `[${b.type}]`))
+    .filter(Boolean)
+    .join("  ·  ");
+}
 
 const inputStyle = {
   background: "rgb(var(--surface-input-rgb))",
@@ -27,6 +38,8 @@ export default function HostControllerPage() {
 
   const [scoreEdit,      setScoreEdit]      = useState<{ teamId: number; value: string } | null>(null);
   const [confirmEnd,     setConfirmEnd]     = useState(false);
+  const [confirmUndo,    setConfirmUndo]    = useState(false);
+  const [confirmSkip,    setConfirmSkip]    = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [confirmFinal,   setConfirmFinal]   = useState(false);
   const [finalSubs, setFinalSubs]   = useState<JpSubmissionRow[]>([]);
@@ -74,6 +87,23 @@ export default function HostControllerPage() {
   const nextCatIndex   = board.categories.findIndex((_, i) => !state.revealedCategories.includes(i));
   const allTilesSpent  = Object.keys(board.tiles).every(k => state.spentTiles.includes(k));
   const hasBoard2   = boardCount(game.config) > 1;
+  const tilesLeft   = Object.keys(board.tiles).filter(k => !state.spentTiles.includes(k)).length;
+
+  // The tile undo would put back — the most recently spent one on this board.
+  const undoTarget = (() => {
+    const key = state.spentTiles[state.spentTiles.length - 1];
+    const t   = key ? board.tiles[key] : undefined;
+    if (!key || !t) return null;
+    const [col, row] = key.split("-").map(Number);
+    return {
+      key,
+      category: board.categories[col] ?? `Column ${col + 1}`,
+      value:    board.pointValues[row] ?? 0,
+      mode:     ANSWER_MODE_META[t.answerMode ?? "standard"],
+      question: blocksText(t.questionBlocks),
+      answer:   blocksText(t.answerBlocks),
+    };
+  })();
   const finalOn     = game.config.finalJeopardy?.enabled ?? false;
   const submittedCount = q?.submittedTeamIds?.length ?? 0;
 
@@ -621,11 +651,21 @@ export default function HostControllerPage() {
           </Panel>
 
           <div className="flex flex-col gap-2">
+            {/* Undo sits with the other board-level controls, and only appears
+                when there's something to take back and nothing in progress. */}
+            {undoTarget && !state.activeQuestion && !state.powerupPrompt && (
+              <Button variant="ghost" loading={busy} onClick={() => setConfirmUndo(true)}>
+                ↩ Undo {undoTarget.category} for {undoTarget.value}
+              </Button>
+            )}
             {hasBoard2 && state.currentBoard === 0 && (
-              <Button loading={busy} disabled={!allTilesSpent}
-                title={allTilesSpent ? undefined : "All questions must be answered first"}
-                onClick={() => dispatch({ type: "advance_board" })}>
-                {allTilesSpent ? "Scoreboard → board 2" : `Answer all questions to advance (${state.spentTiles.length}/${Object.keys(board.tiles).length})`}
+              <Button loading={busy}
+                onClick={() => allTilesSpent
+                  ? dispatch({ type: "advance_board" })
+                  : setConfirmSkip(true)}>
+                {allTilesSpent
+                  ? "Scoreboard → board 2"
+                  : `Skip to board 2 (${tilesLeft} unplayed)`}
               </Button>
             )}
             {finalOn && (
@@ -699,6 +739,59 @@ export default function HostControllerPage() {
               setConfirmFinal(false);
             }}>
               Start Final Jeopardy
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={confirmUndo} onClose={() => setConfirmUndo(false)}>
+        {undoTarget && (
+          <div className="flex flex-col gap-4">
+            <h3 className="text-lg font-bold">Undo this question?</h3>
+            <div className="flex flex-col gap-2 rounded-md px-3 py-2.5"
+              style={{ background: "rgb(var(--surface-input-rgb))", border: "1px solid rgb(var(--border-rgb))" }}>
+              <p className="text-xs font-bold uppercase tracking-widest" style={secondary}>
+                {undoTarget.mode.icon} {undoTarget.category} — {undoTarget.value}
+              </p>
+              <p className="font-semibold">{undoTarget.question}</p>
+              <p style={secondary}>
+                <span className="text-xs uppercase tracking-widest">Answer </span>
+                {undoTarget.answer}
+              </p>
+            </div>
+            <p style={secondary}>
+              Scores and power-ups from this question are reversed, the tile goes back on the
+              board, and whoever picked before gets the board again. Answers already given are
+              cleared so it can be played again.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmUndo(false)}>Cancel</Button>
+              <Button loading={busy} onClick={async () => {
+                await dispatch({ type: "undo_last_question" });
+                setConfirmUndo(false);
+              }}>
+                Undo it
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={confirmSkip} onClose={() => setConfirmSkip(false)}>
+        <div className="flex flex-col gap-4">
+          <h3 className="text-lg font-bold">Move on with {tilesLeft} unplayed?</h3>
+          <p style={secondary}>
+            {tilesLeft === 1 ? "One question" : `${tilesLeft} questions`} on this board
+            {tilesLeft === 1 ? " is" : " are"} never played. Scores carry over and the
+            between-boards scoreboard shows as normal.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmSkip(false)}>Cancel</Button>
+            <Button loading={busy} onClick={async () => {
+              await dispatch({ type: "advance_board", force: true });
+              setConfirmSkip(false);
+            }}>
+              Skip to board 2
             </Button>
           </div>
         </div>
