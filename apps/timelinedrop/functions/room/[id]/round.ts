@@ -6,7 +6,7 @@ import {
   createRound, getTimeline, insertTimelineEntry, updateTeam, recordPlayedTracks,
   batchLookupCorrections, lookupCorrectedYear, upsertSongCorrection,
   lookupAcceptedAnswers, recordAcceptedAnswer, autoJudgeGuess,
-  recordSongStat,
+  recordSongStat, gradeSearchPick, indexTracks,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -20,7 +20,8 @@ import type {
   PlacementRequest, TurnActionRequest, GuessRequest, JudgeRequest,
   FinalizeJudgmentRequest, UseTokenRequest, StageRequest,
   ProposeYearCorrectionRequest, ApproveYearCorrectionRequest,
-  TlRoom, TlRound, TlTeam, TlPlayer, JudgeMode,
+  DisputeGuessRequest, ApproveDisputeRequest,
+  TlRoom, TlRound, TlTeam, TlPlayer, JudgeMode, GuessMode,
 } from "../../../src/lib/types";
 
 // POST /room/:id/round — sub-actions via ?action= query param
@@ -56,6 +57,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env, wait
   if (action === "approve-video-report") return handleApproveVideoReport(req, roomId, env);
   if (action === "redo-round")   return handleRedoRound(req, roomId, env);
   if (action === "buy-token")    return handleBuyToken(req, roomId, env);
+  if (action === "dispute-guess")   return handleDisputeGuess(req, roomId, env);
+  if (action === "approve-dispute") return handleApproveDispute(req, roomId, env);
   return json({ error: "Unknown action" }, 400, req);
 };
 
@@ -115,6 +118,14 @@ function actsAsCaptain(room: TlRoom, captain: TlPlayer | undefined, playerId: st
 function effectiveJudgeMode(room: Pick<TlRoom, "settings">): JudgeMode {
   if (room.settings?.gamemasterMode || room.settings?.singleScreenMode) return "host";
   return (room.settings?.judgeMode ?? "team-captain") as JudgeMode;
+}
+
+// Search mode grades the captain's pick deterministically at placement time
+// and finalizes on the spot, so there is no judge, no vote, and no timer.
+// Callers check this BEFORE effectiveJudgeMode — gamemaster's "force host
+// judging" rule is irrelevant when nobody judges at all.
+function effectiveGuessMode(room: Pick<TlRoom, "settings">): GuessMode {
+  return (room.settings?.guessMode ?? "typed") as GuessMode;
 }
 
 // Update a single pending-track entry's releaseYear inside team.pending_tracks
@@ -205,29 +216,68 @@ async function handlePlace(req: Request, roomId: string, env: Env) {
 
   // Combine guess with placement when correct: store guesses + start judging window only if there's actual content.
   if (correct) {
-    const a = (artist_guess   ?? "").slice(0, 120);
-    const s = (songname_guess ?? "").slice(0, 120);
-    update.artist_guess   = a;
-    update.songname_guess = s;
-    if (a.trim() !== "" || s.trim() !== "") {
-      update.judging_started_at = new Date().toISOString();
-    }
+    const guessMode = effectiveGuessMode(room);
 
-    // Auto-judge against canonical + stored accepted answers. If both
-    // fields auto-resolve to true, also mark judging_finalized so the
-    // bonus path can fire without a human in the loop.
-    const accepted = await lookupAcceptedAnswers(env, round.track.id);
-    const artistMatch = a.trim() ? autoJudgeGuess(a, "artist",   round.track.artist, accepted) : null;
-    const songMatch   = s.trim() ? autoJudgeGuess(s, "songname", round.track.name,   accepted) : null;
-    if (artistMatch) {
-      update.artist_correct = true;
-      console.log(`[auto-judge] artist "${a}" matched ${artistMatch.matched}${artistMatch.storedConfirmations ? ` (confirmations=${artistMatch.storedConfirmations})` : ""} for ${round.track.id}`);
+    if (guessMode === "search") {
+      // ── Search mode: one pick, two independent verdicts, no human ──────
+      // We still write artist_guess / songname_guess from the pick so every
+      // downstream surface (reveal comparison, round history, EndPage) keeps
+      // working unchanged — search mode is a capture-and-grade swap, not a
+      // new data shape.
+      const pick = body.pick ?? null;
+      const a = (pick?.artist ?? "").slice(0, 120);
+      const s = (pick?.title  ?? "").slice(0, 120);
+      update.artist_guess   = a;
+      update.songname_guess = s;
+      update.songname_pick_track_id = pick?.spotifyId ?? null;
+
+      if (pick) {
+        const accepted = await lookupAcceptedAnswers(env, round.track.id);
+        const grade = gradeSearchPick(
+          { spotifyId: pick.spotifyId, title: s, artist: a },
+          round.track.id, round.track.name, round.track.artist, accepted,
+        );
+        update.artist_correct   = grade.artistCorrect;
+        update.songname_correct = grade.songnameCorrect;
+        console.log(
+          `[search-grade] "${a} — ${s}" vs "${round.track.artist} — ${round.track.name}": ` +
+          `artist=${grade.artistCorrect} song=${grade.songnameCorrect} (by ${grade.songMatchedBy})`,
+        );
+      } else {
+        // Captain placed without picking anything — a definite miss on both
+        // fields rather than an open judging window.
+        update.artist_correct   = false;
+        update.songname_correct = false;
+      }
+      // Finalize either way: search mode never opens a judge window. The
+      // ❓ dispute branch is the only route back, and it re-grades this
+      // round explicitly rather than reopening judging.
+      update.judging_finalized = true;
+    } else {
+      const a = (artist_guess   ?? "").slice(0, 120);
+      const s = (songname_guess ?? "").slice(0, 120);
+      update.artist_guess   = a;
+      update.songname_guess = s;
+      if (a.trim() !== "" || s.trim() !== "") {
+        update.judging_started_at = new Date().toISOString();
+      }
+
+      // Auto-judge against canonical + stored accepted answers. If both
+      // fields auto-resolve to true, also mark judging_finalized so the
+      // bonus path can fire without a human in the loop.
+      const accepted = await lookupAcceptedAnswers(env, round.track.id);
+      const artistMatch = a.trim() ? autoJudgeGuess(a, "artist",   round.track.artist, accepted) : null;
+      const songMatch   = s.trim() ? autoJudgeGuess(s, "songname", round.track.name,   accepted) : null;
+      if (artistMatch) {
+        update.artist_correct = true;
+        console.log(`[auto-judge] artist "${a}" matched ${artistMatch.matched}${artistMatch.storedConfirmations ? ` (confirmations=${artistMatch.storedConfirmations})` : ""} for ${round.track.id}`);
+      }
+      if (songMatch) {
+        update.songname_correct = true;
+        console.log(`[auto-judge] songname "${s}" matched ${songMatch.matched}${songMatch.storedConfirmations ? ` (confirmations=${songMatch.storedConfirmations})` : ""} for ${round.track.id}`);
+      }
+      if (artistMatch && songMatch) update.judging_finalized = true;
     }
-    if (songMatch) {
-      update.songname_correct = true;
-      console.log(`[auto-judge] songname "${s}" matched ${songMatch.matched}${songMatch.storedConfirmations ? ` (confirmations=${songMatch.storedConfirmations})` : ""} for ${round.track.id}`);
-    }
-    if (artistMatch && songMatch) update.judging_finalized = true;
   }
 
   await updateRound(env, round_id, update);
@@ -295,6 +345,11 @@ async function handleGuess(req: Request, roomId: string, env: Env) {
   ]);
   if (!room || !round)             return json({ error: "Not found" }, 404, req);
   if (round.outcome !== "correct") return json({ error: "Cannot guess on this round" }, 400, req);
+  if (effectiveGuessMode(room) === "search") {
+    // The pick is graded at placement time and finalized there; a late
+    // free-text guess would have nothing to grade it against.
+    return json({ error: "This room uses search guessing — pick a track when you place." }, 400, req);
+  }
 
   const captain = players.find(p => p.team_id === room.active_team_id && p.is_captain);
   if (!actsAsCaptain(room, captain, player_id)) {
@@ -325,6 +380,12 @@ async function handleJudge(req: Request, roomId: string, env: Env) {
   ]);
   if (!room || !round)             return json({ error: "Not found" }, 404, req);
   if (round.outcome !== "correct") return json({ error: "Cannot judge this round" }, 400, req);
+  if (effectiveGuessMode(room) === "search") {
+    // No judging surface exists in search mode. A wrongly-graded field goes
+    // through ?action=dispute-guess instead, which re-grades this one field
+    // and can only ever upgrade it.
+    return json({ error: "Search-mode rooms don't use judging — file a dispute instead." }, 400, req);
+  }
   if (round.judging_finalized)     return json({ error: "Judgment already finalized" }, 409, req);
 
   const me = players.find(p => p.id === player_id);
@@ -461,6 +522,138 @@ async function handleApproveYear(req: Request, roomId: string, env: Env) {
     issue_request_type:            null,
   } as Partial<TlRound>);
   return json({ ok: true, approved: approve, refunded: approve && wantRefund }, 200, req);
+}
+
+// ── "My guess was graded wrong" (migration 030) ─────────────────────────────
+//
+// Search mode has no judge to re-press, and vote-all locks its verdict with
+// judging_finalized — so a wrongly-graded field previously had no recovery
+// path in either. This propose/approve pair is that path.
+//
+// Refunds are free here, and that is not an accident: both award functions
+// are idempotent additive top-ups, so "give back the lost coin" is just
+// "flip the boolean and call them again".
+//   • shop   — maybeAwardShopPoints guards on shop_*_pointed and credits
+//              exactly the field that changed.
+//   • bonus/ — awardBonusIfEligible guards on bonus_awarded. If the turn
+//     standard hasn't advanced the token simply hasn't been granted yet;
+//              if it has, this call grants it late. Either way, once.
+//
+// Approval can only ever flip false → true. Mirrors applyYearCorrection's
+// never-demote rule (round.ts) so the branch can't be used to strip coins.
+
+async function applyGuessDispute(
+  env: Env,
+  roomId: string,
+  round: TlRound,
+  field: "artist" | "songname",
+  byId: string,
+  byName: string,
+): Promise<void> {
+  await updateRound(env, round.id, (
+    field === "artist" ? { artist_correct: true } : { songname_correct: true }
+  ) as Partial<TlRound>);
+
+  // Teach the global accepted-answers table so this variant auto-passes in
+  // every future room. This is what makes the false-negative rate decay
+  // with play instead of recurring forever — same idea as the year
+  // corrections table, and it benefits typed-mode rooms too.
+  const guess = field === "artist" ? round.artist_guess : round.songname_guess;
+  if (guess && guess.trim()) {
+    await recordAcceptedAnswer(env, {
+      trackId:    round.track.id,
+      kind:       field,
+      rawGuess:   guess,
+      playerId:   byId,
+      playerName: byName,
+      sourceRoom: roomId,
+    });
+  }
+
+  // Re-run both award paths against the corrected verdict.
+  const room  = await getRoom(env, roomId);
+  const teams = await getTeams(env, roomId);
+  const team  = teams.find(t => t.id === round.team_id);
+  if (!room || !team) return;
+  const tokenEconomy = (room.settings?.tokenEconomy ?? "bonus") as "standard" | "bonus" | "shop";
+  const fresh = await getRound(env, round.id);
+  const topped = await maybeAwardShopPoints(env, fresh, team, tokenEconomy) ?? team;
+  await awardBonusIfEligible(env, fresh, topped, roomId, tokenEconomy);
+}
+
+async function handleDisputeGuess(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as DisputeGuessRequest;
+  const { round_id, player_id, field } = body;
+
+  if (field !== "artist" && field !== "songname") {
+    return json({ error: "field must be 'artist' or 'songname'" }, 400, req);
+  }
+
+  const [room, round, players] = await Promise.all([
+    getRoom(env, roomId), getRound(env, round_id), getPlayers(env, roomId),
+  ]);
+  if (!room || !round)             return json({ error: "Not found" }, 404, req);
+  if (round.outcome !== "correct") return json({ error: "Nothing was graded on this round" }, 400, req);
+
+  const me = players.find(p => p.id === player_id);
+  if (!me) return json({ error: "Not in room" }, 403, req);
+
+  // Only the team that was graded can dispute — an opponent has no standing,
+  // and letting them file would just be a griefing surface.
+  const isHost = me.is_host || room.host_id === player_id;
+  if (!isHost && me.team_id !== round.team_id) {
+    return json({ error: "Only the graded team can dispute" }, 403, req);
+  }
+
+  // Upgrade-only: a field that is already true has nothing to win.
+  const current = field === "artist" ? round.artist_correct : round.songname_correct;
+  if (current === true) return json({ error: "That field is already correct" }, 400, req);
+
+  if (round.guess_dispute_field) {
+    return json({ error: "A dispute is already pending on this round" }, 409, req);
+  }
+
+  // Host applies immediately, same as year corrections.
+  if (isHost) {
+    await applyGuessDispute(env, roomId, round, field, me.id, me.name);
+    return json({ ok: true, applied: true, field }, 200, req);
+  }
+
+  await updateRound(env, round_id, {
+    guess_dispute_field:         field,
+    guess_dispute_proposed_by:   player_id,
+    guess_dispute_proposed_name: me.name,
+    issue_request_type:          "guess",
+  } as Partial<TlRound>);
+  return json({ ok: true, proposed: field }, 200, req);
+}
+
+async function handleApproveDispute(req: Request, roomId: string, env: Env) {
+  const body = await req.json() as ApproveDisputeRequest;
+  const { round_id, player_id, approve } = body;
+
+  const [room, round] = await Promise.all([getRoom(env, roomId), getRound(env, round_id)]);
+  if (!room || !round) return json({ error: "Not found" }, 404, req);
+  if (room.host_id !== player_id) return json({ error: "Only the host can approve" }, 403, req);
+  if (!round.guess_dispute_field) return json({ error: "No pending dispute" }, 400, req);
+
+  const field = round.guess_dispute_field;
+  if (approve) {
+    await applyGuessDispute(
+      env, roomId, round, field,
+      round.guess_dispute_proposed_by   ?? player_id,
+      round.guess_dispute_proposed_name ?? "host",
+    );
+  }
+
+  // Clear the proposal either way.
+  await updateRound(env, round_id, {
+    guess_dispute_field:         null,
+    guess_dispute_proposed_by:   null,
+    guess_dispute_proposed_name: null,
+    issue_request_type:          null,
+  } as Partial<TlRound>);
+  return json({ ok: true, approved: approve, field }, 200, req);
 }
 
 // Update the round's corrected_year and propagate the new year to every place
@@ -628,6 +821,12 @@ async function handleRedoRound(req: Request, roomId: string, env: Env) {
     judging_started_at:    null,
     judging_finalized:     false,
     bonus_awarded:         false,
+    // Migration 030 — a redo replays the round from scratch, so the pick
+    // and any in-flight grading dispute must go with it.
+    songname_pick_track_id:      null,
+    guess_dispute_field:         null,
+    guess_dispute_proposed_by:   null,
+    guess_dispute_proposed_name: null,
     video_report_approved: false,
     redo_requested_at:     new Date().toISOString(),
   } as Partial<TlRound>);
@@ -1037,6 +1236,9 @@ async function handleTurnActionInner(req: Request, roomId: string, env: Env, wai
       players.filter(p => !p.is_spectator).map(p => p.id),
       nextTrack.id,
     );
+    // Keep the typeahead index covering tracks the background pool top-up
+    // added after start.ts indexed the initial pool.
+    void indexTracks(env, [nextTrack], "pool");
     const newCursor = room.track_cursor + 1;
     // In all-clients-stream mode there's no bot or Spotify player to stamp
     // playing_since — auto-stamp here so each client's <audio> sees the
@@ -1433,6 +1635,9 @@ async function advanceTurn(
     revealed_at:    null,
     corrected_year: nextCorrected,
   });
+
+  // Same top-up coverage as the "next" branch above.
+  void indexTracks(env, [nextTrack], "pool");
 
   // Recently-heard blacklist — every non-spectator player just heard this.
   const turnPlayers = await getPlayers(env, roomId);

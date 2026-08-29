@@ -1,0 +1,23 @@
+# apps/timelinedrop — local Pages Functions config for `npm run dev:functions`.
+# Copy to `.dev.vars` (gitignored) and fill in. NEVER commit the real file.
+#
+# SUPABASE_URL and COOKIE_DOMAIN already come from wrangler.toml [vars] —
+# only the secrets belong here.
+
+# Service-role key. You already have a copy in bots/musix-discord/.env, and it
+# is a Pages secret on the account project. Server-side only — it must never
+# appear in src/ or in a VITE_ variable.
+SUPABASE_SERVICE_ROLE_KEY=<paste-the-service-role-key>
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+# Only needed for paths that hit Spotify: playlist import, catalog import in
+# "browser" audio mode, and group-taste/spotify-taste curation.
+#
+# NOT needed to exercise search guess mode: /track-search uses Deezer (keyless)
+# plus the local tl_track_index, and a quick-start room in all-clients-stream
+# audio mode imports its catalog playlist without a Spotify token.
+SPOTIFY_CLIENT_ID=<spotify-app-client-id>
+SPOTIFY_CLIENT_SECRET=<spotify-app-client-secret>
+
+# Only needed for group-taste curation.
+LASTFM_API_KEY=<lastfm-api-key>

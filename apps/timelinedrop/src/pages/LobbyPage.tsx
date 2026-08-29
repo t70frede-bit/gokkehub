@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, CopyInviteButton, Input, Modal, Panel, Toggle } from "@gokkehub/ui";
 import { useRoom } from "../hooks/useRoom";
 import { supabase } from "../lib/supabase";
 import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
-import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy, TlPlaylistCatalogEntry } from "../lib/types";
+import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy, GuessMode, TlPlaylistCatalogEntry } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
@@ -55,6 +55,9 @@ export default function LobbyPage() {
   const [catalogGenre,   setCatalogGenre]   = useState<string | null>(null);
   const [starting,       setStarting]       = useState(false);
   const [startError,     setStartError]     = useState<string | null>(null);
+  // ⚡ Quick start auto-fill of the track pool (see the effect below).
+  const [quickFilling,   setQuickFilling]   = useState(false);
+  const [quickError,     setQuickError]     = useState<string | null>(null);
   // "Advanced settings" collapse on the host's settings panel
   const [advancedOpen,   setAdvancedOpen]   = useState(false);
   // Lobby tabs — host-only toggle between team formation and full
@@ -105,6 +108,51 @@ export default function LobbyPage() {
   // saveSettings is stable enough; we want this to fire on the gate flipping.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateLoaded, meIsHost, hostHasSpotifyEff, audioModeEff]);
+
+  // ⚡ Quick start: fill the track pool from the catalog on first load so the
+  // host never has to open Settings. This is what turns "create a room" into
+  // "press Start" — without it a quick-start room hits start.ts's "Need at
+  // least N songs" rejection.
+  //
+  // Done here rather than inside /room/create because catalog-import spends
+  // up to ~40 Spotify + ~40 iTunes lookups against Cloudflare's 50-subrequest
+  // budget; folding that into room creation would blow it. Also lives above
+  // the early return to keep the hook count stable.
+  const isQuickStart  = !!state?.room.settings?.quickStart;
+  const poolEmpty     = (state?.room.track_pool?.length ?? 0) === 0;
+  const quickFiredRef = useRef(false);
+  useEffect(() => {
+    if (!stateLoaded || !meIsHost || !isQuickStart || !poolEmpty) return;
+    if (quickFiredRef.current) return;   // once per mount; realtime re-renders would otherwise re-fire
+    quickFiredRef.current = true;
+    setQuickFilling(true);
+    void (async () => {
+      try {
+        const res  = await fetch("/catalog", { credentials: "include" });
+        const data = await res.json() as { items?: TlPlaylistCatalogEntry[] };
+        // /catalog is sorted by baseline_difficulty ascending, so the first
+        // entry is the friendliest pool we have — the right default for a
+        // group that hasn't chosen anything.
+        const entry = data.items?.[0];
+        if (!entry) { setQuickError("No catalog playlists available — add one under Advanced settings."); return; }
+        const imp = await fetch(`/room/${roomId}/catalog-import`, {
+          method:      "POST",
+          headers:     { "Content-Type": "application/json" },
+          credentials: "include",
+          body:        JSON.stringify({ player_id: myPlayerId, catalog_id: entry.id }),
+        });
+        if (!imp.ok) {
+          const raw = await imp.text().catch(() => "");
+          setQuickError(`Couldn't load songs automatically — pick a playlist under Advanced settings. (${raw.slice(0, 120)})`);
+        }
+      } catch {
+        setQuickError("Couldn't load songs automatically — pick a playlist under Advanced settings.");
+      } finally {
+        setQuickFilling(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateLoaded, meIsHost, isQuickStart, poolEmpty]);
 
   if (error)  return <Centered>Error: {error}</Centered>;
   if (!state) return <Centered>Loading…</Centered>;
@@ -352,23 +400,28 @@ export default function LobbyPage() {
     return (
       <Panel className="p-4">
         {startError && <p className="text-sm text-red-400 mb-3">⚠️ {startError}</p>}
+        {quickError && <p className="text-sm text-amber-400 mb-3">⚠️ {quickError}</p>}
         <Button
           onClick={startGame}
-          loading={starting}
-          disabled={tracksTooFew}
+          loading={starting || quickFilling}
+          disabled={tracksTooFew || quickFilling}
           className="w-full"
           size="lg"
         >
-          {starting && !isPlaylistMode
-            ? "🎵 Generating songs… this can take a few seconds"
-            : tracksTooFew
-              ? `Add a playlist first (${trackCount}/${minTracks})`
-              : "🎮 Start Game"}
+          {quickFilling
+            ? "🎵 Picking songs for you…"
+            : starting && !isPlaylistMode
+              ? "🎵 Generating songs… this can take a few seconds"
+              : tracksTooFew
+                ? `Add a playlist first (${trackCount}/${minTracks})`
+                : "🎮 Start Game"}
         </Button>
         <p className="text-xs mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-          {isPlaylistMode
-            ? `Each team starts with one card; minimum is ${minTracks} tracks`
-            : "Songs auto-generate from group taste when you press Start"}
+          {quickFilling
+            ? "Quick start is loading a playlist — this takes a few seconds"
+            : isPlaylistMode
+              ? `Each team starts with one card; minimum is ${minTracks} tracks`
+              : "Songs auto-generate from group taste when you press Start"}
         </p>
       </Panel>
     );
@@ -531,8 +584,47 @@ export default function LobbyPage() {
                   </div>
                 </div>
 
+                {/* How the guess is captured. "search" grades server-side and
+                    switches judging off entirely, so the judging block below
+                    is hidden while it's on (the stored judgeMode is kept, so
+                    switching back restores the host's choice). */}
+                <div>
+                  <p className="text-sm font-medium mb-2">How do players guess the song?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { value: "typed",  label: "⌨️ Type it",   hint: "Free text, then someone judges it" },
+                      { value: "search", label: "🔍 Search it", hint: "Pick the track from a search — graded instantly, no judging" },
+                    ] as const).map(({ value, label, hint }) => {
+                      const active = (settings.guessMode ?? "typed") === value;
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => saveSettings({ guessMode: value as GuessMode })}
+                          title={hint}
+                          className="text-left rounded-lg p-3 transition-all border"
+                          style={{
+                            borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                            background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                          }}
+                        >
+                          <p className="text-sm font-semibold">{label}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(settings.guessMode ?? "typed") === "search" && (
+                    <p className="text-xs mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                      Right artist or right song each still earn their 🪙. If the grader gets one wrong,
+                      the team can flag it on the reveal and the host approves.
+                    </p>
+                  )}
+                </div>
+
                 {/* Judging mode — vote-all and next-team-captain are pruned
-                    in gamemaster mode since they assume multiple humans. */}
+                    in gamemaster mode since they assume multiple humans.
+                    Hidden entirely in search mode: nobody judges. */}
+                {(settings.guessMode ?? "typed") !== "search" && (
                 <div>
                   <p className="text-sm font-medium mb-2">Who decides if the guess was right?</p>
                   <div className="grid grid-cols-2 gap-2">
@@ -587,6 +679,7 @@ export default function LobbyPage() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Turn timer */}
                 <div>
@@ -742,7 +835,12 @@ export default function LobbyPage() {
                 <p>Cards to win: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{room.win_target}</strong></p>
                 <p>Late join: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.lateJoinMode}</strong></p>
                 <p>Team swap: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.teamSwapEnabled ? "on" : "off"}</strong></p>
-                <p>Judging: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.judgeMode.replace(/-/g, " ")}</strong></p>
+                <p>Guessing: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+                  {(settings.guessMode ?? "typed") === "search" ? "search + auto-grade" : "typed"}
+                </strong></p>
+                {(settings.guessMode ?? "typed") !== "search" && (
+                  <p>Judging: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.judgeMode.replace(/-/g, " ")}</strong></p>
+                )}
               </div>
             </Panel>
           )}

@@ -5,7 +5,7 @@ import { getSessionId } from "@gokkehub/auth/session";
 import {
   getRoom, updateRoom, getTeams, getPlayers, updatePlayer,
   createRound, insertTimelineEntry, recordPlayedTracks,
-  lookupCorrectedYear,
+  lookupCorrectedYear, indexTracks,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
 
@@ -76,6 +76,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
       error: `Need at least ${minTracks} songs (one starting card per team + one for the first round). Add a Spotify playlist or switch to Group taste.`,
     }, 400, req);
   }
+
+  // Feed the whole pool into the local typeahead index (migration 030).
+  // This is what guarantees that in search-guess rooms the round's actual
+  // answer is always findable in the search field, regardless of what
+  // Deezer does or doesn't have. One batched upsert; fire-and-forget so a
+  // failure here can never block a game from starting.
+  void indexTracks(env, pool, "pool");
 
   // 1) Seed each team with one starting card so they have a year reference.
   for (let i = 0; i < teams.length; i++) {

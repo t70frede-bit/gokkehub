@@ -57,8 +57,35 @@ function sanitizeSettings(input: unknown): TlRoomSettings {
   if (s.tokenEconomy === "standard" || s.tokenEconomy === "bonus" || s.tokenEconomy === "shop") {
     out.tokenEconomy = s.tokenEconomy;
   }
+  if (s.guessMode === "typed" || s.guessMode === "search") {
+    out.guessMode = s.guessMode;
+  }
+  if (typeof s.quickStart === "boolean") out.quickStart = s.quickStart;
   return out;
 }
+
+// ⚡ Quick start preset. The whole point is that a host can create a room,
+// share the code, and press Start without ever opening the Settings tab —
+// so every setting that would otherwise block or confuse is decided here.
+//
+// guessMode "search" is the load-bearing one: it removes judging entirely,
+// which is the other thing a zero-setup room can't reasonably ask a group
+// of first-timers to configure and staff.
+//
+// Not decided here: audioMode. Create-Room already picks it from whether
+// the host has Spotify connected, and the Lobby self-heals it (LobbyPage's
+// effect flips a Spotify-less host to all-clients-stream).
+const QUICK_START_SETTINGS: TlRoomSettings = {
+  quickStart:        true,
+  guessMode:         "search",
+  songSource:        "playlist",   // pool comes from the catalog, filled by the Lobby
+  judgeMode:         "team-captain",
+  tokenEconomy:      "standard",
+  timerMode:         "none",
+  lateJoinMode:      "open",
+  skipRecentlyHeard: true,
+  winMode:           "first",
+};
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -86,7 +113,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     const session  = await getSession(env.SESSIONS, req);
     const roomId   = randomId();
     const playerId = crypto.randomUUID();
-    const sanitized = sanitizeSettings(settings);
+    // Quick start's preset wins over anything the client sent — the flow
+    // exists precisely so the host doesn't choose these.
+    const sanitized = body.quick
+      ? { ...sanitizeSettings(settings), ...QUICK_START_SETTINGS }
+      : sanitizeSettings(settings);
 
     // Role mapping. New clients send `role`; old clients send is_spectator/host_team.
     // - player:     joins a team, is_captain becomes true for that team

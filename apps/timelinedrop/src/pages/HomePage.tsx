@@ -52,6 +52,9 @@ export default function HomePage() {
   const [code, setCode] = useState("");
 
   const [loading, setLoading] = useState(false);
+  // Separate flag so only the Quick start button shows a spinner when it's
+  // the one that's working.
+  const [quickLoading, setQuickLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
@@ -101,6 +104,47 @@ export default function HomePage() {
     }
   }
 
+  // Quick start. Reuses /room/create with `quick: true` — the server owns
+  // the preset so a stale client can't half-apply it. The only thing we
+  // still need is a name, and a signed-in host already has one.
+  async function quickStart() {
+    const hostName = (name.trim() || session?.displayName || "").trim();
+    if (!hostName) {
+      // Not signed in and no name yet — fall back to the host modal, which
+      // already has the name field, rather than inventing a second one.
+      setShowHost(true);
+      return;
+    }
+    setLoading(true); setQuickLoading(true); setError(null);
+    try {
+      const body: CreateRoomRequest = {
+        name:        hostName,
+        win_target:  10,
+        team_names:  [defaultTeamName(0), defaultTeamName(1)],
+        team_colors: [TEAM_PALETTE[0], TEAM_PALETTE[1]],
+        host_team:   0,
+        role:        "player",
+        quick:       true,
+        settings:    { audioMode: session?.spotify ? "browser" : "all-clients-stream" },
+      };
+      const res  = await fetch("/room/create", {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        credentials: "include",
+        body:        JSON.stringify(body),
+      });
+      const data = await res.json() as CreateRoomResponse | { error: string };
+      if (!res.ok) { setError((data as { error: string }).error ?? "Failed to create room"); return; }
+      const ok = data as CreateRoomResponse;
+      localStorage.setItem(`tl_player_${ok.room_id}`, ok.player_id);
+      navigate(`/lobby/${ok.room_id}`);
+    } catch {
+      setError("Could not create room");
+    } finally {
+      setLoading(false); setQuickLoading(false);
+    }
+  }
+
   function goToJoin() {
     const roomId = code.trim().toUpperCase();
     if (!roomId) { setError("Enter a room code"); return; }
@@ -131,6 +175,27 @@ export default function HomePage() {
           </p>
         )}
       </div>
+
+      {/* ⚡ Quick start — the zero-setup path. Creates the room with the
+          server's preset (search guessing, no judging, catalog songs) and
+          drops the host straight into the Lobby with a code to share.
+          Everything is still changeable afterwards under Advanced settings. */}
+      {mode === "pick" && (
+        <div className="w-full max-w-lg">
+          <Button
+            variant="primary"
+            className="w-full py-4 text-lg"
+            loading={loading && quickLoading}
+            onClick={quickStart}
+          >
+            ⚡ Quick start
+          </Button>
+          <p className="text-xs text-center mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            Two teams, songs picked for you, no settings to read. Just share the code.
+          </p>
+          {error && <p className="text-sm text-red-400 text-center mt-2">{error}</p>}
+        </div>
+      )}
 
       {/* Main mode: card menu */}
       {mode === "pick" && (

@@ -29,6 +29,21 @@ export type JudgeMode =
   | "host"
   | "vote-all";
 
+// How the captain's artist/song guess is captured and graded.
+//   "typed"  — free-text fields; a human judge decides (judgeMode picks who),
+//              with autoJudgeGuess resolving the obvious ones automatically.
+//   "search" — the captain PICKS a track from a typeahead (/track-search).
+//              The server grades the pick deterministically and finalizes
+//              judging on the spot: no judge window, no vote timer, and
+//              judgeMode is ignored entirely. The stored judgeMode value is
+//              left untouched so switching back restores the host's choice
+//              (same pattern gamemasterMode uses).
+//
+// Grading stays PER FIELD in search mode, so the shop economy is unchanged:
+// right artist + wrong song, or right song + wrong artist, each still earn
+// their one coin.
+export type GuessMode = "typed" | "search";
+
 export type Difficulty = "easy" | "medium" | "hard" | "hardest";
 export type PlaylistMode = "as-is" | "inspiration" | "smart-filter";
 
@@ -156,6 +171,12 @@ export interface TlRoomSettings {
   timerMode?:          TimerMode;     // none (default) | song-length | fixed
   timerSeconds?:       number;        // used when timerMode === "fixed"
   tokenEconomy?:       TokenEconomy;  // standard (default) | bonus | shop
+  guessMode?:          GuessMode;     // typed (default) | search — see GuessMode
+  /** Set by the ⚡ Quick start flow. Tells the Lobby to auto-fill the track
+   *  pool from the catalog on first load so the host never has to open
+   *  Settings, and switches the Lobby to its slim "share the code and go"
+   *  layout. Cleared once the host opens Advanced settings. */
+  quickStart?:         boolean;
   /** @deprecated — sync mode dropped, all-clients-stream is always independent. */
   streamSyncMode?:     StreamSyncMode;
   /** Game-end behaviour — first to target vs. tiebreaker cycle. */
@@ -202,6 +223,8 @@ export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
   timerMode:         "none",           // captain plays at their own pace
   timerSeconds:      120,
   tokenEconomy:      "standard",       // one Song Skipper per correct round, classic Hitster
+  guessMode:         "typed",          // free-text + human judge; quick-start rooms flip this to "search"
+  quickStart:        false,
   streamSyncMode:    "independent",
   winMode:           "first",
   tiebreaker:        { active: false, played_team_ids: [] },
@@ -383,7 +406,21 @@ export interface TlRound {
   //   "year_refund" → year correction + un-burn the team's used token
   //   "video"       → wrong-video report
   //   "video_redo"  → video report + trigger redo on approval
+  //   "guess"       → migration 030; a graded-wrong artist/songname field
   issue_request_type:             string | null;
+  // Migration 030 — search guess mode.
+  // The Spotify id of the track the captain picked, when the pick came from
+  // our own tl_track_index. Lets the grader short-circuit to an exact id
+  // compare. Null for typed rounds and for Deezer-only picks.
+  songname_pick_track_id:         string | null;
+  // "My guess was graded wrong" propose/approve. Which field is disputed
+  // ("artist" | "songname"), and who raised it. Cleared on resolve.
+  // Approval can only ever flip a field false → true; the handler rejects
+  // the reverse, mirroring applyYearCorrection's never-demote rule so the
+  // branch can't be used to strip an opponent's coins.
+  guess_dispute_field:            "artist" | "songname" | null;
+  guess_dispute_proposed_by:      string | null;
+  guess_dispute_proposed_name:    string | null;
   // Migration 025 — Steal by Year. After an opposing team's wrong
   // placement, the opposing captain can spend steal_by_year to guess
   // the exact year (±tolerance). Year stays hidden in the reveal UI
@@ -514,6 +551,9 @@ export interface CreateRoomRequest {
    *  for old clients that don't send role. */
   role?:         CreateRoomRole;
   settings?:     TlRoomSettings;
+  /** ⚡ Quick start. The server overwrites `settings` with its own preset —
+   *  the flow exists so the host doesn't have to choose any of it. */
+  quick?:        boolean;
 }
 
 export interface CreateRoomResponse {
@@ -572,6 +612,21 @@ export interface PlacementRequest {
   right_year:      number | null;
   artist_guess?:   string;  // optional; provided when captain confirms guess together with placement
   songname_guess?: string;
+  /** guessMode === "search" only. The track the captain picked from the
+   *  typeahead. The server grades it deterministically (no human judge)
+   *  and still writes artist_guess / songname_guess from these two
+   *  strings, so every downstream reveal/history surface keeps working. */
+  pick?:           SearchPickPayload | null;
+}
+
+/** One row from GET /track-search, as sent back on placement.
+ *  Deliberately carries no release year — see the note in
+ *  functions/track-search.ts about why the typeahead must never leak it. */
+export interface SearchPickPayload {
+  /** Present only for local-index hits; enables an exact-id verdict. */
+  spotifyId?: string;
+  title:      string;
+  artist:     string;
 }
 
 export interface PlacementResponse {
@@ -604,6 +659,20 @@ export interface ProposeYearCorrectionRequest {
 }
 
 export interface ApproveYearCorrectionRequest {
+  round_id:  number;
+  player_id: string;     // host
+  approve:   boolean;
+}
+
+/** "My guess was graded wrong" (migration 030). One field per dispute so
+ *  the host's approval banner is unambiguous about what they're agreeing to. */
+export interface DisputeGuessRequest {
+  round_id:  number;
+  player_id: string;
+  field:     "artist" | "songname";
+}
+
+export interface ApproveDisputeRequest {
   round_id:  number;
   player_id: string;     // host
   approve:   boolean;

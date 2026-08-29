@@ -12,7 +12,7 @@ import { supabase } from "../lib/supabase";
 // /room/:id/dev endpoint by the SAME list against session.displayName, so
 // changing this here without updating the server has no effect.
 const DEV_USERNAMES = new Set(["goksi0501"]);
-import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, TlTeamToken } from "../lib/types";
+import type { TlTimelineEntry, SpotifyTrack, TlRound, TlPlayer, TlNote, JudgeMode, GuessMode, TlTeamToken } from "../lib/types";
 import { DEFAULT_TL_SETTINGS, TIMER_DEFAULT_FALLBACK_SECONDS, SHOP_TOKEN_COSTS, STREAM_PROXY_URL, STREAM_PROXY_TOKEN } from "../lib/types";
 import { TOKEN_CATALOG, CATEGORY_META, type TokenType, type TokenSpec, type TokenCategory } from "../lib/tokens";
 
@@ -621,6 +621,209 @@ function PlayerFooter({
 // - Duplicates collapse into one chip ("×3 Drake") and float to the top.
 // - Click-to-fill is only enabled for the captain (onPick provided).
 // - Read-only mode hides the input entirely (used for non-active viewers).
+// ── Search guess mode: pick a track instead of typing ───────────────────────
+//
+// One combined field. The picked track carries BOTH an artist and a title,
+// which the server grades independently — so "wrong song, right artist" and
+// "right song, wrong artist" each still earn their single shop coin. A
+// player who only recognises the band searches the band name and picks any
+// of their songs.
+//
+// Results deliberately show no release year: the whole game is placing the
+// song on a timeline, so a year in this dropdown would hand over the answer.
+// The endpoint doesn't send one — see functions/track-search.ts.
+interface TrackSearchResult {
+  id:         string;
+  title:      string;
+  artist:     string;
+  coverUrl:   string | null;
+  spotifyId?: string;
+}
+
+const SEARCH_DEBOUNCE_MS = 250;
+
+function TrackSearchField({
+  label, pick, onPick, suggestions, readOnly,
+}: {
+  label:  string;
+  pick:   TrackSearchResult | null;
+  onPick: (t: TrackSearchResult | null) => void;
+  /** Teammate suggestions. Clicking one loads it into the search box rather
+   *  than committing it — the picker is still the only way to commit, so a
+   *  teammate's typo can't become the captain's answer. */
+  suggestions: TlNote[];
+  readOnly?:   boolean;
+}) {
+  const [query,   setQuery]   = useState("");
+  const [results, setResults] = useState<TrackSearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open,    setOpen]    = useState(false);
+  const [active,  setActive]  = useState(0);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  // Guards against an older, slower request overwriting a newer one's
+  // results — the classic typeahead race.
+  const seqRef = useRef(0);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    const seq = ++seqRef.current;
+    const t = setTimeout(async () => {
+      try {
+        const res  = await fetch(`/track-search?q=${encodeURIComponent(q)}`, { credentials: "include" });
+        const data = await res.json() as { items?: TrackSearchResult[] };
+        if (seq !== seqRef.current) return;
+        setResults(data.items ?? []);
+        setActive(0);
+      } catch {
+        if (seq === seqRef.current) setResults([]);
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Close the dropdown on outside click so it doesn't hover over the
+  // timeline while the captain is choosing a gap.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  function choose(t: TrackSearchResult) {
+    onPick(t);
+    setQuery("");
+    setResults([]);
+    setOpen(false);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || results.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(i => Math.min(i + 1, results.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(i => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter")   { e.preventDefault(); choose(results[active]); }
+    else if (e.key === "Escape")  { setOpen(false); }
+  }
+
+  const chips = suggestions.slice(-6).reverse();
+
+  return (
+    <div className="flex flex-col gap-1.5" ref={boxRef}>
+      <label className="text-sm font-medium" style={{ color: "rgb(var(--text-secondary-rgb))" }}>
+        {label}
+      </label>
+
+      {chips.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "thin", maxHeight: 72 }}>
+          {chips.map((n, i) => (
+            <button
+              key={i}
+              onClick={readOnly ? undefined : () => { setQuery(n.content); setOpen(true); }}
+              disabled={readOnly}
+              className="flex-shrink-0 px-2 py-1 rounded-md text-xs whitespace-nowrap"
+              style={{
+                background: "rgba(var(--color-secondary-rgb),0.12)",
+                border:     "1px solid rgba(var(--color-secondary-rgb),0.3)",
+                cursor:     readOnly ? "default" : "pointer",
+              }}
+              title={readOnly ? `${n.player_name} suggests` : `${n.player_name} suggests — click to search it`}
+            >
+              {n.content}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Chosen track — replaces the input until cleared. */}
+      {pick ? (
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-md"
+          style={{
+            background: "rgba(var(--color-primary-rgb),0.12)",
+            border:     "1px solid rgba(var(--color-primary-rgb),0.4)",
+          }}
+        >
+          {pick.coverUrl && (
+            <img src={pick.coverUrl} alt="" width={32} height={32} className="rounded flex-shrink-0" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold truncate">{pick.title}</p>
+            <p className="text-xs opacity-60 truncate">{pick.artist}</p>
+          </div>
+          {!readOnly && (
+            <button
+              onClick={() => onPick(null)}
+              className="text-xs opacity-60 hover:opacity-100 px-1"
+              title="Choose a different track"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ) : readOnly ? (
+        <p className="text-xs opacity-40 italic py-2">Waiting for the active team to pick…</p>
+      ) : (
+        <div className="relative">
+          <input
+            value={query}
+            onChange={e => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={onKeyDown}
+            placeholder="Search a song or artist…"
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border:     "1px solid rgba(255,255,255,0.15)",
+              color:      "rgb(var(--text-primary-rgb))",
+            }}
+          />
+          {open && query.trim().length >= 2 && (
+            <div
+              className="absolute z-30 left-0 right-0 mt-1 rounded-md overflow-y-auto"
+              style={{
+                maxHeight:  260,
+                background: "rgb(var(--surface-raised-rgb, 30 30 34))",
+                border:     "1px solid rgba(255,255,255,0.15)",
+                boxShadow:  "0 8px 24px rgba(0,0,0,0.45)",
+              }}
+            >
+              {loading && results.length === 0 && (
+                <p className="text-xs opacity-50 px-3 py-2">Searching…</p>
+              )}
+              {!loading && results.length === 0 && (
+                <p className="text-xs opacity-50 px-3 py-2">No matches — try fewer words.</p>
+              )}
+              {results.map((r, i) => (
+                <button
+                  key={r.id}
+                  onClick={() => choose(r)}
+                  onMouseEnter={() => setActive(i)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                  style={{ background: i === active ? "rgba(var(--color-primary-rgb),0.16)" : "transparent" }}
+                >
+                  {r.coverUrl
+                    ? <img src={r.coverUrl} alt="" width={28} height={28} className="rounded flex-shrink-0" />
+                    : <div className="w-7 h-7 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }} />}
+                  <div className="min-w-0">
+                    <p className="text-sm truncate">{r.title}</p>
+                    <p className="text-xs opacity-60 truncate">{r.artist}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SuggestionField({
   label, placeholder, value, onChange, suggestions, onPick, readOnly,
 }: {
@@ -1458,6 +1661,13 @@ interface RevealProps {
   onJudge:              (verdict: boolean) => Promise<void>;
   /** Shop mode only: judge artist + songname independently (1 point each). */
   onJudgeKind:          (kind: "artist" | "songname", verdict: boolean) => Promise<void>;
+  /** "search" replaces the judge UI with read-only verdicts + a dispute link. */
+  guessMode:            GuessMode;
+  /** True when this viewer is on the graded team (or is the host) and may
+   *  therefore file a "graded wrong" dispute. */
+  canDispute:           boolean;
+  onDisputeGuess:       (field: "artist" | "songname") => Promise<void>;
+  onApproveDispute:     (approve: boolean) => Promise<void>;
   /** tokenEconomy === "shop" — split the combined judge into per-field rows. */
   shopEnabled:          boolean;
   onFinalize:           () => Promise<void>;
@@ -1494,7 +1704,9 @@ function RevealOverlay({
   onJudge, onJudgeKind, shopEnabled, onFinalize, onStop, onNext, onProposeYear, onApproveYear,
   onRecoveryPick, onReportVideo, onApproveVideoReport, onRedoRound, stealCtx,
   canPassAlong, onPassAlong,
+  guessMode, canDispute, onDisputeGuess, onApproveDispute,
 }: RevealProps) {
+  const isSearchMode   = guessMode === "search";
   const isCorrect      = round.outcome === "correct";
   // hasGuess: did the captain type any artist/song name with the placement?
   const hasGuess       = (round.artist_guess?.trim() ?? "") !== "" || (round.songname_guess?.trim() ?? "") !== "";
@@ -1752,7 +1964,38 @@ function RevealOverlay({
               )}
             </div>
 
-            {shopEnabled ? (
+            {isSearchMode ? (
+              // Search mode: the server already graded both fields, per field
+              // and independently — right artist OR right song each earn
+              // their coin. Nobody judges; the only affordance is disputing a
+              // ✗ that should have been a ✓.
+              <div className="space-y-2">
+                <GradedFieldRow
+                  label="Song name"
+                  guess={round.songname_guess ?? ""}
+                  actual={round.track.name}
+                  verdict={round.songname_correct}
+                  canDispute={canDispute}
+                  disputePending={round.guess_dispute_field === "songname"}
+                  onDispute={() => void onDisputeGuess("songname")}
+                />
+                <GradedFieldRow
+                  label="Artist"
+                  guess={round.artist_guess ?? ""}
+                  actual={round.track.artist}
+                  verdict={round.artist_correct}
+                  canDispute={canDispute}
+                  disputePending={round.guess_dispute_field === "artist"}
+                  onDispute={() => void onDisputeGuess("artist")}
+                />
+                <p className="text-[11px] opacity-50 text-center">
+                  {shopEnabled
+                    ? "Each correct field = 1 point 🪙"
+                    : "Both fields right earns a 🪙 token"}
+                </p>
+                <DisputeWidget round={round} isHost={isHost} onApprove={onApproveDispute} />
+              </div>
+            ) : shopEnabled ? (
               // Shop mode: artist + song scored independently (1 point each),
               // so judge each on its own row instead of one combined verdict.
               <div className="space-y-2">
@@ -1793,6 +2036,29 @@ function RevealOverlay({
 
             {!isJudgeEligible && !finalized && (
               <p className="text-xs text-center opacity-50">{judgePendingMessage(judgeMode)}</p>
+            )}
+
+            {/* Vote-all is the one typed mode with no way back: handleFinalize
+                stamps judging_finalized and handleJudge then 409s, so a
+                wrongly-voted field is locked forever. The other typed modes
+                don't need this — their judge can simply press ✓ again, and
+                the shop top-up follows automatically. */}
+            {!isSearchMode && isVoteMode && finalized && (
+              <>
+                {(["songname", "artist"] as const)
+                  .filter(f => (f === "artist" ? round.artist_correct : round.songname_correct) === false)
+                  .filter(() => canDispute && !round.guess_dispute_field)
+                  .map(f => (
+                    <button
+                      key={f}
+                      onClick={() => void onDisputeGuess(f)}
+                      className="block mx-auto text-[11px] opacity-60 hover:opacity-100 underline"
+                    >
+                      The {f === "artist" ? "artist" : "song name"} was right — voted down wrongly?
+                    </button>
+                  ))}
+                <DisputeWidget round={round} isHost={isHost} onApprove={onApproveDispute} />
+              </>
             )}
           </Panel>
         )}
@@ -1965,6 +2231,114 @@ function SplitJudgeRow({
         </button>
       </div>
     </div>
+  );
+}
+
+// ── Search mode: read-only verdict + "graded wrong?" ────────────────────────
+// The server already decided; nobody judges. The dispute link is the only
+// route back, and it can only ever upgrade a ✗ to a ✓ — never the reverse —
+// so it isn't a griefing surface.
+function GradedFieldRow({
+  label, guess, actual, verdict, canDispute, disputePending, onDispute,
+}: {
+  label:           string;
+  guess:           string;
+  actual:          string;
+  verdict:         boolean | null;
+  canDispute:      boolean;
+  disputePending:  boolean;
+  onDispute:       () => void;
+}) {
+  const ok = verdict === true;
+  return (
+    <div className="rounded-lg p-3"
+      style={{
+        background: ok ? "rgba(40,180,60,0.10)" : "rgba(255,255,255,0.03)",
+        border:    `1px solid ${ok ? "rgba(40,180,60,0.35)" : "rgba(255,255,255,0.06)"}`,
+      }}>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wider opacity-50">{label}</p>
+        <span className="text-sm font-bold"
+          style={{ color: ok ? "rgb(40,180,60)" : "rgb(220,60,60)" }}>
+          {ok ? "✓" : "✗"}
+        </span>
+      </div>
+      <p className="text-sm">
+        <span className="opacity-60">You picked </span>
+        <span className="font-semibold">{guess || <span className="opacity-40 italic">—</span>}</span>
+      </p>
+      <p className="text-xs">
+        <span className="opacity-50">Actual </span>
+        <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actual}</span>
+      </p>
+      {!ok && canDispute && !disputePending && (
+        <button
+          onClick={onDispute}
+          className="mt-1.5 text-[11px] opacity-60 hover:opacity-100 underline"
+        >
+          That was right — graded wrong?
+        </button>
+      )}
+      {!ok && disputePending && (
+        <p className="mt-1.5 text-[11px] opacity-60">⏳ Waiting for the host to review…</p>
+      )}
+    </div>
+  );
+}
+
+// Host-facing approval banner for a pending "graded wrong" dispute.
+// Mirrors VideoReportWidget's shape.
+function DisputeWidget({
+  round, isHost, onApprove,
+}: {
+  round:     TlRound;
+  isHost:    boolean;
+  onApprove: (approve: boolean) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!round.guess_dispute_field) return null;
+  const fieldLabel = round.guess_dispute_field === "artist" ? "Artist" : "Song name";
+  const claimed    = round.guess_dispute_field === "artist"
+    ? round.artist_guess
+    : round.songname_guess;
+  const actual     = round.guess_dispute_field === "artist"
+    ? round.track.artist
+    : round.track.name;
+
+  if (!isHost) {
+    return (
+      <div className="text-xs text-center opacity-60 py-2">
+        ⏳ {round.guess_dispute_proposed_name} says the {fieldLabel.toLowerCase()} was graded wrong — waiting for host
+      </div>
+    );
+  }
+
+  async function act(approve: boolean) {
+    setBusy(true);
+    try { await onApprove(approve); } finally { setBusy(false); }
+  }
+
+  return (
+    <Panel className="p-3 space-y-2"
+      style={{ borderColor: "rgba(var(--color-secondary-rgb),0.45)" }}>
+      <p className="text-xs">
+        <span className="font-semibold">{round.guess_dispute_proposed_name}</span>
+        {" "}says the {fieldLabel.toLowerCase()} was graded wrong:
+      </p>
+      <p className="text-sm">
+        <span className="opacity-60">picked </span>
+        <span className="font-semibold">{claimed || "—"}</span>
+        <span className="opacity-60"> · actual </span>
+        <span className="font-semibold" style={{ color: "rgb(var(--color-secondary-rgb))" }}>{actual}</span>
+      </p>
+      <p className="text-[11px] opacity-50">
+        Approving awards the missing 🪙 and teaches the matcher this variant, so it passes automatically from now on.
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={() => act(true)} loading={busy} className="flex-1">✓ Approve</Button>
+        <Button size="sm" variant="ghost" onClick={() => act(false)} disabled={busy} className="flex-1">Dismiss</Button>
+      </div>
+    </Panel>
   );
 }
 
@@ -2574,6 +2948,9 @@ export default function GamePage() {
   // Lifted guess inputs so chat-pull buttons can write into them.
   const [guessArtist,   setGuessArtist]   = useState("");
   const [guessSongname, setGuessSongname] = useState("");
+  // Search guess mode: the single track the captain picked from the
+  // typeahead. Null until they choose one.
+  const [guessPick,     setGuessPick]     = useState<TrackSearchResult | null>(null);
 
   // Anti-spam cooldown for pings (per-client, in-memory).
   const pingTimestampsRef = useRef<number[]>([]);
@@ -2815,6 +3192,10 @@ export default function GamePage() {
   // (separate Node.js bot in the host's voice channel; see bots/musix-discord).
   // Default is browser to preserve the original behaviour.
   const audioMode  = state?.room.settings?.audioMode ?? "browser";
+  // "search" swaps the two free-text guess fields for one track picker and
+  // turns judging off entirely (the server grades the pick). judgeMode is
+  // left stored so switching back restores the host's choice.
+  const guessMode  = (state?.room.settings?.guessMode ?? "typed") as GuessMode;
   const browserAudio = audioMode === "browser";
 
   // In all-clients-stream mode, no Spotify SDK and no Discord bot write
@@ -2913,6 +3294,7 @@ export default function GamePage() {
   useEffect(() => {
     setGuessArtist("");
     setGuessSongname("");
+    setGuessPick(null);
   }, [state?.round?.id]);
 
   // Detect player departures and surface a toast.
@@ -3044,6 +3426,11 @@ export default function GamePage() {
           right_year:     stagedR,
           artist_guess:   guessArtist.trim(),
           songname_guess: guessSongname.trim(),
+          // Search mode: the server grades this and ignores the two text
+          // fields above (it rewrites them from the pick).
+          pick: guessPick
+            ? { spotifyId: guessPick.spotifyId, title: guessPick.title, artist: guessPick.artist }
+            : null,
           player_id:      myPlayerId,
         }),
       });
@@ -3067,6 +3454,26 @@ export default function GamePage() {
     await fetch(`/room/${roomId}/round?action=judge`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, kind, verdict }),
+    });
+  }
+
+  // Search mode: "that field was graded wrong". The host applies it
+  // immediately; anyone else's goes to the host for approval. Approval can
+  // only ever upgrade ✗ → ✓, and it also teaches the global accepted-answers
+  // table so the same variant never gets graded wrong again.
+  async function disputeGuess(field: "artist" | "songname") {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=dispute-guess`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, field }),
+    });
+  }
+
+  async function approveDispute(approve: boolean) {
+    if (!round) return;
+    await fetch(`/room/${roomId}/round?action=approve-dispute`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ round_id: round.id, player_id: myPlayerId, approve }),
     });
   }
 
@@ -4128,6 +4535,16 @@ export default function GamePage() {
           setGuessArtist("");
         };
 
+        // Search mode: a teammate's suggestion is a concrete track. Sent as
+        // two notes so the captain's chips stay grouped the same way typed
+        // mode groups them.
+        const sendPick = async () => {
+          if (!guessPick) return;
+          await sendSuggestion("song",   guessPick.title);
+          await sendSuggestion("artist", guessPick.artist);
+          setGuessPick(null);
+        };
+
         return (
           <Panel
             className="flex-shrink-0 p-3 space-y-2"
@@ -4168,6 +4585,18 @@ export default function GamePage() {
               </div>
             )}
 
+            {guessMode === "search" ? (
+              // One field, two independent verdicts. The captain commits;
+              // an active teammate uses the same picker to send a concrete
+              // track suggestion instead of free text.
+              <TrackSearchField
+                label={isCaptainHere ? "Find the song" : isActiveTeammate ? "Suggest a track" : "The song"}
+                pick={guessPick}
+                onPick={setGuessPick}
+                suggestions={[...songSuggestions, ...artistSuggestions]}
+                readOnly={isObserver}
+              />
+            ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <SuggestionField
                 label="Song name"
@@ -4188,6 +4617,7 @@ export default function GamePage() {
                 readOnly={isObserver}
               />
             </div>
+            )}
 
             <div className="flex gap-2 flex-wrap">
               {isCaptainHere && (
@@ -4221,8 +4651,10 @@ export default function GamePage() {
               )}
               {isActiveTeammate && (
                 <Button
-                  onClick={sendBoth}
-                  disabled={!guessSongname.trim() && !guessArtist.trim()}
+                  onClick={guessMode === "search" ? sendPick : sendBoth}
+                  disabled={guessMode === "search"
+                    ? !guessPick
+                    : (!guessSongname.trim() && !guessArtist.trim())}
                   className="flex-1 min-w-[160px]"
                 >
                   Send to captain
@@ -4232,7 +4664,9 @@ export default function GamePage() {
 
             {isCaptainHere && (
               <p className="text-[11px] opacity-40">
-                Click a gap to place the year. Both fields right earns a 🪙 token bonus — no penalty if wrong.
+                {guessMode === "search"
+                  ? "Click a gap to place the year. Right artist or right song each earn 🪙 — no penalty if wrong."
+                  : "Click a gap to place the year. Both fields right earns a 🪙 token bonus — no penalty if wrong."}
               </p>
             )}
             {isObserver && (
@@ -4363,6 +4797,14 @@ export default function GamePage() {
             pendingTracks={(activeTeam?.pending_tracks ?? []) as SpotifyTrack[]}
             onJudge={judge}
             onJudgeKind={judgeKind}
+            guessMode={settings.guessMode}
+            // Only the graded team can dispute — an opponent has no standing.
+            // The host can always act (they're the approver anyway).
+            canDispute={
+              !!myPlayer && (myPlayer.id === room.host_id || myPlayer.team_id === round.team_id)
+            }
+            onDisputeGuess={disputeGuess}
+            onApproveDispute={approveDispute}
             shopEnabled={settings.tokenEconomy === "shop"}
             onFinalize={finalizeJudgment}
             onStop={() => doTurnAction("stop")}

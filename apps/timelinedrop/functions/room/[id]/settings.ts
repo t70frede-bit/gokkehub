@@ -51,6 +51,10 @@ function sanitize(input: unknown): TlRoomSettings {
   if (s.winMode === "first" || s.winMode === "tiebreaker") {
     out.winMode = s.winMode;
   }
+  if (s.guessMode === "typed" || s.guessMode === "search") {
+    out.guessMode = s.guessMode;
+  }
+  if (typeof s.quickStart === "boolean") out.quickStart = s.quickStart;
   return out;
 }
 

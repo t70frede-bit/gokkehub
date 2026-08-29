@@ -17,9 +17,9 @@ on a timeline by year, multi-team, host-controlled, realtime via Supabase.
 - Pages: `src/pages/{HomePage,JoinPage,LobbyPage,GamePage,EndPage,DesignPage,DebugPage}.tsx`
 - State hooks: `src/hooks/useRoom.ts` (realtime sync + shop-ping TTL sweep), `useAudio.ts` (Spotify SDK + tab capture + stream modes), `useWebRTC.ts` (parked), `useSession.ts`. There is no `useDJAudio.ts` — the all-clients-stream audio is served by the bot's HTTP proxy and consumed in `useAudio.ts`.
 - Token catalog: `src/lib/tokens.ts` (16 specs, 5 categories); types + `SHOP_TOKEN_COSTS` in `src/lib/types.ts`; Supabase client in `src/lib/supabase.ts`
-- Pages Functions: `functions/room/create.ts` and `functions/room/[id]/{join,start,round,team,team-color,settings,curate,token,counter,steal-year,pass-along,captain-fix,picker,ping,shop-ping,kick,add-member,rename-team,remove-playlist,playlist,reset,dev,catalog-import}.ts`, plus top-level `functions/{catalog,debug-spotify,debug-spotify-taste,spotify-token}.ts` and `functions/spotify/token.ts`. (A song "catalog" import path exists alongside group-taste/playlist sources.)
+- Pages Functions: `functions/room/create.ts` and `functions/room/[id]/{join,start,round,team,team-color,settings,curate,token,counter,steal-year,pass-along,captain-fix,picker,ping,shop-ping,kick,add-member,rename-team,remove-playlist,playlist,reset,dev,catalog-import}.ts`, plus top-level `functions/{catalog,track-search,debug-spotify,debug-spotify-taste,spotify-token}.ts` and `functions/spotify/token.ts`. (A song "catalog" import path exists alongside group-taste/playlist sources.)
 - Curation: `functions/_curate.ts`, `_lastfm.ts`, `_spotify.ts` (defer deep audio/curation work to the audio-integration agent)
-- Schema: `supabase-migration*.sql` (current head 029) — defer schema changes to the supabase-migrations agent
+- Schema: `supabase-migration*.sql` (current head 030) — defer schema changes to the supabase-migrations agent
 
 ## How a game flows
 1. Host creates a room (max 2 teams, each with a cycle-on-click colour swatch).
@@ -37,6 +37,9 @@ on a timeline by year, multi-team, host-controlled, realtime via Supabase.
 - **Token Counter**: opposing captain has ~15s server-side to cancel; both tokens consumed; rollback flips the column the target set.
 - **Steal by Year / Pass Along / captain-fix** each have dedicated endpoints — read them before changing turn flow.
 - **Playlist shuffle scope**: adding a playlist mid-game only shuffles `pool.slice(cursor)`; played history stays put.
+- **Guess modes** (`settings.guessMode`, migration 030): `"typed"` is the original free-text + human-judge path. `"search"` has the captain pick a track from `/track-search`; `handlePlace` grades it via `gradeSearchPick` and sets `judging_finalized` on the spot, so `judgeMode` is ignored entirely (its stored value is left alone so switching back restores it) and `?action=guess` / `?action=judge` both reject. Grading stays **per field** — right artist OR right song each still earn their shop coin.
+- **Never demote**: `?action=dispute-guess` / `approve-dispute` can only flip a field `false → true`. Approving also writes `recordAcceptedAnswer`, so the fix applies globally to future rooms. Refunds need no arithmetic: `maybeAwardShopPoints` and `awardBonusIfEligible` are idempotent top-ups, so re-calling them after the flip credits exactly what was missed.
+- **`/track-search` must never return a release year** — the game is guessing the year; leaking it in the typeahead would break the whole thing.
 
 ## Working rules
 - Read the relevant function/hook before editing — memory and this summary may lag the code (schema is already past what older notes say).

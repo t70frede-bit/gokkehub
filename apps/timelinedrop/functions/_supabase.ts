@@ -406,6 +406,139 @@ export function autoJudgeGuess(
   return null;
 }
 
+// ── Search guess mode (migration 030) ───────────────────────────────────────
+
+// Separators Spotify and Deezer both use to join collaborating artists.
+// Deliberately absent:
+//   "x" — too many real artist names contain a bare x.
+//   "/" — both catalogues join collaborators with ", ", never a slash, so
+//         the only thing splitting on it achieves is shredding AC/DC.
+const ARTIST_SPLIT = /\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|\bvs\.?\b)\s*/i;
+
+/**
+ * Split a credit string into its individual artists, normalized.
+ * "Queen, David Bowie" → ["queen", "david bowie"]
+ */
+function splitArtists(raw: string): string[] {
+  return raw
+    .split(ARTIST_SPLIT)
+    .map(a => normalizeAnswer(a, "artist"))
+    .filter(Boolean);
+}
+
+/**
+ * Compare an artist credit against the canonical one, tolerating
+ * collaboration-credit disagreement between catalogues.
+ *
+ * This is the single biggest source of false negatives in search mode:
+ * "Under Pressure" is credited to "Queen, David Bowie" on Spotify but
+ * frequently to just "Queen" on Deezer (and vice versa). Requiring the
+ * whole credit string to match would fail a captain who picked the right
+ * song from the right band. Any overlap between the two artist sets counts
+ * as a match — a party game should err generous, and the dispute flow
+ * exists for what slips through.
+ */
+export function artistCreditMatches(guess: string, canonical: string): boolean {
+  const g = splitArtists(guess);
+  const c = splitArtists(canonical);
+  if (g.length === 0 || c.length === 0) return false;
+  if (g.some(a => c.includes(a))) return true;
+  // Whole-string fallback catches names that themselves contain a
+  // separator ("Earth, Wind & Fire"), which splitArtists would shred.
+  const ng = normalizeAnswer(guess, "artist");
+  const nc = normalizeAnswer(canonical, "artist");
+  if (ng === nc) return true;
+  // …and once more ignoring spacing, so a punctuation-joined name matches
+  // its spaced spelling ("AC/DC" → "acdc" vs "AC DC" → "ac dc"). Catalogues
+  // disagree on these often enough to be worth the extra compare.
+  return ng.replace(/\s+/g, "") === nc.replace(/\s+/g, "");
+}
+
+export interface SearchPick {
+  /** Spotify id — present only when the pick came from tl_track_index. */
+  spotifyId?: string;
+  title:      string;
+  artist:     string;
+}
+
+export interface SearchGrade {
+  artistCorrect:   boolean;
+  songnameCorrect: boolean;
+  /** How songname resolved, for the server log. */
+  songMatchedBy:   "id" | "canonical" | "stored" | "none";
+}
+
+/**
+ * Grade a search-mode pick against the round's track. Deterministic — no
+ * human judge is involved in search mode, so this is the final verdict.
+ *
+ * The two fields are graded INDEPENDENTLY and on purpose:
+ *   • right artist, wrong song  → artist only  → 1 shop coin
+ *   • right song, wrong artist  → songname only → 1 shop coin
+ *     (a cover, a live cut, or a different recording of the same song)
+ * maybeAwardShopPoints already credits per-field, so both cases fall out
+ * of the existing economy with no special-casing.
+ */
+export function gradeSearchPick(
+  pick: SearchPick,
+  canonicalTrackId: string,
+  canonicalTitle: string,
+  canonicalArtist: string,
+  accepted: AcceptedAnswerRow[],
+): SearchGrade {
+  // Exact id wins outright — the pick came from our own index and IS the
+  // round's track, so no amount of string disagreement should override it.
+  if (pick.spotifyId && pick.spotifyId === canonicalTrackId) {
+    return { artistCorrect: true, songnameCorrect: true, songMatchedBy: "id" };
+  }
+
+  const songHit = autoJudgeGuess(pick.title, "songname", canonicalTitle, accepted);
+  return {
+    artistCorrect:   artistCreditMatches(pick.artist, canonicalArtist),
+    songnameCorrect: songHit !== null,
+    songMatchedBy:   songHit ? songHit.matched : "none",
+  };
+}
+
+/**
+ * Upsert tracks into the local typeahead index (migration 030). Every track
+ * the platform serves lands here, which is what guarantees the round's
+ * actual answer is always findable in the search field.
+ *
+ * Fire-and-forget: a failed index write must never block a game from
+ * starting. play_count is bumped by the caller passing the same rows again
+ * — PostgREST can't do arithmetic upserts, and an exact count isn't worth a
+ * read-modify-write here (it only affects typeahead result ordering).
+ */
+export async function indexTracks(
+  env: Env,
+  tracks: SpotifyTrack[],
+  source: "pool" | "catalog" | "seed" = "pool",
+): Promise<void> {
+  if (!tracks || tracks.length === 0) return;
+  // Dedupe within the batch — PostgREST rejects an upsert whose payload
+  // hits the same PK twice ("ON CONFLICT DO UPDATE command cannot affect
+  // row a second time"), and a pool can legitimately repeat a track.
+  const seen = new Set<string>();
+  const rows = tracks
+    .filter(t => t?.id && t.name && t.artist)
+    .filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true)))
+    .map(t => ({
+      track_id:     t.id,
+      title:        t.name,
+      artist:       t.artist,
+      release_year: t.releaseYear ?? null,
+      cover_url:    t.coverUrl ?? null,
+      source,
+    }));
+  if (rows.length === 0) return;
+  try {
+    await req(env, "POST", "tl_track_index", "on_conflict=track_id", rows, true);
+  } catch (e) {
+    console.warn("[musix] indexTracks failed:", e);
+  }
+}
+
 /**
  * Record that every non-spectator player just heard a track. Drives the
  * "Skip recently heard" filter in curate.ts — without this, the blacklist
