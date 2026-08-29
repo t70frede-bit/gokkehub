@@ -1155,6 +1155,11 @@ interface AudioPlayerProps {
 // sync flaky (clients without prior page interaction silently dropped
 // play() calls), and locally the experience is fine since everyone's
 // looking at the same shared timeline UI either way.
+// How long to wait for the first decodable audio before telling the player
+// the proxy isn't sending anything. Generous: a cold yt-dlp spawn measured
+// ~2.3s to headers on the live bot, so this only trips on a real stall.
+const STREAM_STALL_MS = 15_000;
+
 function AllClientsAudio({
   track, coverRevealed, canScrub,
 }: {
@@ -1171,6 +1176,9 @@ function AllClientsAudio({
   // the stream with ?seek=N. seekOffsetSec tracks how far in the new
   // stream is, so positionMs = (seekOffsetSec * 1000) + (el.currentTime * 1000).
   const seekOffsetRef = useRef(0);
+  // Bumped on every loadAt(). A deferred play retry compares against this so
+  // a stale attempt can't grab the element after the track has moved on.
+  const loadGenRef = useRef(0);
   // Surface the most common failure mode (bot 401 from leftover
   // STREAM_TOKEN) so the host can see what to fix instead of "nothing
   // is happening." Cleared when a new track starts loading.
@@ -1257,19 +1265,46 @@ function AllClientsAudio({
   // Load the stream at seekSec. Used by track change, seek bar clicks,
   // and the restart button. The bot spawns a fresh yt-dlp with
   // --download-sections "*N-" so byte N becomes byte 0 of the response.
+  // Attempt playback, distinguishing the three ways play() can reject.
+  //
+  // Only NotAllowedError actually means "the browser blocked autoplay".
+  // Treating every rejection as an autoplay block is why the host saw the
+  // 🔇 banner on every single round even though they had just clicked Start:
+  // the real rejection is that the source isn't ready. /stream-track is a
+  // yt-dlp pipe the bot spawns per request, so the first play() routinely
+  // lands before a single byte has arrived.
+  //
+  // `gen` guards against a retry from a superseded load stealing the element
+  // out from under a newer one (track change, or a click-to-seek reload).
+  function attemptPlay(el: HTMLAudioElement, gen: number, retriesLeft = 3) {
+    el.play()
+      .then(() => { if (gen === loadGenRef.current) setAutoplayBlocked(false); })
+      .catch((err: unknown) => {
+        if (gen !== loadGenRef.current) return;          // a newer load owns the element now
+        const name = (err as { name?: string } | null)?.name;
+        if (name === "NotAllowedError") { setAutoplayBlocked(true); return; }
+        if (name === "AbortError")      return;          // interrupted by a newer load(); harmless
+        if (retriesLeft <= 0)           return;          // give up quietly; the error listener reports
+        // Source wasn't ready. Wait for the element to say it can play,
+        // then try again — this is the common path on a cold yt-dlp spawn.
+        const onCanPlay = () => {
+          el.removeEventListener("canplay", onCanPlay);
+          if (gen === loadGenRef.current) attemptPlay(el, gen, retriesLeft - 1);
+        };
+        el.addEventListener("canplay", onCanPlay);
+      });
+  }
+
   function loadAt(seekSec: number, opts: { autoplay: boolean }) {
     const el = audioRef.current;
     if (!el) return;
     seekOffsetRef.current = seekSec;
     setStreamPositionMs(0);
+    const gen = ++loadGenRef.current;
     const src = streamUrl(seekSec);
     el.src = src;
     el.load();
-    if (opts.autoplay) {
-      el.play()
-        .then(() => setAutoplayBlocked(false))
-        .catch(() => setAutoplayBlocked(true));
-    }
+    if (opts.autoplay) attemptPlay(el, gen);
   }
 
   // (Re)load audio when the track changes. Reset seek to 0 and probe
@@ -1280,23 +1315,67 @@ function AllClientsAudio({
     if (lastTrackRef.current === track.id) return;
     lastTrackRef.current = track.id;
     setLoadError(null);
+    setAutoplayBlocked(false);
     loadAt(0, { autoplay: true });
-    // Probe the URL with a HEAD request so we can show a specific
-    // message on 401/404 instead of waiting for the <audio> error event.
-    void fetch(streamUrl(0), { method: "HEAD" })
-      .then(r => {
-        if (r.ok) return;
-        if (r.status === 401) {
-          setLoadError("Audio proxy rejected the request (401). The bot's STREAM_TOKEN env is still set — operator needs to unset it and redeploy.");
-        } else if (r.status === 404) {
-          setLoadError("Audio proxy couldn't resolve this track on YouTube.");
-        } else {
-          setLoadError(`Audio proxy returned HTTP ${r.status}.`);
-        }
-      })
-      .catch(() => {
-        setLoadError(`Couldn't reach the audio proxy at ${STREAM_PROXY_URL}. Check it's online.`);
-      });
+
+    // Diagnose failures lazily — only once something has actually gone wrong.
+    // (The probe is a cheap HEAD the bot answers in ~60ms without spawning
+    // yt-dlp, so this isn't about cost; it just keeps the happy path to a
+    // single request and the error text to when there IS an error.)
+    //
+    // Two distinct failure modes are covered:
+    //   • "error"  — the element rejected the source outright.
+    //   • stall    — the bot returns 200 + headers but never sends a byte,
+    //                so the element neither errors nor becomes playable and
+    //                the UI would otherwise sit silent forever. Observed
+    //                live: every /stream-track responds in ~2.3s then
+    //                delivers 0 bytes, which is a bot-side yt-dlp failure.
+    const el2 = audioRef.current;
+    if (!el2) return;
+
+    let stallTimer: number | null = null;
+    const clearStall = () => {
+      if (stallTimer !== null) { window.clearTimeout(stallTimer); stallTimer = null; }
+    };
+    stallTimer = window.setTimeout(() => {
+      // readyState 0 = HAVE_NOTHING: headers may have arrived, but not one
+      // byte of decodable audio.
+      if (el2.readyState === 0) {
+        setLoadError(
+          "The audio proxy accepted the request but sent no audio. That's a bot-side problem " +
+          "(usually yt-dlp needing an update) — the game plays fine without sound in the meantime.",
+        );
+      }
+    }, STREAM_STALL_MS);
+    const onLoadedData = () => clearStall();
+
+    const onError = () => {
+      clearStall();
+      void fetch(streamUrl(0), { method: "HEAD" })
+        .then(r => {
+          if (r.ok) {
+            setLoadError("The audio stream stopped unexpectedly. Try ▶ again.");
+          } else if (r.status === 401) {
+            setLoadError("Audio proxy rejected the request (401). The bot's STREAM_TOKEN env is still set — operator needs to unset it and redeploy.");
+          } else if (r.status === 404) {
+            setLoadError("Audio proxy couldn't resolve this track on YouTube.");
+          } else {
+            setLoadError(`Audio proxy returned HTTP ${r.status}.`);
+          }
+        })
+        .catch(() => {
+          setLoadError(`Couldn't reach the audio proxy at ${STREAM_PROXY_URL}. Check it's online.`);
+        });
+    };
+    el2.addEventListener("error", onError);
+    el2.addEventListener("loadeddata", onLoadedData);
+    el2.addEventListener("canplay",    onLoadedData);
+    return () => {
+      clearStall();
+      el2.removeEventListener("error", onError);
+      el2.removeEventListener("loadeddata", onLoadedData);
+      el2.removeEventListener("canplay",    onLoadedData);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track.id, track.name, track.artist]);
 
