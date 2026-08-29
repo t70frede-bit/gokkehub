@@ -2,8 +2,26 @@ import { useEffect, useState } from "react";
 
 // ── Game catalogue ────────────────────────────────────────────────────────────
 
+interface GameGuide {
+  /** One-line quick facts shown as chips at the top of the detail page. */
+  players: string;
+  time: string;
+  needs: string;
+  /** Lead paragraph under the hero. */
+  intro: string;
+  /** Numbered "how it works" steps. */
+  steps: { title: string; body: string }[];
+  /** Optional callout cards (e.g. song sources, modes). */
+  highlights?: { icon: string; title: string; body: string }[];
+  /** Optional power-up / feature chips. */
+  features?: { icon: string; name: string; desc: string }[];
+  faq: { q: string; a: string }[];
+}
+
 interface Game {
   name: string;
+  /** URL slug for the /games/:slug detail page. */
+  slug: string;
   tagline: string;
   description: string;
   emoji: string;
@@ -12,11 +30,14 @@ interface Game {
   accentRgb: string;
   secondaryRgb: string;
   status: "live" | "soon";
+  /** Optional long-form guide → renders a /games/:slug detail page. */
+  guide?: GameGuide;
 }
 
 const GAMES: Game[] = [
   {
     name: "Grid Challenge",
+    slug: "gridchallenge",
     tagline: "Team bingo with a twist",
     description:
       "Split into teams, claim squares by completing challenges, and race to bingo. Custom challenge sets, live lobby, and team chaos.",
@@ -28,6 +49,7 @@ const GAMES: Game[] = [
   },
   {
     name: "Track Guess",
+    slug: "trackguess",
     tagline: "Name that tune",
     description:
       "A snippet plays — first team to buzz in and name the song scores. Pull from any Spotify playlist. Points, streaks, and chaos ensue.",
@@ -39,6 +61,7 @@ const GAMES: Game[] = [
   },
   {
     name: "Musix",
+    slug: "musix",
     tagline: "Sort the hits by year",
     description:
       "A song plays — place it on your team's timeline in the right year. Closer is better. Earn tokens by guessing the artist + name. Hitster, but with your group's actual taste.",
@@ -47,9 +70,90 @@ const GAMES: Game[] = [
     accentRgb: "212, 160, 74",
     secondaryRgb: "184, 133, 59",
     status: "live",
+    guide: {
+      players: "2 teams",
+      time: "20–40 min",
+      needs: "A host with Spotify",
+      intro:
+        "Musix is Hitster built around your group's actual taste. A song plays and your team slots it onto a timeline in the year you think it came out — the closer you are, the better. Nail the artist and title too and you'll earn power-up tokens to bend the rules in your favour.",
+      steps: [
+        {
+          title: "Host a room, friends join with a code",
+          body:
+            "The host spins up a room and shares the 4-letter code. Players join from their phones at gokkehub.com/join — no install, no account required to play along.",
+        },
+        {
+          title: "Pick where the songs come from",
+          body:
+            "Choose your group's taste (auto-built from what everyone actually listens to) or paste a Spotify playlist. Set the difficulty and how many cards it takes to win — 5, 7, 10, 12 or 15.",
+        },
+        {
+          title: "Listen, then drop the song on your timeline",
+          body:
+            "Each round a mystery song plays. The team captain slides it into the gap on their timeline where they think it belongs by year. Confirm the placement — closer is correct, off is a miss.",
+        },
+        {
+          title: "Guess the artist + title for bonus tokens",
+          body:
+            "Optionally call the artist and song name. Get both right and your team earns a random power-up token — banked for your next turn.",
+        },
+        {
+          title: "First team to fill their timeline wins",
+          body:
+            "Build the longest correct run. The first team to reach the cards-to-win target takes the night. Tokens, steals and counters keep it from ever being a sure thing.",
+        },
+      ],
+      highlights: [
+        {
+          icon: "🎧",
+          title: "Your group's taste",
+          body:
+            "Songs are generated from what your players actually listen to, so the timeline is full of tracks you'll recognise — and argue about.",
+        },
+        {
+          icon: "📃",
+          title: "…or any Spotify playlist",
+          body:
+            "Prefer a theme night? Paste a playlist URL and Musix plays from that pool instead. Great for decades nights or a shared party mix.",
+        },
+        {
+          icon: "⚖️",
+          title: "You decide who judges",
+          body:
+            "Let the team's own captain, the next captain, the host, or a vote of everyone settle whether a tricky placement counts.",
+        },
+      ],
+      features: [
+        { icon: "🖼️", name: "Cover Reveal", desc: "Peek at the album art for a hint." },
+        { icon: "±5", name: "±5 Years", desc: "Widen your placement window for one drop." },
+        { icon: "⏭️", name: "Song Skipper", desc: "Bail on a song you have no clue about." },
+        { icon: "🎯", name: "Steal by Year", desc: "Pounce on a rival's missed placement." },
+        { icon: "↩️", name: "Token Counter", desc: "Cancel an opponent's power-up in real time." },
+        { icon: "🛟", name: "Recovery", desc: "Save a card from a botched turn." },
+      ],
+      faq: [
+        {
+          q: "Do all players need Spotify?",
+          a: "No — only the host needs a Spotify account so the room can play audio. Everyone else just joins with the room code from their phone.",
+        },
+        {
+          q: "How do we all hear the song?",
+          a: "Audio plays on the host's device. For remote groups, hop in a Discord call and share the audio there — the rest of the game syncs live for everyone.",
+        },
+        {
+          q: "Can we play with our own music?",
+          a: "Yes. Switch the song source to a Spotify playlist and paste the link, and Musix builds the round pool from that playlist.",
+        },
+        {
+          q: "How many people can play?",
+          a: "It runs as two teams, so it scales from a couple of friends to a packed room — gather everyone onto two sides and battle it out.",
+        },
+      ],
+    },
   },
   {
     name: "BeatRank",
+    slug: "beatrank",
     tagline: "Music trivia showdown",
     description:
       "Fastest fingers, sharpest ears. Answer music trivia, rank artists, and climb the leaderboard. No Spotify required.",
@@ -58,6 +162,18 @@ const GAMES: Game[] = [
     accentRgb: "74, 123, 156",
     secondaryRgb: "212, 160, 74",
     status: "soon",
+  },
+  {
+    name: "Poker",
+    slug: "poker",
+    tagline: "Run the home game",
+    description:
+      "Track buy-ins and cash-outs across your poker nights, see who's up and who's down in real time, and settle the night over MobilePay. Phone-first — add it to your home screen.",
+    emoji: "🃏",
+    url: "https://poker.gokkehub.com",
+    accentRgb: "76, 134, 108",
+    secondaryRgb: "212, 160, 74",
+    status: "live",
   },
 ];
 
@@ -68,6 +184,12 @@ export default function App() {
   // routed below via the simple switch in <Catalogue /> wrapper.
   const path = typeof window !== "undefined" ? window.location.pathname : "/";
   if (path === "/join") return <JoinRedirect />;
+
+  const gameMatch = path.match(/^\/games\/([\w-]+)\/?$/);
+  if (gameMatch) {
+    const game = GAMES.find((g) => g.slug === gameMatch[1]);
+    if (game?.guide) return <GameDetail game={game} />;
+  }
 
   return <Catalogue />;
 }
@@ -178,11 +300,10 @@ function GameCard({ game }: { game: Game }) {
   const isLive = game.status === "live";
 
   return (
-    <a
-      href={isLive ? game.url : undefined}
+    <div
       className={[
         "game-card block rounded-xl p-6 relative overflow-hidden transition-all",
-        isLive ? "cursor-pointer" : "cursor-default opacity-60",
+        isLive ? "" : "opacity-60",
       ].join(" ")}
       style={{
         background: "rgb(var(--surface-raised-rgb))",
@@ -190,7 +311,6 @@ function GameCard({ game }: { game: Game }) {
         borderTop:  `3px solid rgb(${game.accentRgb})`,
         boxShadow:  "var(--shadow-card)",
       }}
-      aria-label={isLive ? `Play ${game.name}` : `${game.name} — coming soon`}
     >
       {/* Subtle corner accent (kept as a soft tint, not a glow) */}
       <div
@@ -245,16 +365,266 @@ function GameCard({ game }: { game: Game }) {
         </div>
       </div>
 
-      {isLive && (
-        <div
-          className="mt-4 flex items-center gap-1.5 text-sm font-medium"
-          style={{ color: `rgb(${game.accentRgb})` }}
+      {/* Actions: Play now (live) + How to play (if a guide exists) */}
+      <div className="relative mt-4 flex items-center gap-4 text-sm font-medium flex-wrap">
+        {isLive && (
+          <a
+            href={game.url}
+            className="flex items-center gap-1.5 hover:underline underline-offset-4"
+            style={{ color: `rgb(${game.accentRgb})` }}
+            aria-label={`Play ${game.name}`}
+          >
+            Play now
+            <span aria-hidden>→</span>
+          </a>
+        )}
+        {game.guide && (
+          <a
+            href={`/games/${game.slug}`}
+            className="flex items-center gap-1.5 hover:underline underline-offset-4 text-content-secondary"
+            aria-label={`How to play ${game.name}`}
+          >
+            How to play
+            <span aria-hidden>→</span>
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── GameDetail — /games/:slug long-form guide page ─────────────────────────
+
+function GameDetail({ game }: { game: Game }) {
+  const guide = game.guide!;
+  const isLive = game.status === "live";
+  const accent = `rgb(${game.accentRgb})`;
+
+  return (
+    <div className="min-h-screen relative overflow-x-hidden" style={{ background: "var(--bg-tint-1)" }}>
+      {/* Nav */}
+      <header className="relative z-10 flex items-center justify-between px-6 py-5 max-w-4xl mx-auto">
+        <a href="/" className="font-bold text-lg text-content-primary tracking-tight">
+          Gokke<span className="text-gradient">Hub</span>
+        </a>
+        <a
+          href="https://account.gokkehub.com"
+          className="text-sm text-content-secondary hover:text-content-primary transition-colors border border-white/10 rounded-xl px-4 py-2 hover:border-white/25"
         >
-          Play now
-          <span aria-hidden>→</span>
+          My Account
+        </a>
+      </header>
+
+      <main className="relative z-10 px-6 max-w-4xl mx-auto pb-24">
+        {/* Breadcrumb */}
+        <a
+          href="/#games"
+          className="inline-flex items-center gap-1.5 text-sm mt-2 mb-8"
+          style={{ color: "rgb(var(--text-muted-rgb))" }}
+        >
+          <span aria-hidden>←</span> All games
+        </a>
+
+        {/* Hero */}
+        <section className="flex flex-col sm:flex-row sm:items-start gap-5 mb-4">
+          <div
+            className="w-16 h-16 rounded-3xl flex items-center justify-center text-3xl flex-shrink-0"
+            style={{ background: `rgb(${game.accentRgb} / 0.15)` }}
+          >
+            {game.emoji}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h1
+                className="font-extrabold tracking-tight leading-none"
+                style={{ fontFamily: "var(--font-display)", fontSize: "clamp(32px, 6vw, var(--text-4xl))", color: "rgb(var(--text-primary-rgb))" }}
+              >
+                {game.name}
+              </h1>
+              {isLive ? (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `rgb(${game.accentRgb} / 0.2)`, color: accent }}>
+                  Live
+                </span>
+              ) : (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/5 text-content-muted">
+                  Coming soon
+                </span>
+              )}
+            </div>
+            <p className="text-base font-medium" style={{ color: accent }}>{game.tagline}</p>
+          </div>
+        </section>
+
+        <p className="text-content-secondary leading-relaxed mb-6" style={{ fontSize: "var(--text-lg)", maxWidth: 640 }}>
+          {guide.intro}
+        </p>
+
+        {/* CTAs */}
+        <div className="flex flex-wrap gap-3 mb-8">
+          {isLive && (
+            <a
+              href={game.url}
+              className="rounded-md px-6 py-3 font-bold transition-all active:scale-[0.98]"
+              style={{ background: accent, color: "rgb(var(--bg-rgb))", fontSize: "var(--text-base)" }}
+            >
+              Host a game →
+            </a>
+          )}
+          <a
+            href="/join"
+            className="rounded-md px-6 py-3 font-bold transition-all active:scale-[0.98] border"
+            style={{ borderColor: "rgb(var(--border-rgb))", color: "rgb(var(--text-primary-rgb))", fontSize: "var(--text-base)" }}
+          >
+            Join with a code
+          </a>
         </div>
-      )}
-    </a>
+
+        {/* Quick facts */}
+        <div className="flex flex-wrap gap-2 mb-12">
+          {[
+            { label: "Players", value: guide.players },
+            { label: "Length", value: guide.time },
+            { label: "You need", value: guide.needs },
+          ].map((f) => (
+            <div
+              key={f.label}
+              className="rounded-xl px-4 py-2.5"
+              style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+            >
+              <div className="text-xs uppercase tracking-wide" style={{ color: "rgb(var(--text-muted-rgb))", letterSpacing: "0.1em" }}>{f.label}</div>
+              <div className="font-bold text-content-primary text-sm">{f.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* How it works */}
+        <h2 className="font-bold mb-6 tracking-tight" style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>
+          How it works
+        </h2>
+        <ol className="flex flex-col gap-4 mb-14">
+          {guide.steps.map((step, i) => (
+            <li
+              key={i}
+              className="flex gap-4 rounded-xl p-5"
+              style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0"
+                style={{ background: `rgb(${game.accentRgb} / 0.18)`, color: accent }}
+              >
+                {i + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-content-primary mb-1 leading-tight">{step.title}</h3>
+                <p className="text-content-muted text-sm leading-relaxed">{step.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        {/* Highlights */}
+        {guide.highlights && (
+          <>
+            <h2 className="font-bold mb-6 tracking-tight" style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>
+              What makes it different
+            </h2>
+            <div className="grid sm:grid-cols-3 gap-4 mb-14">
+              {guide.highlights.map((h) => (
+                <div
+                  key={h.title}
+                  className="rounded-xl p-5"
+                  style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+                >
+                  <div className="text-2xl mb-2">{h.icon}</div>
+                  <h3 className="font-bold text-content-primary mb-1 text-sm leading-tight">{h.title}</h3>
+                  <p className="text-content-muted text-sm leading-relaxed">{h.body}</p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Features / power-ups */}
+        {guide.features && (
+          <>
+            <h2 className="font-bold mb-2 tracking-tight" style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>
+              Power-up tokens
+            </h2>
+            <p className="text-content-muted text-sm mb-6" style={{ maxWidth: 560 }}>
+              Earn these by nailing the artist and title — then spend them to bend a round in your favour.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 mb-14">
+              {guide.features.map((f) => (
+                <div
+                  key={f.name}
+                  className="flex items-center gap-3 rounded-xl px-4 py-3"
+                  style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+                >
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0"
+                    style={{ background: `rgb(${game.accentRgb} / 0.15)`, color: accent }}
+                  >
+                    {f.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-bold text-content-primary text-sm leading-tight">{f.name}</div>
+                    <div className="text-content-muted text-sm leading-tight">{f.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* FAQ */}
+        <h2 className="font-bold mb-6 tracking-tight" style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>
+          Good to know
+        </h2>
+        <div className="flex flex-col gap-3 mb-14">
+          {guide.faq.map((item) => (
+            <div
+              key={item.q}
+              className="rounded-xl p-5"
+              style={{ background: "rgb(var(--surface-raised-rgb))", border: "1px solid rgb(var(--border-rgb))" }}
+            >
+              <h3 className="font-bold text-content-primary mb-1 leading-tight">{item.q}</h3>
+              <p className="text-content-muted text-sm leading-relaxed">{item.a}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Closing CTA */}
+        <div
+          className="rounded-xl p-8 text-center"
+          style={{ background: `rgb(${game.accentRgb} / 0.10)`, border: `1px solid rgb(${game.accentRgb} / 0.3)` }}
+        >
+          <h2 className="font-extrabold mb-2 tracking-tight" style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-2xl)", color: "rgb(var(--text-primary-rgb))" }}>
+            {isLive ? `Ready to play ${game.name}?` : `${game.name} is coming soon`}
+          </h2>
+          <p className="text-content-secondary text-sm mb-5" style={{ maxWidth: 440, marginInline: "auto" }}>
+            {isLive ? "Gather your group, grab the room code, and get going." : "Check back soon — it's on the way."}
+          </p>
+          {isLive && (
+            <a
+              href={game.url}
+              className="inline-block rounded-md px-6 py-3 font-bold transition-all active:scale-[0.98]"
+              style={{ background: accent, color: "rgb(var(--bg-rgb))", fontSize: "var(--text-base)" }}
+            >
+              Host a game →
+            </a>
+          )}
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-white/5 py-8 px-6 text-center">
+        <p className="text-content-muted text-sm flex flex-wrap justify-center gap-x-4 gap-y-1">
+          <span>© 2026 GokkeHub</span>
+          <a href="/" className="hover:text-content-secondary transition-colors">All games</a>
+          <a href="https://account.gokkehub.com" className="hover:text-content-secondary transition-colors">Account</a>
+        </p>
+      </footer>
+    </div>
   );
 }
 
