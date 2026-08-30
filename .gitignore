@@ -55,3 +55,7 @@ coverage/
 
 # Turborepo local build cache
 .turbo/
+
+# MCP server config — references ${SUPABASE_ACCESS_TOKEN}, but keep it out of
+# git regardless: a Supabase PAT is org-wide and must never be committed.
+.mcp.json
