@@ -12,8 +12,7 @@ import { Innertube } from "youtubei.js";
 import { createAudioResource, StreamType, type AudioResource } from "@discordjs/voice";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile, stat } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import path from "node:path";
 
@@ -340,18 +339,50 @@ const YT_DLP_NAME = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
 const YT_DLP_PATH = path.join(YT_DLP_DIR, YT_DLP_NAME);
 const YT_DLP_URL  = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${YT_DLP_NAME}`;
 
+// A cached binary goes stale and STOPS WORKING — this is not a nice-to-have.
+// YouTube changes its extraction regularly and yt-dlp ships fixes every few
+// days; a binary left untouched fails to extract, writes an error to stderr,
+// exits non-zero and produces zero bytes of audio. Downloading once and
+// keeping it forever (the original behaviour) guarantees the audio proxy
+// breaks silently some weeks after deploy.
+const YT_DLP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;   // refresh weekly
+
+async function ytDlpAgeMs(): Promise<number | null> {
+  try { return Date.now() - (await stat(YT_DLP_PATH)).mtimeMs; }
+  catch { return null; }
+}
+
+async function downloadYtDlp(): Promise<void> {
+  await mkdir(YT_DLP_DIR, { recursive: true });
+  const res = await fetch(YT_DLP_URL, { redirect: "follow" });
+  if (!res.ok) throw new Error(`yt-dlp download failed: HTTP ${res.status}`);
+  await writeFile(YT_DLP_PATH, Buffer.from(await res.arrayBuffer()));
+  if (process.platform !== "win32") await chmod(YT_DLP_PATH, 0o755);
+  console.log(`[yt-dlp] installed at ${YT_DLP_PATH}`);
+}
+
 let ytDlpReadyPromise: Promise<string> | null = null;
 function ensureYtDlp(): Promise<string> {
   if (ytDlpReadyPromise) return ytDlpReadyPromise;
   ytDlpReadyPromise = (async () => {
-    if (existsSync(YT_DLP_PATH)) return YT_DLP_PATH;
-    console.log(`[yt-dlp] binary not found, downloading from ${YT_DLP_URL} ...`);
-    await mkdir(YT_DLP_DIR, { recursive: true });
-    const res = await fetch(YT_DLP_URL, { redirect: "follow" });
-    if (!res.ok) throw new Error(`yt-dlp download failed: HTTP ${res.status}`);
-    await writeFile(YT_DLP_PATH, Buffer.from(await res.arrayBuffer()));
-    if (process.platform !== "win32") await chmod(YT_DLP_PATH, 0o755);
-    console.log(`[yt-dlp] installed at ${YT_DLP_PATH}`);
+    const ageMs = await ytDlpAgeMs();
+    if (ageMs === null) {
+      console.log(`[yt-dlp] binary not found, downloading from ${YT_DLP_URL} ...`);
+      await downloadYtDlp();
+      return YT_DLP_PATH;
+    }
+    if (ageMs > YT_DLP_MAX_AGE_MS) {
+      const days = Math.floor(ageMs / 86_400_000);
+      console.log(`[yt-dlp] binary is ${days}d old — refreshing from ${YT_DLP_URL} ...`);
+      try {
+        await downloadYtDlp();
+      } catch (err) {
+        // A failed refresh must not take the bot down: the old binary might
+        // still work, and if it doesn't the stream path now reports why.
+        console.warn(`[yt-dlp] refresh failed, keeping the existing binary:`,
+          err instanceof Error ? err.message : String(err));
+      }
+    }
     return YT_DLP_PATH;
   })();
   // Reset on failure so a retry can try again.
@@ -367,7 +398,17 @@ function ensureYtDlp(): Promise<string> {
 export async function spawnYtDlpAudioStream(
   videoId: string,
   opts: { seekSec?: number } = {},
-): Promise<{ stdout: Readable; kill: () => void }> {
+): Promise<{
+  stdout: Readable;
+  kill: () => void;
+  /** Resolves with the first chunk of audio, or REJECTS if yt-dlp exits
+   *  without producing any (carrying its stderr). Lets the HTTP proxy hold
+   *  off on writing 200 until there is genuinely audio to send — otherwise a
+   *  failed extraction becomes a hanging 200 with an empty body, which is
+   *  undiagnosable from the browser. Optional: the Discord voice path
+   *  ignores it and pipes stdout directly, as before. */
+  firstChunk: Promise<Buffer>;
+}> {
   const binPath  = await ensureYtDlp();
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const args = [
@@ -387,9 +428,14 @@ export async function spawnYtDlpAudioStream(
   args.push(videoUrl);
   const proc = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
+  // Keep stderr so a failure can be reported to the caller, not just logged
+  // here. Capped so a pathological run can't grow unbounded.
+  let stderrBuf = "";
   proc.stderr.on("data", (chunk: Buffer) => {
-    const msg = chunk.toString().trim();
-    if (msg) console.warn(`[yt-dlp] ${msg}`);
+    const msg = chunk.toString();
+    if (stderrBuf.length < 4000) stderrBuf += msg;
+    const t = msg.trim();
+    if (t) console.warn(`[yt-dlp] ${t}`);
   });
   proc.on("error", (err) => {
     console.warn(`[yt-dlp] spawn failed:`, err.message);
@@ -400,9 +446,39 @@ export async function spawnYtDlpAudioStream(
     }
   });
 
+  const firstChunk = new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    proc.stdout!.once("data", (chunk: Buffer) => {
+      settled = true;
+      // once("data") switches the stream to flowing mode; pause immediately
+      // so nothing is emitted (and dropped) before the caller attaches its
+      // pipe. The caller writes this chunk first, then pipes the rest.
+      proc.stdout!.pause();
+      resolve(chunk);
+    });
+    proc.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`yt-dlp could not start: ${err.message}`));
+    });
+    proc.once("exit", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      const detail = stderrBuf.trim().split("\n").slice(-4).join(" | ").slice(0, 400);
+      reject(new Error(
+        `yt-dlp produced no audio (code=${code} signal=${signal}). ` +
+        `${detail || "no stderr output — the binary may be stale; it is refreshed weekly on boot"}`,
+      ));
+    });
+  });
+  // Nothing may await this immediately (the Discord path ignores it), so
+  // pre-attach a no-op catch to avoid an unhandled rejection warning.
+  firstChunk.catch(() => { /* surfaced to whoever awaits it */ });
+
   return {
     stdout: proc.stdout!,
     kill:   () => { try { proc.kill("SIGTERM"); } catch { /* already dead */ } },
+    firstChunk,
   };
 }
 

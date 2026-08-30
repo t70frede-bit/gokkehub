@@ -94,9 +94,36 @@ async function handleStream(
   res.on("close", () => kill());
 
   try {
-    const { stdout, kill: realKill } = await spawnYtDlpAudioStream(videoId, { seekSec });
+    const { stdout, kill: realKill, firstChunk } = await spawnYtDlpAudioStream(videoId, { seekSec });
     if (killed) { realKill(); return; }
     kill = realKill;
+
+    // Wait for real audio before committing to 200.
+    //
+    // This used to writeHead(200) as soon as the process was SPAWNED, which
+    // is not the same as it working. When yt-dlp failed (stale binary, bot
+    // detection, unavailable video) the client got 200 + headers and then
+    // zero bytes, forever — the <audio> element never errored and never
+    // became playable, so the UI just sat silent and the browser's own
+    // "autoplay blocked" guess got the blame. Failing here with a 502 and
+    // the actual stderr makes the problem visible to both the player and
+    // whoever reads the logs.
+    let first: Buffer;
+    try {
+      first = await firstChunk;
+    } catch (streamErr) {
+      realKill();
+      const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+      console.warn(`[http] stream ${videoId} failed: ${msg}`);
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "text/plain", ...corsHeaders(req.headers.origin) });
+        res.end(msg);
+      } else {
+        try { res.end(); } catch { /* already closed */ }
+      }
+      return;
+    }
+    if (killed) { realKill(); return; }
 
     // application/octet-stream is the safe default — yt-dlp's bestaudio
     // can be webm/opus or m4a/aac depending on what YouTube serves for
@@ -109,6 +136,8 @@ async function handleStream(
       ...corsHeaders(req.headers.origin),
     });
     stdout.on("error", () => { try { res.end(); } catch { /* already closed */ } });
+    res.write(first);          // the chunk consumed while waiting
+    stdout.resume();           // undo the pause from firstChunk
     stdout.pipe(res);
   } catch (err) {
     if (!res.headersSent) {
