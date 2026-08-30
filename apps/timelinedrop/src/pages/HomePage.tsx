@@ -105,16 +105,19 @@ export default function HomePage() {
   }
 
   // Quick start. Reuses /room/create with `quick: true` — the server owns
-  // the preset so a stale client can't half-apply it. The only thing we
-  // still need is a name, and a signed-in host already has one.
+  // the preset so a stale client can't half-apply it.
+  //
+  // Asks NOTHING. The point of this path is that a host clicks once and lands
+  // in the lobby with a code to share; any prompt defeats it. It used to open
+  // the Host modal when there was no name, and that modal's submit button
+  // calls createRoom() rather than this function — so the whole preset was
+  // silently dropped and the host got a normal room with an empty pool. That
+  // was the bug, not a missing name.
+  //
+  // A signed-in host gets their display name; anyone else starts as "Host"
+  // and can rename in the lobby.
   async function quickStart() {
-    const hostName = (name.trim() || session?.displayName || "").trim();
-    if (!hostName) {
-      // Not signed in and no name yet — fall back to the host modal, which
-      // already has the name field, rather than inventing a second one.
-      setShowHost(true);
-      return;
-    }
+    const hostName = (name.trim() || session?.displayName || "Host").trim().slice(0, 30);
     setLoading(true); setQuickLoading(true); setError(null);
     try {
       const body: CreateRoomRequest = {

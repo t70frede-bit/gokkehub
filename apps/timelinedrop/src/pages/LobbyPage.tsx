@@ -60,6 +60,9 @@ export default function LobbyPage() {
   const [quickError,     setQuickError]     = useState<string | null>(null);
   // "Advanced settings" collapse on the host's settings panel
   const [advancedOpen,   setAdvancedOpen]   = useState(false);
+  // Quick-start lobby stays stripped down until the host explicitly asks for
+  // the full one. Sticky for the session so it doesn't snap shut on them.
+  const [quickAdvanced,  setQuickAdvanced]  = useState(false);
   // Lobby tabs — host-only toggle between team formation and full
   // settings panel. Default is "teams" so the lobby opens on the
   // join-your-team view; settings live one click away.
@@ -165,6 +168,12 @@ export default function LobbyPage() {
   // Settings get hidden — late-join, team-swap, vote judging, multi-client
   // audio modes are all noise when one human is the entire room.
   const gamemastering = !!(settings.gamemasterMode || settings.singleScreenMode);
+
+  // ⚡ Quick start lobby: no tabs, no settings, just the code + players +
+  // Start. Everything is already chosen by the server-side preset, so
+  // presenting choices here would undo the point of the flow. Ends the
+  // moment the host opens Advanced settings.
+  const quickMode = isHost && !!settings.quickStart && !quickAdvanced;
 
   const teamSwap = settings.teamSwapEnabled || isHost;
 
@@ -438,7 +447,11 @@ export default function LobbyPage() {
           {isHost && <Badge variant="host">HOST</Badge>}
           <p className="ml-1" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}>
             {isHost
-              ? (lobbyView === "teams" ? "Form teams, then open Settings to configure the game" : "Configure settings, then go back to Teams to start")
+              ? (quickMode
+                  ? "Everything's set — share the code, then press Start"
+                  : lobbyView === "teams"
+                    ? "Form teams, then open Settings to configure the game"
+                    : "Configure settings, then go back to Teams to start")
               : "Waiting for host to start…"}
           </p>
         </div>
@@ -460,7 +473,22 @@ export default function LobbyPage() {
           + tab-style styling so it reads as a primary navigation control
           and not an afterthought next to the Leave button. Players miss
           the previous tiny inline version. */}
-      {isHost && (
+      {/* Quick start deliberately shows no tabs: the whole promise of that
+          path is "nothing to configure". A single unobtrusive link opens the
+          full lobby for anyone who does want to change something, and once
+          opened it stays open for the rest of the session. */}
+      {isHost && quickMode && (
+        <div className="flex justify-center">
+          <button
+            onClick={() => { setQuickAdvanced(true); setLobbyView("settings"); }}
+            className="text-xs opacity-50 hover:opacity-100 underline"
+          >
+            ⚙ Advanced settings
+          </button>
+        </div>
+      )}
+
+      {isHost && !quickMode && (
         <div className="flex w-full rounded-lg p-1"
           style={{
             background: "rgba(var(--surface-raised-rgb),0.5)",
@@ -492,12 +520,14 @@ export default function LobbyPage() {
               • Non-host: original 2-column layout (info on left, players right). */}
       <div className={
         !isHost                  ? "grid md:grid-cols-[1fr_340px] gap-4"
+        : quickMode              ? "max-w-2xl mx-auto w-full"
         : lobbyView === "teams"  ? "max-w-2xl mx-auto w-full"
         :                          "w-full"
       }>
 
         {/* Left column — settings (host on settings tab) OR info (non-host) */}
-        {(isHost ? lobbyView === "settings" : true) && (
+        {/* quickMode suppresses the settings column entirely for the host. */}
+        {(isHost ? (!quickMode && lobbyView === "settings") : true) && (
         <div className="flex flex-col gap-4">
 
           {/* Settings panel */}
@@ -1241,7 +1271,8 @@ export default function LobbyPage() {
         )}
 
         {/* Right: Players + Start — hidden when host is on the Settings tab */}
-        {(isHost ? lobbyView === "teams" : true) && (
+        {/* In quickMode the host always sees this (players + Start) column. */}
+        {(isHost ? (quickMode || lobbyView === "teams") : true) && (
         <div className="flex flex-col gap-4">
           {/* Music-coverage status moved into Settings → Songs → Group taste,
               where it's actually actionable (no point telling players how
