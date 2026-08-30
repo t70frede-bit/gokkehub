@@ -109,15 +109,19 @@ export default function LobbyPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateLoaded, meIsHost, hostHasSpotifyEff, audioModeEff]);
 
-  // ⚡ Quick start: fill the track pool from the catalog on first load so the
-  // host never has to open Settings. This is what turns "create a room" into
-  // "press Start" — without it a quick-start room hits start.ts's "Need at
-  // least N songs" rejection.
+  // ⚡ Quick start: fill the track pool on first load so the host never has to
+  // open Settings. This is what turns "create a room" into "press Start" —
+  // without it a quick-start room hits start.ts's "Need at least N songs".
   //
-  // Done here rather than inside /room/create because catalog-import spends
-  // up to ~40 Spotify + ~40 iTunes lookups against Cloudflare's 50-subrequest
-  // budget; folding that into room creation would blow it. Also lives above
-  // the early return to keep the hook count stable.
+  // Draws from tl_song_library (migration 031): ~1000 decade-balanced songs
+  // with verified years, sampled fresh per room. Previously this imported the
+  // one catalog playlist that existed, so every quick-start game played the
+  // same 50 classic-rock tracks.
+  //
+  // Still done here rather than inside /room/create: enrichment can spend up
+  // to ~38 lookups against Cloudflare's 50-subrequest budget, and folding
+  // that into room creation would blow it. Lives above the early return to
+  // keep the hook count stable.
   const isQuickStart  = !!state?.room.settings?.quickStart;
   const poolEmpty     = (state?.room.track_pool?.length ?? 0) === 0;
   const quickFiredRef = useRef(false);
@@ -128,22 +132,17 @@ export default function LobbyPage() {
     setQuickFilling(true);
     void (async () => {
       try {
-        const res  = await fetch("/catalog", { credentials: "include" });
-        const data = await res.json() as { items?: TlPlaylistCatalogEntry[] };
-        // /catalog is sorted by baseline_difficulty ascending, so the first
-        // entry is the friendliest pool we have — the right default for a
-        // group that hasn't chosen anything.
-        const entry = data.items?.[0];
-        if (!entry) { setQuickError("No catalog playlists available — add one under Advanced settings."); return; }
-        const imp = await fetch(`/room/${roomId}/catalog-import`, {
+        const res = await fetch(`/room/${roomId}/library-fill`, {
           method:      "POST",
           headers:     { "Content-Type": "application/json" },
           credentials: "include",
-          body:        JSON.stringify({ player_id: myPlayerId, catalog_id: entry.id }),
+          body:        JSON.stringify({ player_id: myPlayerId }),
         });
-        if (!imp.ok) {
-          const raw = await imp.text().catch(() => "");
-          setQuickError(`Couldn't load songs automatically — pick a playlist under Advanced settings. (${raw.slice(0, 120)})`);
+        if (!res.ok) {
+          const raw = await res.text().catch(() => "");
+          let msg = raw.slice(0, 160);
+          try { msg = (JSON.parse(raw) as { error?: string }).error ?? msg; } catch { /* not JSON */ }
+          setQuickError(`Couldn't load songs automatically — pick a playlist under Advanced settings. (${msg})`);
         }
       } catch {
         setQuickError("Couldn't load songs automatically — pick a playlist under Advanced settings.");
