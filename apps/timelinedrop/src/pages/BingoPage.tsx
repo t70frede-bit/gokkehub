@@ -191,14 +191,22 @@ function TickModal({
   const [pick,    setPick]    = useState<TrackSearchResult | null>(null);
   const [busy,    setBusy]    = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Set once the player picks a number themselves; until then a new tick
+  // follows the song that's playing, even if it changes while this is open.
+  const [chosen,  setChosen]  = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setTrackNo(currentMark?.track_no ?? (checkMode === "off" ? null : playedCount || null));
+    setTrackNo(currentMark?.track_no ?? (playedCount || null));
+    setChosen(currentMark?.track_no != null);
     setPick(null);
     setMessage(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cell]);
+
+  useEffect(() => {
+    if (open && !chosen && playedCount > 0) setTrackNo(playedCount);
+  }, [open, chosen, playedCount]);
 
   const needTrack = checkMode !== "off";
   const needPick  = checkMode === "search";
@@ -236,13 +244,13 @@ function TickModal({
             {numbers.map(n => {
               const active = trackNo === n;
               return (
-                <button key={n} onClick={() => setTrackNo(active && !needTrack ? null : n)}
+                <button key={n} onClick={() => { setChosen(true); setTrackNo(active && !needTrack ? null : n); }}
                   className="min-w-[44px] px-2 py-1.5 rounded-md text-sm font-bold font-mono border"
                   style={{
                     borderColor: active ? "rgba(var(--color-primary-rgb),0.8)" : "rgba(255,255,255,0.12)",
                     background:  active ? "rgba(var(--color-primary-rgb),0.2)" : "transparent",
                   }}>
-                  #{n}
+                  #{n}{n === playedCount && <span className="font-normal opacity-60"> now</span>}
                 </button>
               );
             })}
