@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  normalizeWord, stripTitleExtras, trackWords, trackHasWord, generateBoard,
+  normalizeWord, stripTitleExtras, trackWords, trackHasWord, generateBoard, baseForm,
   distinctWordCount, boardLines, completedLines, hasWon,
 } from "./bingo";
 
@@ -48,8 +48,12 @@ describe("trackWords", () => {
     const words = trackWords(POOL[3]).map(w => w.norm);
     expect(words).toEqual(["total", "eclipse", "heart", "bonnie", "tyler"]);
   });
-  it("keeps the display form readable", () => {
-    expect(trackWords(POOL[1]).map(w => w.display)).toContain("Don't");
+  it("shows squares in ALL CAPS, keeping apostrophes", () => {
+    expect(trackWords(POOL[1]).map(w => w.display)).toEqual(["DON'T", "STOP", "NOW", "QUEEN"]);
+  });
+  it("puts title words in base form but leaves artist names alone", () => {
+    const t = { name: "Loving Hearts Dancing", artist: "The Rolling Stones" };
+    expect(trackWords(t).map(w => w.display)).toEqual(["LOVE", "HEART", "DANCE", "ROLLING", "STONES"]);
   });
   it("splits collaborations and slashes", () => {
     expect(trackWords(POOL[2]).map(w => w.norm)).toEqual(["under", "pressure", "queen", "david", "bowie"]);
@@ -57,16 +61,32 @@ describe("trackWords", () => {
   });
 });
 
+describe("baseForm", () => {
+  it.each([
+    ["hearts", "heart"], ["babies", "baby"], ["kisses", "kiss"], ["loving", "love"],
+    ["loved", "love"], ["dancing", "dance"], ["running", "run"], ["stopped", "stop"],
+    ["dreaming", "dream"], ["walking", "walk"], ["rolling", "roll"], ["playing", "play"],
+    ["crying", "cry"], ["cried", "cry"],
+  ])("%s → %s", (w, base) => expect(baseForm(w)).toBe(base));
+  it.each(["spring", "sing", "need", "nothing", "morning", "christmas", "kiss", "opening", "always", "boss"])(
+    "leaves %s alone", w => expect(baseForm(w)).toBe(w));
+});
+
 describe("trackHasWord", () => {
   it("matches the normalised word in title or artist", () => {
-    expect(trackHasWord(POOL[1], "DONT")).toBe(true);
-    expect(trackHasWord(POOL[2], "Bowie")).toBe(true);
-    expect(trackHasWord(POOL[0], "Remastered")).toBe(false);
-    expect(trackHasWord(POOL[4], "Jay")).toBe(false);
+    expect(trackHasWord(POOL[1], "DONT", "whole")).toBe(true);
+    expect(trackHasWord(POOL[2], "Bowie", "whole")).toBe(true);
+    expect(trackHasWord(POOL[0], "Remastered", "whole")).toBe(false);
+    expect(trackHasWord(POOL[4], "Jay", "whole")).toBe(false);
+  });
+  it("accepts any form of the square's word", () => {
+    const t = { name: "Loving You Is Easy", artist: "Sade" };
+    expect(trackHasWord(t, "LOVE", "whole")).toBe(true);
+    expect(trackHasWord({ name: "Hearts on Fire", artist: "X" }, "HEART", "whole")).toBe(true);
   });
   it("whole-word mode doesn't match inside a longer word", () => {
     const gambino = { name: "Redbone", artist: "Childish Gambino" };
-    expect(trackHasWord(gambino, "Child")).toBe(false);
+    expect(trackHasWord(gambino, "Child", "whole")).toBe(false);
     expect(trackHasWord(gambino, "Child", "partial")).toBe(true);
     expect(trackHasWord(gambino, "Bone", "partial")).toBe(true);
     expect(trackHasWord(gambino, "Bones", "partial")).toBe(false);

@@ -7,7 +7,8 @@
 // A board word is a single word taken from a song TITLE or ARTIST in the
 // room's track pool. A player crosses it off by recognising a song that
 // contains it. Matching is always done on the normalised form, so
-// "Don't" / "dont" / "DON’T" are the same word.
+// "Don't" / "dont" / "DON’T" are the same word, and title words are shown
+// in their base form so one square covers every form of the word.
 
 import type { SpotifyTrack, BingoWinMode, BingoWordMatch, TlRoomSettings } from "./types";
 
@@ -49,23 +50,65 @@ export function stripTitleExtras(title: string): string {
 
 interface WordToken { norm: string; display: string }
 
-function tokens(text: string): WordToken[] {
+// ── Base forms ──────────────────────────────────────────────────────────────
+// Squares show the base form of a title word (LOVE, not LOVING / LOVED /
+// LOVES) and a tick accepts any form of it. This is a small, deliberately
+// conservative English stemmer, not a dictionary: when a rule can't tell
+// the base form apart from a real word ("opening" → open? opene?) it leaves
+// the word alone. Artist names are never stemmed — they're names.
+
+// Words that look inflected but aren't (or whose "base" isn't a word).
+const BASE_FORM_EXCEPTIONS = new Set([
+  "morning", "evening", "darling", "ceiling", "wedding", "pudding", "sterling",
+  "nothing", "something", "everything", "anything", "thing", "things",
+  "naked", "wicked", "sacred", "hundred", "kindred", "beloved", "blessed",
+  "always", "perhaps", "christmas", "texas", "vegas", "atlas", "chaos",
+  "news", "series", "species", "lyrics", "physics", "jeans",
+]);
+
+const VOWEL = /[aeiouy]/;
+
+/** Base form of a normalised word: "hearts" → "heart", "babies" → "baby",
+ *  "loving" → "love", "running" → "run", "dreamed" → "dream". */
+export function baseForm(w: string): string {
+  if (w.length <= 3 || BASE_FORM_EXCEPTIONS.has(w)) return w;
+  if (w.endsWith("ied") && w.length > 4) return `${w.slice(0, -3)}y`;   // cried → cry
+  for (const suf of ["ing", "ed"]) {
+    if (!w.endsWith(suf)) continue;
+    const stem = w.slice(0, -suf.length);
+    if (stem.length < 3 || !VOWEL.test(stem)) return w;          // "sing", "spring", "need"
+    if (/([^aeiouylsfz])\1$/.test(stem)) return stem.slice(0, -1); // running → run, stopped → stop
+    if (/[vcz]$/.test(stem) || /[^aeiou]u$/.test(stem)) return `${stem}e`; // loving → love, dancing → dance
+    if (/y$/.test(stem)) return stem;                             // playing → play, crying → cry
+    if (/[aeiou]{2}[^aeiouy]$/.test(stem) || /[^aeiouy]{2}$/.test(stem)) return stem; // dreaming, walking
+    return w;                                                     // opening, making: can't tell
+  }
+  if (w.endsWith("ies") && w.length > 4) return `${w.slice(0, -3)}y`;
+  if (/(ss|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2);
+  if (w.endsWith("s") && !/(ss|us|is|as|os)$/.test(w)) return w.slice(0, -1);
+  return w;
+}
+
+function tokens(text: string, stem: boolean): WordToken[] {
   const out: WordToken[] = [];
   for (const piece of text.split(/[\s/\-–—_,&+]+/)) {
     // Trim surrounding punctuation for display but keep inner apostrophes.
-    const display = piece.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-    const norm = normalizeWord(display);
-    if (norm.length < MIN_WORD_LEN || STOPWORDS.has(norm)) continue;
-    out.push({ norm, display: display.charAt(0).toUpperCase() + display.slice(1) });
+    const raw  = piece.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    const norm = normalizeWord(raw);
+    const base = stem ? baseForm(norm) : norm;
+    if (base.length < MIN_WORD_LEN || STOPWORDS.has(norm) || STOPWORDS.has(base)) continue;
+    // Squares are ALL CAPS. Keep the original spelling ("DON'T") when the
+    // word was already in base form; otherwise show the base form.
+    out.push({ norm: base, display: (base === norm ? raw : base).toUpperCase() });
   }
   return out;
 }
 
-/** Every usable word in a track's title and artist credit. */
+/** Every usable word in a track's title (in base form) and artist credit. */
 export function trackWords(track: Pick<SpotifyTrack, "name" | "artist">): WordToken[] {
   const seen = new Set<string>();
   const out: WordToken[] = [];
-  for (const t of [...tokens(stripTitleExtras(track.name)), ...tokens(track.artist)]) {
+  for (const t of [...tokens(stripTitleExtras(track.name), true), ...tokens(track.artist, false)]) {
     if (seen.has(t.norm)) continue;
     seen.add(t.norm);
     out.push(t);
@@ -73,22 +116,26 @@ export function trackWords(track: Pick<SpotifyTrack, "name" | "artist">): WordTo
   return out;
 }
 
-/** True when `word` (display or normalised) appears in the track — as a
- *  whole word, or with "partial" anywhere inside one of its words. Partial
- *  matching looks at every word of the title and artist, including short
- *  and stop words that never become squares themselves ("Child" can match
- *  "Children" even though board words are picked from whole words). */
+/** True when the square `word` appears in the track, in any form ("LOVE"
+ *  matches "Loving"). "whole" needs the whole word; "partial" (the default)
+ *  also accepts it inside a longer word ("YOU" matches "Your", "CHILD"
+ *  matches "Childish"). Every word of the title and artist is checked,
+ *  including short and stop words that never become squares themselves. */
 export function trackHasWord(
   track: Pick<SpotifyTrack, "name" | "artist">,
   word: string,
-  match: BingoWordMatch = "whole",
+  match: BingoWordMatch = "partial",
 ): boolean {
   const n = normalizeWord(word);
   if (!n) return false;
-  if (match === "whole") return trackWords(track).some(t => t.norm === n);
   return `${stripTitleExtras(track.name)} ${track.artist}`
     .split(/[\s/\-–—_,&+]+/)
-    .some(w => normalizeWord(w).includes(n));
+    .map(normalizeWord)
+    .filter(Boolean)
+    .some(w => {
+      const forms = [w, baseForm(w)];
+      return match === "whole" ? forms.includes(n) : forms.some(f => f.includes(n));
+    });
 }
 
 export type Rng = () => number;
