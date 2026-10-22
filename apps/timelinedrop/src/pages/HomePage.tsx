@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Modal, Panel } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
-import type { CreateRoomRequest, CreateRoomResponse, CreateRoomRole, TlRoomSettings } from "../lib/types";
+import type { CreateRoomRequest, CreateRoomResponse, CreateRoomRole, GameMode, TlRoomSettings } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
 
 // Per-slot palette + matching emoji. The host clicks a swatch to cycle
@@ -21,6 +21,10 @@ const TEAM_COLOR_EMOJI: Record<TeamColor, string> = {
 // "add team" path later if multi-team rooms come back; for now the
 // playtested 2-team flow is the only supported shape.
 const MAX_TEAMS = 2;
+// Music Bingo has no turns, so more teams cost nothing — up to 8, which
+// also covers "everyone plays their own board" for a small party. Must
+// match BINGO_MAX_TEAMS in functions/_bingo.ts.
+const MAX_BINGO_TEAMS = 8;
 function defaultTeamName(i: number): string {
   return ["Team Red", "Team Blue", "Team Green", "Team Yellow"][i] ?? `Team ${i + 1}`;
 }
@@ -39,6 +43,7 @@ export default function HomePage() {
   const [showHost,     setShowHost]     = useState(false);
   const [name,         setName]         = useState(session?.displayName ?? "");
   const [role,         setRole]         = useState<CreateRoomRole>("player");
+  const [gameMode,     setGameMode]     = useState<GameMode>("timeline");
   const [teams,        setTeams]        = useState<string[]>([defaultTeamName(0), defaultTeamName(1)]);
   const [teamColors,   setTeamColors]   = useState<TeamColor[]>([TEAM_PALETTE[0], TEAM_PALETTE[1]]);
   const [hostTeam,     setHostTeam]     = useState<number>(0);
@@ -74,15 +79,16 @@ export default function HomePage() {
         ...DEFAULT_TL_SETTINGS,
         audioMode: session?.spotify ? "browser" : "all-clients-stream",
         streamerMode,
+        gameMode,
       };
       const body: CreateRoomRequest = {
         name:         name.trim(),
         win_target:   10, // baked default; host can change in Lobby → Settings tab
-        team_names:   teams.map((t, i) => (t.trim() || defaultTeamName(i))),
-        team_colors:  teamColors,
+        team_names:   teams.slice(0, maxTeams).map((t, i) => (t.trim() || defaultTeamName(i))),
+        team_colors:  teamColors.slice(0, maxTeams),
         // host_team only matters for the "player" role; server ignores it
         // for spectator/dj/gamemaster.
-        host_team:    role === "player" ? hostTeam : null,
+        host_team:    role === "player" ? Math.min(hostTeam, maxTeams - 1) : null,
         role,
         settings,
       };
@@ -116,7 +122,7 @@ export default function HomePage() {
   //
   // A signed-in host gets their display name; anyone else starts as "Host"
   // and can rename in the lobby.
-  async function quickStart() {
+  async function quickStart(mode: GameMode = "timeline") {
     const hostName = (name.trim() || session?.displayName || "Host").trim().slice(0, 30);
     setLoading(true); setQuickLoading(true); setError(null);
     try {
@@ -128,7 +134,7 @@ export default function HomePage() {
         host_team:   0,
         role:        "player",
         quick:       true,
-        settings:    { audioMode: session?.spotify ? "browser" : "all-clients-stream" },
+        settings:    { audioMode: session?.spotify ? "browser" : "all-clients-stream", gameMode: mode },
       };
       const res  = await fetch("/room/create", {
         method:      "POST",
@@ -147,6 +153,8 @@ export default function HomePage() {
       setLoading(false); setQuickLoading(false);
     }
   }
+
+  const maxTeams = gameMode === "bingo" ? MAX_BINGO_TEAMS : MAX_TEAMS;
 
   function goToJoin() {
     const roomId = code.trim().toUpperCase();
@@ -189,13 +197,21 @@ export default function HomePage() {
             variant="primary"
             className="w-full py-4 text-lg"
             loading={loading && quickLoading}
-            onClick={quickStart}
+            onClick={() => quickStart("timeline")}
           >
             ⚡ Quick start
           </Button>
           <p className="text-xs text-center mt-2" style={{ color: "rgb(var(--text-muted-rgb))" }}>
             Two teams, songs picked for you, no settings to read. Just share the code.
           </p>
+          <Button
+            variant="ghost"
+            className="w-full mt-3"
+            disabled={loading}
+            onClick={() => quickStart("bingo")}
+          >
+            🎱 Quick music bingo
+          </Button>
           {error && <p className="text-sm text-red-400 text-center mt-2">{error}</p>}
         </div>
       )}
@@ -292,6 +308,35 @@ export default function HomePage() {
             />
           )}
 
+          {/* Game — timeline (the original) or Music Bingo. Lives here
+              rather than in Lobby Settings because it decides how many
+              teams the room can have. */}
+          <div>
+            <p className="text-sm font-medium mb-2">Game</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: "timeline", label: "📅 Timeline", hint: "Place songs in order of release year" },
+                { value: "bingo",    label: "🎱 Music bingo", hint: "Cross off words from song titles and artists" },
+              ] as const).map(({ value, label, hint }) => {
+                const active = gameMode === value;
+                return (
+                  <button
+                    key={value}
+                    onClick={() => setGameMode(value)}
+                    className="text-left rounded-lg p-3 transition-all border"
+                    style={{
+                      borderColor: active ? "rgba(var(--color-primary-rgb),0.7)" : "rgba(255,255,255,0.12)",
+                      background:  active ? "rgba(var(--color-primary-rgb),0.15)" : "transparent",
+                    }}
+                  >
+                    <p className="text-sm font-semibold">{label}</p>
+                    <p className="text-[10px] mt-0.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>{hint}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Role — Player / Spectator / DJ / Gamemaster. Custom grid so
               all four fit on mobile in a 2x2; descriptions explain the
               less-obvious ones. */}
@@ -332,7 +377,7 @@ export default function HomePage() {
           <div>
             <p className="text-sm font-medium mb-2">Teams</p>
             <div className="space-y-2">
-              {teams.map((t, i) => {
+              {teams.slice(0, maxTeams).map((t, i) => {
                 const color = teamColors[i] ?? TEAM_PALETTE[i % TEAM_PALETTE.length];
                 return (
                   <div key={i} className="flex gap-2 items-center">
@@ -367,7 +412,7 @@ export default function HomePage() {
                   </div>
                 );
               })}
-              {teams.length < MAX_TEAMS && (
+              {teams.length < maxTeams && (
                 <button
                   onClick={() => {
                     setTeams(ts => [...ts, defaultTeamName(ts.length)]);
@@ -392,7 +437,7 @@ export default function HomePage() {
             <div>
               <p className="text-sm font-medium mb-2">Your team</p>
               <div className="flex gap-2 flex-wrap">
-                {teams.map((t, i) => {
+                {teams.slice(0, maxTeams).map((t, i) => {
                   const selected = hostTeam === i;
                   const color    = teamColors[i] ?? TEAM_PALETTE[i % TEAM_PALETTE.length];
                   return (

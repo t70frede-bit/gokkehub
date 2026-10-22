@@ -6,15 +6,16 @@ import HomePage   from "./pages/HomePage";
 import JoinPage   from "./pages/JoinPage";
 import LobbyPage  from "./pages/LobbyPage";
 import GamePage   from "./pages/GamePage";
+import BingoPage  from "./pages/BingoPage";
 import EndPage    from "./pages/EndPage";
 import DebugPage  from "./pages/DebugPage";
 import DesignPage from "./pages/DesignPage";
 
-// Pull a room code from the path when we're inside /lobby /game or /end.
+// Pull a room code from the path when we're inside /lobby /game /bingo or /end.
 // Lets the shared header always show the code in the same spot.
 function useRoomCodeFromPath(): string | undefined {
   const { pathname } = useLocation();
-  const m = pathname.match(/^\/(?:lobby|game|end)\/([^/]+)/);
+  const m = pathname.match(/^\/(?:lobby|game|bingo|end)\/([^/]+)/);
   return m?.[1];
 }
 
@@ -77,6 +78,7 @@ function AppShell() {
           <Route path="/join"          element={<JoinPage />} />
           <Route path="/lobby/:roomId" element={<LobbyPage />} />
           <Route path="/game/:roomId"  element={<GamePage />} />
+          <Route path="/bingo/:roomId" element={<BingoPage />} />
           <Route path="/end/:roomId"   element={<EndPage />} />
           <Route path="/debug"         element={<DebugPage />} />
           <Route path="/design"        element={<DesignPage />} />

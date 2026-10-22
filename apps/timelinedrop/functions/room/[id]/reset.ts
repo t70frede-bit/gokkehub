@@ -60,6 +60,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   await req(env, "DELETE", "tl_team_tokens", `room_id=eq.${roomId}`);
   await req(env, "DELETE", "tl_shop_pings",  `room_id=eq.${roomId}`);
   await req(env, "DELETE", "tl_rounds",      `room_id=eq.${roomId}`);
+  // Music Bingo (migration 032). Tolerate the tables not existing yet so a
+  // timeline room can still reset before the migration is applied.
+  await req(env, "DELETE", "tl_bingo_marks",  `room_id=eq.${roomId}`).catch(() => {});
+  await req(env, "DELETE", "tl_bingo_boards", `room_id=eq.${roomId}`).catch(() => {});
 
   // Zero out every team's per-game state. Coins (points) reset too —
   // shop balances shouldn't survive a restart.

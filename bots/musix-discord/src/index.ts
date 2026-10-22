@@ -143,7 +143,7 @@ async function fetchRoom(roomId: string): Promise<TlRoomLite | null> {
 async function fetchRoundById(roundId: number): Promise<BotRound | null> {
   const { data, error } = await supabase
     .from("tl_rounds")
-    .select("id, team_id, outcome, track, song_limit_seconds, force_locked, bot_video_id, video_report_approved, redo_requested_at")
+    .select("id, team_id, outcome, track, song_limit_seconds, force_locked, bot_video_id, video_report_approved, redo_requested_at, bingo_track_no")
     .eq("id", roundId)
     .single();
   if (error) {
@@ -202,6 +202,8 @@ interface Session {
   currentVideoId:           string | null; // for Restart / +30s re-spawn
   currentTrackId:           string | null; // Spotify id — passed to reportVideo() so we invalidate the right cache entry
   currentSongLimitSeconds:  number | null;
+  // Music Bingo rooms (migration 032) number their songs; null otherwise.
+  currentBingoTrackNo:      number | null;
   // Deduplication for the host-approved video report and the redo-round
   // signal. tl_rounds UPDATE events repeat for unrelated field changes
   // (outcome flips, judging, etc.), so we only react once per fresh signal.
@@ -665,6 +667,7 @@ interface BotRound {
   bot_video_id?:           string | null;
   video_report_approved?:  boolean;
   redo_requested_at?:      string | null; // ISO timestamp
+  bingo_track_no?:         number | null; // Music Bingo — public "Track #N"
 }
 
 interface BotRoom {
@@ -850,6 +853,19 @@ function buildActiveTurnMessage(session: Session, snapshot: GameSnapshot): {
   const totalSec   = session.currentRoundDurationSec;
   const indicator  = paused ? "⏸" : "🎵";
   const bar        = renderProgressBar(elapsedSec, totalSec);
+
+  // Music Bingo has no turns or cards — everyone just needs the number.
+  if (session.currentBingoTrackNo != null) {
+    return {
+      content: [
+        `🎱 **Music bingo · Track #${session.currentBingoTrackNo}**`,
+        "",
+        `${indicator} **Now playing** · ${fmtSec(totalSec)}`,
+        bar,
+      ].join("\n"),
+      components: buildGameModeButtons(session),
+    };
+  }
 
   const lines: string[] = [`${color} **${teamName}'s turn**`];
   // Only show finished songs — i.e. ones that already have an outcome.
@@ -1065,6 +1081,7 @@ async function playRoundTrack(session: Session, round: BotRound) {
     session.currentVideoId           = resolved.videoId;
     session.currentTrackId           = track.id;
     session.currentSongLimitSeconds  = round.song_limit_seconds ?? null;
+    session.currentBingoTrackNo      = round.bingo_track_no ?? null;
     // Each new round = a fresh dedup window for the report/redo signals.
     session.reportedVideoFor    = null;
     session.lastRedoRequestedAt = round.redo_requested_at ?? null;
@@ -1338,6 +1355,7 @@ function buildGameSession(params: {
     currentVideoId:          null,
     currentTrackId:          null,
     currentSongLimitSeconds: null,
+    currentBingoTrackNo:     null,
     reportedVideoFor:        null,
     lastRedoRequestedAt:     null,
     currentTurnTeamId:       null,
@@ -1625,6 +1643,7 @@ async function handlePlayQuery(ix: ChatInputCommandInteraction, label: "play" | 
       currentVideoId:          null,
       currentTrackId:          null,
       currentSongLimitSeconds: null,
+      currentBingoTrackNo:     null,
       reportedVideoFor:        null,
       lastRedoRequestedAt:     null,
       currentTurnTeamId:       null,

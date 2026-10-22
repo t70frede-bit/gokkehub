@@ -2,6 +2,7 @@ import type { PagesFunction } from "@cloudflare/workers-types";
 import type { Env } from "../../_env";
 import { json, handlePreflight } from "../../_cors";
 import { getRoom, updateRoom } from "../../_supabase";
+import { sanitizeBingoSettings } from "../../_bingo";
 import type { TlRoomSettings, UpdateSettingsRequest } from "../../../src/lib/types";
 
 function sanitize(input: unknown): TlRoomSettings {
@@ -55,6 +56,7 @@ function sanitize(input: unknown): TlRoomSettings {
     out.guessMode = s.guessMode;
   }
   if (typeof s.quickStart === "boolean") out.quickStart = s.quickStart;
+  sanitizeBingoSettings(s, out);
   return out;
 }
 

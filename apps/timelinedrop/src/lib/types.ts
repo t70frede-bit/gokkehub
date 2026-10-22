@@ -149,7 +149,40 @@ export const SHOP_TOKEN_COSTS: Record<string, number> = {
   song_limiter:        6,
 };
 
+// Which game the room plays. "timeline" is the original Hitster-style game;
+// "bingo" is Music Bingo (see src/lib/bingo.ts and functions/room/[id]/bingo.ts).
+export type GameMode = "timeline" | "bingo";
+
+// How strictly a bingo tick is checked before it counts. Chosen by the host
+// in the Lobby; the server enforces it on every confirm.
+//   "off"    — no check; the captain just crosses the word off.
+//   "track"  — the tick must name a played track number whose title or
+//              artist contains the word.
+//   "search" — as "track", plus the player must find that exact song with
+//              the musix track search (/track-search).
+export type BingoCheckMode = "off" | "track" | "search";
+
+// What a team needs on its board to win.
+export type BingoWinMode = "line" | "two-lines" | "full";
+
+// How a board word has to appear in a song to count.
+//   "partial" — (default) inside any word of the title/artist: "Child"
+//               matches "Childish", "You" matches "Your".
+//   "whole"   — as a whole word only: "You" does NOT match "Your".
+export type BingoWordMatch = "whole" | "partial";
+
 export interface TlRoomSettings {
+  gameMode?:           GameMode;
+  /** Board is bingoSize × bingoSize words (3–5). */
+  bingoSize?:          number;
+  bingoCheckMode?:     BingoCheckMode;
+  bingoWordMatch?:     BingoWordMatch;
+  bingoWinMode?:       BingoWinMode;
+  /** Seconds each song plays before the next one starts. 0 = full song. */
+  bingoClipSeconds?:   number;
+  /** YouTube (all-clients-stream) only: play on the host's device instead
+   *  of every player's. */
+  bingoHostOnlyAudio?: boolean;
   lateJoinMode?:       LateJoinMode;
   streamerMode?:       boolean;
   hideSpectators?:     boolean;
@@ -207,6 +240,13 @@ export interface TlRoomSettings {
 // having to touch Lobby Settings. The Create Room modal stays minimal — anyone
 // who wants to deviate flips it later in the Lobby's Settings tab.
 export const DEFAULT_TL_SETTINGS: Required<TlRoomSettings> = {
+  gameMode:          "timeline",
+  bingoSize:         5,
+  bingoCheckMode:    "track",
+  bingoWordMatch:    "partial",
+  bingoWinMode:      "line",
+  bingoClipSeconds:  30,
+  bingoHostOnlyAudio: false,
   lateJoinMode:      "open",
   streamerMode:      false,
   hideSpectators:    false,
@@ -438,6 +478,36 @@ export interface TlRound {
   // song via the artist_picker token. The round earns no token/shop reward
   // — picking a song you know shouldn't also hand you a bonus.
   bonus_blocked:                  boolean;
+  // Migration 032 — Music Bingo. The public "Track #N" of this song; null
+  // on timeline rounds.
+  bingo_track_no:                 number | null;
+}
+
+// ── Music Bingo (migration 032) ──────────────────────────────────────────────
+
+export interface TlBingoBoard {
+  team_id:      number;
+  room_id:      string;
+  size:         number;
+  words:        string[];      // size*size, row-major
+  won_at:       string | null;
+  won_track_no: number | null;
+  created_at:   string;
+}
+
+export type BingoMarkState = "suggested" | "confirmed" | "rejected";
+
+export interface TlBingoMark {
+  id:          number;
+  room_id:     string;
+  team_id:     number;
+  cell:        number;
+  state:       BingoMarkState;
+  track_no:    number | null;
+  pick:        SearchPickPayload | null;
+  player_id:   string;
+  player_name: string;
+  created_at:  string;
 }
 
 export interface StageRequest {

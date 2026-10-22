@@ -3,6 +3,7 @@ import { getSession } from "@gokkehub/auth/session";
 import type { Env } from "../_env";
 import { json, handlePreflight } from "../_cors";
 import { createRoom, createTeam, createPlayer } from "../_supabase";
+import { sanitizeBingoSettings } from "../_bingo";
 import type { CreateRoomRequest, CreateRoomResponse, TlRoomSettings } from "../../src/lib/types";
 
 // Room codes are 4 alphanumeric chars (36^4 ≈ 1.7M combos, plenty for
@@ -61,6 +62,7 @@ function sanitizeSettings(input: unknown): TlRoomSettings {
     out.guessMode = s.guessMode;
   }
   if (typeof s.quickStart === "boolean") out.quickStart = s.quickStart;
+  sanitizeBingoSettings(s, out);
   return out;
 }
 
