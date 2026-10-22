@@ -8,6 +8,7 @@ import {
   lookupCorrectedYear, indexTracks,
 } from "../../_supabase";
 import { handleGenerate } from "./curate";
+import { isBingo, startBingo, BINGO_MIN_TRACKS } from "../../_bingo";
 
 export const onRequest: PagesFunction<Env> = async ({ request, params, env }) => {
   const pre = handlePreflight(request as unknown as Request);
@@ -38,11 +39,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
   const teams   = await getTeams(env, roomId);
   const players = await getPlayers(env, roomId);
-  if (teams.length < 2) return json({ error: "Need at least 2 teams" }, 400, req);
+  const bingo = isBingo(room);
+  // Bingo works with a single team (one shared board); timeline needs two.
+  if (teams.length < (bingo ? 1 : 2)) return json({ error: `Need at least ${bingo ? 1 : 2} teams` }, 400, req);
 
   let pool = room.track_pool ?? [];
-  // Need: 1 starter card per team + 1 first round track
-  const minTracks = teams.length + 1;
+  // Timeline needs 1 starter card per team + 1 first round track.
+  const minTracks = bingo ? BINGO_MIN_TRACKS : teams.length + 1;
   // For "group-taste" + "spotify-taste" rooms we generate songs on the
   // fly here rather than making the host hit a separate "Generate"
   // button. The curate.ts handler picks the right profile-source branch
@@ -73,7 +76,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
 
   if (pool.length < minTracks) {
     return json({
-      error: `Need at least ${minTracks} songs (one starting card per team + one for the first round). Add a Spotify playlist or switch to Group taste.`,
+      error: bingo
+        ? `Bingo needs at least ${minTracks} songs. Add a playlist or switch to Group taste.`
+        : `Need at least ${minTracks} songs (one starting card per team + one for the first round). Add a Spotify playlist or switch to Group taste.`,
     }, 400, req);
   }
 
@@ -83,6 +88,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, params, env }) =>
   // Deezer does or doesn't have. One batched upsert; fire-and-forget so a
   // failure here can never block a game from starting.
   void indexTracks(env, pool, "pool");
+
+  if (bingo) return startBingo(env, req, room, teams, players, pool);
 
   // 1) Seed each team with one starting card so they have a year reference.
   for (let i = 0; i < teams.length; i++) {

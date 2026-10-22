@@ -11,6 +11,7 @@ import type {
   LateJoinMode,
 } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
+import { playPath } from "../lib/bingo";
 
 interface RoomSnapshot {
   room:  TlRoom;
@@ -91,7 +92,7 @@ export default function JoinPage() {
     supabase.from("tl_players").select("*").eq("id", savedId).maybeSingle()
       .then(({ data }) => {
         if (data && data.room_id === roomId) {
-          if (snap.room.status === "playing") navigate(`/game/${roomId}`);
+          if (snap.room.status === "playing") navigate(playPath(snap.room));
           else navigate(`/lobby/${roomId}`);
         }
       });
@@ -123,7 +124,7 @@ export default function JoinPage() {
       }
       const { player_id } = data as JoinRoomResponse;
       localStorage.setItem(`tl_player_${roomId}`, player_id);
-      if (snap.room.status === "playing") navigate(`/game/${roomId}`);
+      if (snap.room.status === "playing") navigate(playPath(snap.room));
       else navigate(`/lobby/${roomId}`);
     } catch {
       setJoinErr("Network error — try again.");

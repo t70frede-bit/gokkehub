@@ -6,6 +6,8 @@ import { supabase } from "../lib/supabase";
 import { useHeaderControls, DEFAULT_HEADER_CONTROLS } from "../App";
 import type { TlPlayer, TlTeam, TlRoomSettings, LateJoinMode, JudgeMode, Difficulty, SongSource, AudioMode, TimerMode, TokenEconomy, GuessMode, TlPlaylistCatalogEntry } from "../lib/types";
 import { DEFAULT_TL_SETTINGS } from "../lib/types";
+import { playPath, describeBingo, distinctWordCount } from "../lib/bingo";
+import { BingoLobbySettings } from "../components/BingoLobbySettings";
 
 // Discord bot invite URL — hardcoded to the GokkeHub bot's client_id with
 // permissions 36700160 (Connect + Speak + Use Voice Activity) and both
@@ -71,11 +73,13 @@ export default function LobbyPage() {
   const [selectedPlayer, setSelectedPlayer] = useState<TlPlayer | null>(null);
   // Manual-artists editor state
   const [editingArtists, setEditingArtists] = useState<TlPlayer | null>(null);
+  // Music Bingo "+ Add team" in flight.
+  const [addingTeam,     setAddingTeam]     = useState(false);
 
   // ── Auto-redirect to game when host starts ───────────────────────────────────
   useEffect(() => {
-    if (state?.room.status === "playing") navigate(`/game/${roomId}`);
-  }, [state?.room.status, roomId, navigate]);
+    if (state?.room.status === "playing") navigate(playPath(state.room));
+  }, [state?.room, state?.room.status, roomId, navigate]);
 
   // Drive the global header's code chip + invite button.
   //  - hideRoomCode: streamer OR gamemaster (don't pin the code on screen)
@@ -168,6 +172,7 @@ export default function LobbyPage() {
   // Settings get hidden — late-join, team-swap, vote judging, multi-client
   // audio modes are all noise when one human is the entire room.
   const gamemastering = !!(settings.gamemasterMode || settings.singleScreenMode);
+  const isBingoRoom   = settings.gameMode === "bingo";
 
   // ⚡ Quick start lobby: no tabs, no settings, just the code + players +
   // Start. Everything is already chosen by the server-side preset, so
@@ -365,6 +370,26 @@ export default function LobbyPage() {
     });
   }
 
+  // Bingo rooms can grow past the two teams Create Room starts with.
+  async function addBingoTeam() {
+    if (!myPlayerId) return;
+    setAddingTeam(true);
+    try {
+      const res = await fetch(`/room/${roomId}/bingo?action=add-team`, {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        credentials: "include",
+        body:        JSON.stringify({ player_id: myPlayerId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        setStartError(data.error ?? "Couldn't add a team");
+      }
+    } finally {
+      setAddingTeam(false);
+    }
+  }
+
   async function saveSettings(patch: TlRoomSettings) {
     if (!myPlayerId) return;
     await fetch(`/room/${roomId}/settings`, {
@@ -402,9 +427,14 @@ export default function LobbyPage() {
   // tab (where it's always been) and the Settings tab (so the host
   // doesn't have to switch tabs just to start the game).
   const startPanel = isHost ? (() => {
-    const minTracks = Math.max(5, teams.length + 1);
+    // Bingo: 10 songs, and enough different words for the board (boards
+    // draw from the first 60 songs — see BINGO_BOARD_POOL_CAP).
+    const minTracks = isBingoRoom ? 10 : Math.max(5, teams.length + 1);
     const isPlaylistMode = settings.songSource === "playlist";
     const tracksTooFew   = isPlaylistMode && trackCount < minTracks;
+    const wordsNeeded    = settings.bingoSize * settings.bingoSize;
+    const wordsTooFew    = isBingoRoom && isPlaylistMode && !tracksTooFew
+      && distinctWordCount((room.track_pool ?? []).slice(0, 60)) < wordsNeeded;
     return (
       <Panel className="p-4">
         {startError && <p className="text-sm text-red-400 mb-3">⚠️ {startError}</p>}
@@ -412,7 +442,7 @@ export default function LobbyPage() {
         <Button
           onClick={startGame}
           loading={starting || quickFilling}
-          disabled={tracksTooFew || quickFilling}
+          disabled={tracksTooFew || wordsTooFew || quickFilling}
           className="w-full"
           size="lg"
         >
@@ -422,13 +452,17 @@ export default function LobbyPage() {
               ? "🎵 Generating songs… this can take a few seconds"
               : tracksTooFew
                 ? `Add a playlist first (${trackCount}/${minTracks})`
-                : "🎮 Start Game"}
+                : wordsTooFew
+                  ? `Not enough words for a ${settings.bingoSize}×${settings.bingoSize} board. Add songs or shrink it`
+                  : isBingoRoom ? "🎱 Start Bingo" : "🎮 Start Game"}
         </Button>
         <p className="text-xs mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))" }}>
           {quickFilling
             ? "Quick start is loading a playlist — this takes a few seconds"
             : isPlaylistMode
-              ? `Each team starts with one card; minimum is ${minTracks} tracks`
+              ? (isBingoRoom
+                  ? `Each team gets its own board of words from these songs; minimum is ${minTracks} tracks`
+                  : `Each team starts with one card; minimum is ${minTracks} tracks`)
               : "Songs auto-generate from group taste when you press Start"}
         </p>
       </Panel>
@@ -547,6 +581,9 @@ export default function LobbyPage() {
               )}
               <div className="flex flex-col gap-4">
 
+                {isBingoRoom && <BingoLobbySettings settings={settings} onSave={saveSettings} />}
+
+                {!isBingoRoom && (<>
                 {/* Cards to win — pill row replaces the dropdown */}
                 <div>
                   <p className="text-sm font-medium mb-2">Cards to win</p>
@@ -792,6 +829,8 @@ export default function LobbyPage() {
                   </div>
                 </div>
 
+                </>)}
+
                 {/* Advanced settings — collapsed by default. Most rooms never
                     touch these. Difficulty + skipRecentlyHeard moved into the
                     Songs panel since they only apply to group-taste mode. */}
@@ -860,6 +899,18 @@ export default function LobbyPage() {
           ) : (
             <Panel className="p-5">
               <h2 className="font-bold text-lg mb-3">Game Settings</h2>
+              {isBingoRoom ? (() => {
+                const d = describeBingo(settings);
+                const strong = { color: "rgb(var(--text-secondary-rgb))" };
+                return (
+                  <div className="text-sm flex flex-col gap-1.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                    <p>Game: <strong style={strong}>🎱 Music bingo</strong></p>
+                    <p>Board: <strong style={strong}>{d.board}</strong>, win with <strong style={strong}>{d.win}</strong></p>
+                    <p>Ticks checked by: <strong style={strong}>{d.check}</strong></p>
+                    <p>Songs: <strong style={strong}>{d.clip}</strong></p>
+                  </div>
+                );
+              })() : (
               <div className="text-sm flex flex-col gap-1.5" style={{ color: "rgb(var(--text-muted-rgb))" }}>
                 <p>Cards to win: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{room.win_target}</strong></p>
                 <p>Late join: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.lateJoinMode}</strong></p>
@@ -871,6 +922,7 @@ export default function LobbyPage() {
                   <p>Judging: <strong style={{ color: "rgb(var(--text-secondary-rgb))" }}>{settings.judgeMode.replace(/-/g, " ")}</strong></p>
                 )}
               </div>
+              )}
             </Panel>
           )}
 
@@ -1217,6 +1269,16 @@ export default function LobbyPage() {
                     shared musix-bot proxy. Each player controls their own volume and can pause
                     locally — no host coordination needed.
                   </p>
+                  {isBingoRoom && (
+                    <Toggle
+                      options={[
+                        { value: "everyone", label: "🔊 Every player's device" },
+                        { value: "host",     label: "🖥 Only the host's device" },
+                      ]}
+                      value={settings.bingoHostOnlyAudio ? "host" : "everyone"}
+                      onChange={v => saveSettings({ bingoHostOnlyAudio: v === "host" })}
+                    />
+                  )}
                 </div>
               )}
               {settings.audioMode === "discord-bot" && (
@@ -1299,6 +1361,16 @@ export default function LobbyPage() {
                 />
               );
             })}
+            {isHost && isBingoRoom && teams.length < 8 && (
+              <button
+                onClick={addBingoTeam}
+                disabled={addingTeam}
+                className="text-sm font-semibold self-start px-3 py-2 rounded-md border"
+                style={{ borderColor: "rgba(255,255,255,0.12)", color: "rgb(var(--color-primary-rgb))" }}
+              >
+                {addingTeam ? "Adding…" : "+ Add team"}
+              </button>
+            )}
           </div>
 
           {/* Spectator panel */}
