@@ -141,6 +141,7 @@ export function toPublicSession(data: SessionData): PublicSessionData {
     linked: {
       spotify: !!data.spotify,
       discord: !!data.discord,
+      google:  !!data.google,
       steam:   !!data.steam,
       lastfm:  !!data.lastfm,
     },

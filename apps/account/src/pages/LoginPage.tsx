@@ -9,6 +9,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   spotify_denied: "Spotify login was cancelled.",
   spotify_token:  "Spotify login failed. Please try again.",
   spotify_user:   "Could not fetch Spotify profile.",
+  google_denied:  "Google sign-in was cancelled.",
+  google_token:   "Google sign-in failed. Please try again.",
+  google_user:    "Could not fetch your Google profile.",
+  google_unavailable: "Google sign-in is temporarily unavailable. Try Discord, or try again later.",
+  google_unconfigured: "Google sign-in isn't switched on yet. Use Discord for now.",
   oauth_state:    "That sign-in link expired or was started in another browser. Please try again.",
 };
 
@@ -20,7 +25,7 @@ export default function LoginPage() {
   // The server re-validates this and carries it through OAuth `state`.
   const returnTo = safeReturnUrl(searchParams.get("redirect"));
 
-  const startLogin = (provider: "discord" | "spotify") => {
+  const startLogin = (provider: "google" | "discord" | "spotify") => {
     window.location.href = returnTo
       ? `/auth/${provider}?redirect=${encodeURIComponent(returnTo)}`
       : `/auth/${provider}`;
@@ -45,34 +50,50 @@ export default function LoginPage() {
               Welcome to GokkeHub
             </p>
 
-            <Button variant="ghost" fullWidth onClick={() => startLogin("discord")}>
-              <span className="flex items-center justify-center gap-2 w-full">
-                <DiscordIcon />
-                Continue with Discord
-              </span>
-            </Button>
+            <div className="space-y-3">
+              <Button variant="ghost" fullWidth onClick={() => startLogin("google")}>
+                <span className="flex items-center justify-center gap-2 w-full">
+                  <GoogleIcon />
+                  Continue with Google
+                </span>
+              </Button>
 
-            <div className="my-3 flex items-center gap-3" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
-              <span style={{ fontSize: "var(--text-xs)" }}>or</span>
-              <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.08)" }} />
+              <Button variant="ghost" fullWidth onClick={() => startLogin("discord")}>
+                <span className="flex items-center justify-center gap-2 w-full">
+                  <DiscordIcon />
+                  Continue with Discord
+                </span>
+              </Button>
             </div>
 
-            {/* Spotify-only login — lower-friction path for players who just
-                want to drop into a musix game without setting up a Discord
-                account. Creates a session with userId "sp:<spotify_id>"
-                and pulls display name + avatar from the Spotify profile. */}
-            <Button variant="ghost" fullWidth onClick={() => startLogin("spotify")}>
-              <span className="flex items-center justify-center gap-2 w-full">
-                <SpotifyIcon />
-                Continue with Spotify
-              </span>
-            </Button>
+            <p className="mt-5 text-center" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
+              No account needed to join a room as a guest.
+            </p>
+
+            {/* Spotify sign-in only works for accounts on the Spotify app's
+                allowlist (development mode), so it's a small link rather than
+                a main option. Creates userId "sp:<spotify_id>" on first use. */}
+            <p className="mt-2 text-center" style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-xs)" }}>
+              <button type="button" className="underline inline-flex items-center gap-1" onClick={() => startLogin("spotify")}>
+                <SpotifyIcon size={12} /> Sign in with Spotify (approved accounts only)
+              </button>
+            </p>
           </div>
         </Panel>
 
       </div>
     </div>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.46a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.58-5.17 3.58-8.81z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.88-3c-1.07.72-2.45 1.15-4.06 1.15-3.12 0-5.77-2.11-6.71-4.95H1.28v3.1A12 12 0 0 0 12 24z" />
+      <path fill="#FBBC05" d="M5.29 14.29a7.2 7.2 0 0 1 0-4.58v-3.1H1.28a12 12 0 0 0 0 10.78l4.01-3.1z" />
+      <path fill="#EA4335" d="M12 4.75c1.76 0 3.34.61 4.59 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.28 6.61l4.01 3.1C6.23 6.86 8.88 4.75 12 4.75z" />
+    </svg>
   );
 }
 
@@ -84,9 +105,9 @@ function DiscordIcon() {
   );
 }
 
-function SpotifyIcon() {
+function SpotifyIcon({ size = 18 }: { size?: number }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="#1DB954" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="#1DB954" aria-hidden>
       <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.84-.18-.962-.601-.12-.42.18-.84.6-.961 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.139zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.42 1.56-.299.421-1.02.599-1.559.3z"/>
     </svg>
   );

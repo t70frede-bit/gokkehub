@@ -86,6 +86,14 @@ describe("resolveLogin", () => {
     await expect(resolveLogin(env, spotify("abc"), session)).rejects.toBeInstanceOf(IdentityTakenError);
   });
 
+  it("gives a Google sign-up a new uuid and finds it again", async () => {
+    const google = { provider: "google" as const, providerUserId: "g-sub-1", displayName: "G", avatarUrl: null };
+    const id = await resolveLogin(env, google, null);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await resolveLogin(env, google, null)).toBe(id);
+    expect((await buildSessionData(env, id)).google?.id).toBe("g-sub-1");
+  });
+
   it("imports the old KV Last.fm link on first sign-in", async () => {
     kvStore.set("lastfm_link:123", "Freddy");
     await resolveLogin(env, discord("123"), null);
