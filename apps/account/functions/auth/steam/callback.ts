@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, getSessionId, updateSession } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { db, ensureSessionUser, linkIdentity, updateUser, refreshSession, IdentityTakenError } from "../../_accounts";
 import type { Env } from "../../_env";
 
 const STEAM_OPENID_VERIFY = "https://steamcommunity.com/openid/login";
@@ -58,15 +59,25 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const player = playerData.response.players[0];
   const steamAvatarUrl = player?.avatarfull ?? null;
 
-  const sessionId = getSessionId(req)!;
-  await updateSession(env.SESSIONS, sessionId, {
-    steam: {
-      steamId,
-      displayName: player?.personaname ?? null,
-      avatarUrl: steamAvatarUrl,
-    },
-    avatarUrl: session.avatarUrl ?? steamAvatarUrl,
-  });
+  const sb = db(env);
+  try {
+    await ensureSessionUser(sb, session!);
+    await linkIdentity(sb, session!.userId, {
+      provider:       "steam",
+      providerUserId: steamId,
+      displayName:    player?.personaname ?? null,
+      avatarUrl:      steamAvatarUrl,
+    });
+  } catch (err) {
+    if (err instanceof IdentityTakenError) {
+      return Response.redirect("https://account.gokkehub.com/profile?error=steam_taken", 302);
+    }
+    throw err;
+  }
+  if (!session!.avatarUrl && steamAvatarUrl) {
+    await updateUser(sb, session!.userId, { avatar_url: steamAvatarUrl });
+  }
+  await refreshSession(env, req, session!.userId);
 
   return Response.redirect("https://account.gokkehub.com/profile", 302);
 };

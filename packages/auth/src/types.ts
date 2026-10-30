@@ -28,9 +28,11 @@ export interface SessionData {
   };
   discord?: {
     id:           string;
-    accessToken:  string;
-    refreshToken: string;
-    expiresAt:    number;
+    // Only present on a session started by a Discord login this week —
+    // nothing uses them yet, so they aren't restored from the database.
+    accessToken?:  string;
+    refreshToken?: string;
+    expiresAt?:    number;
     username:     string;
     avatarUrl:    string | null;
   };

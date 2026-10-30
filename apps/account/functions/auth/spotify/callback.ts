@@ -1,7 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { getSession, getSessionId, createSession, updateSession } from "@gokkehub/auth/session";
-import { buildSessionCookie } from "@gokkehub/auth/cookie";
 import { finishOAuth, clearOAuthStateCookie } from "@gokkehub/auth/oauth-state";
+import { completeLogin, IdentityTakenError } from "../../_accounts";
 import type { Env } from "../../_env";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -82,58 +81,24 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     scope:        tokens.scope,
   };
 
-  const req = request as unknown as Request;
-  const existing = await getSession(env.SESSIONS, req);
-
-  if (existing) {
-    // Already logged in (via Discord, or via a previous Spotify-primary
-    // login) — just link / refresh the Spotify data on the existing session.
-    const sessionId = getSessionId(req)!;
-    await updateSession(env.SESSIONS, sessionId, {
-      spotify:   spotifyData,
-      avatarUrl: existing.avatarUrl ?? imageUrl,
-    });
-    // Persist refresh token under the existing user id so the Discord-
-    // callback restore path can reconnect Spotify after a logout.
-    await env.SESSIONS.put(
-      `spotify_link:${existing.userId}`,
-      JSON.stringify({
-        id:           spotifyUser.id,
-        refreshToken: tokens.refresh_token,
-        displayName:  spotifyUser.display_name ?? null,
-        scope:        tokens.scope,
-      }),
-    );
-    return done();
+  // Signed in already → link Spotify to that account. Otherwise Spotify is
+  // the sign-in method (only allowlisted accounts while the Spotify app is in
+  // development mode); a first sign-up gets the user id "sp:<spotify id>".
+  try {
+    const cookie = await completeLogin(env, request as unknown as Request, {
+      provider:       "spotify",
+      providerUserId: spotifyUser.id,
+      displayName:    spotifyUser.display_name ?? spotifyUser.id,
+      avatarUrl:      imageUrl,
+      email:          spotifyUser.email ?? null,
+      refreshToken:   tokens.refresh_token,
+      scope:          tokens.scope,
+    }, { spotify: spotifyData });
+    return done(cookie ?? undefined);
+  } catch (err) {
+    if (err instanceof IdentityTakenError) {
+      return Response.redirect("https://account.gokkehub.com/profile?error=spotify_taken", 302);
+    }
+    throw err;
   }
-
-  // ── No existing session — Spotify is the primary login ─────────────
-  // Lower-friction onboarding path: a player who only wants to play the
-  // music game can sign in with their existing Spotify account instead
-  // of needing a Discord account too.
-  //
-  // userId is prefixed with "sp:" so the namespace doesn't collide with
-  // Discord-primary sessions (which use the raw Discord snowflake id).
-  const sessionId = await createSession(env.SESSIONS, {
-    userId:      `sp:${spotifyUser.id}`,
-    email:       spotifyUser.email ?? null,
-    displayName: spotifyUser.display_name ?? spotifyUser.id,
-    avatarUrl:   imageUrl,
-    spotify:     spotifyData,
-  });
-
-  // Persist refresh token under the new sp:userId so future Spotify-
-  // primary logins from the same account get the prior link state back.
-  await env.SESSIONS.put(
-    `spotify_link:sp:${spotifyUser.id}`,
-    JSON.stringify({
-      id:           spotifyUser.id,
-      refreshToken: tokens.refresh_token,
-      displayName:  spotifyUser.display_name ?? null,
-      scope:        tokens.scope,
-    }),
-  );
-
-  const cookie = buildSessionCookie(sessionId, env.COOKIE_DOMAIN);
-  return done(cookie);
 };

@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { db, ensureSessionUser, linkIdentity, refreshSession, unlinkProvider, IdentityTakenError } from "../_accounts";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -53,26 +54,31 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const validation = await validateUsername(env, raw);
   if (!validation.ok) return Response.json({ error: validation.error }, { status: 404 });
 
-  const sessionId = getSessionId(request as unknown as Request)!;
-  await updateSession(env.SESSIONS, sessionId, {
-    lastfm: { username: validation.canonical, linkedAt: Date.now() },
-  });
-  // Persist to KV under discord id so the Discord re-login restore picks it up.
-  const persistKey = session.discord?.id ?? session.userId;
-  await env.SESSIONS.put(`lastfm_link:${persistKey}`, validation.canonical, { expirationTtl: 60 * 60 * 24 * 90 });
+  const req = request as unknown as Request;
+  const sb = db(env);
+  try {
+    await ensureSessionUser(sb, session!);
+    await linkIdentity(sb, session!.userId, {
+      provider:       "lastfm",
+      providerUserId: validation.canonical.toLowerCase(),
+      displayName:    validation.canonical,
+      avatarUrl:      null,
+    });
+  } catch (err) {
+    if (err instanceof IdentityTakenError) {
+      return Response.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
+  await refreshSession(env, req, session!.userId);
 
   return Response.json({ username: validation.canonical });
 };
 
 // DELETE /auth/lastfm — disconnect
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
-  const { session, response } = await requireAuth(env.SESSIONS, request as unknown as Request);
+  const req = request as unknown as Request;
+  const { session, response } = await requireAuth(env.SESSIONS, req);
   if (response) return response;
-
-  const sessionId = getSessionId(request as unknown as Request)!;
-  await updateSession(env.SESSIONS, sessionId, { lastfm: undefined });
-  const persistKey = session.discord?.id ?? session.userId;
-  await env.SESSIONS.delete(`lastfm_link:${persistKey}`);
-
-  return new Response(null, { status: 204 });
+  return unlinkProvider(env, req, session!, "lastfm");
 };

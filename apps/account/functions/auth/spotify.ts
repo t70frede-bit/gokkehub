@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { unlinkProvider } from "../_accounts";
 import { beginOAuth } from "@gokkehub/auth/oauth-state";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
@@ -48,14 +49,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
 // DELETE /auth/spotify — disconnect Spotify from account
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
-  const { session, response } = await requireAuth(
-    env.SESSIONS,
-    request as unknown as Request
-  );
+  const req = request as unknown as Request;
+  const { session, response } = await requireAuth(env.SESSIONS, req);
   if (response) return response;
-
-  const sessionId = getSessionId(request as unknown as Request)!;
-  await updateSession(env.SESSIONS, sessionId, { spotify: undefined });
-
-  return new Response(null, { status: 204 });
+  return unlinkProvider(env, req, session!, "spotify");
 };

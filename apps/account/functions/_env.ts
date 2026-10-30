@@ -10,6 +10,8 @@ export interface Env {
 
   // Supabase
   SUPABASE_URL: string;
+  /** Public URL from wrangler.toml [vars]; fallback when SUPABASE_URL isn't set. */
+  VITE_SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
 
   // Cookie domain
