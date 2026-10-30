@@ -274,6 +274,11 @@ export async function buildSessionData(
     }
   }
 
+  const google = byProvider.get("google");
+  if (google) {
+    session.google = { id: google.provider_user_id, email: null, displayName: google.display_name, avatarUrl: google.avatar_url };
+  }
+
   const steam = byProvider.get("steam");
   if (steam) {
     session.steam = { steamId: steam.provider_user_id, displayName: steam.display_name, avatarUrl: steam.avatar_url };
@@ -307,6 +312,8 @@ export async function completeLogin(
     data = await buildSessionData(env, userId, fresh);
   } catch (err) {
     if (err instanceof IdentityTakenError) throw err;
+    // A Google sign-up's id only exists in the database — no stable fallback.
+    if (!existing && acct.provider === "google") throw err;
     // Never lock people out because the database is unreachable: fall back
     // to a session-only login like before accounts existed.
     console.error("[accounts] database unavailable, session-only login", err);

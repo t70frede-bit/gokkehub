@@ -36,6 +36,12 @@ export interface SessionData {
     username:     string;
     avatarUrl:    string | null;
   };
+  google?: {
+    id:          string;        // Google account "sub"
+    email:       string | null;
+    displayName: string | null;
+    avatarUrl:   string | null;
+  };
   steam?: {
     steamId:     string;
     displayName: string | null;
@@ -64,6 +70,7 @@ export interface PublicSessionData {
   linked: {
     spotify: boolean;
     discord: boolean;
+    google:  boolean;
     steam:   boolean;
     lastfm:  boolean;
   };

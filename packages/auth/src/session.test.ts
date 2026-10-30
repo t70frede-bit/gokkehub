@@ -50,7 +50,7 @@ describe("toPublicSession (security: never leak tokens)", () => {
     expect(pub.email).toBe("player@example.com");
     expect(pub.spotifyScopes).toBe("user-read-email playlist-read-private");
     expect(pub.lastfmUsername).toBe("lfm_player");
-    expect(pub.linked).toEqual({ spotify: true, discord: true, steam: true, lastfm: true });
+    expect(pub.linked).toEqual({ spotify: true, discord: true, google: false, steam: true, lastfm: true });
   });
 
   it("reports linked:false for absent providers", () => {
@@ -63,7 +63,7 @@ describe("toPublicSession (security: never leak tokens)", () => {
       expiresAt: 2,
     };
     const p = toPublicSession(bare);
-    expect(p.linked).toEqual({ spotify: false, discord: false, steam: false, lastfm: false });
+    expect(p.linked).toEqual({ spotify: false, discord: false, google: false, steam: false, lastfm: false });
     expect(p.lastfmUsername).toBeNull();
   });
 });
