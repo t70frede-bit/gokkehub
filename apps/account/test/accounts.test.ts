@@ -38,7 +38,7 @@ vi.mock("@gokkehub/db/supabase", () => ({
   createSupabaseAdminClient: () => ({ from: query }),
 }));
 
-const { resolveLogin, buildSessionData, IdentityTakenError } = await import("./_accounts");
+const { resolveLogin, buildSessionData, IdentityTakenError } = await import("../functions/_accounts");
 
 const kvStore = new Map<string, string>();
 const env = {
