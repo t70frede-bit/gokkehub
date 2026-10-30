@@ -17,6 +17,7 @@ they ship to a live database and are hard to reverse.
 - Migrations are ordered, append-only SQL files per app:
   - timelinedrop: `apps/timelinedrop/supabase-migration.sql` (001), then `-002` … `-029` (current head: **029**)
   - poker: `apps/poker/supabase-migration.sql` (001) … `-017-hardening.sql` (current head: **017**)
+  - account (shared `gh_` identity tables): `apps/account/supabase-migration-001-accounts.sql` (current head: **001**)
 - Always create the NEXT number; never edit a shipped migration. Match the existing filename pattern exactly (note poker uses descriptive suffixes like `-017-hardening`, and has `-NNN-rollback.sql` companions for risky ones).
 - Each migration must be idempotent where practical (`if not exists`, `create or replace`) and runnable in order from scratch.
 - When a change is risky, also write a matching `-rollback.sql`, following poker's `-009-rollback.sql` example.

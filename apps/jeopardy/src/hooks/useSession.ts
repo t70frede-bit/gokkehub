@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { GokkeHubSession } from "../lib/types";
+import { loginUrl } from "@gokkehub/auth/redirect";
 
 const SESSION_URL = "https://account.gokkehub.com/auth/me";
 
@@ -61,6 +62,5 @@ export function goToLogin(): void {
     console.warn("[jeopardy] Already signed in as the local dev user — skipping the login redirect.");
     return;
   }
-  window.location.href =
-    `https://account.gokkehub.com/login?redirect=${encodeURIComponent(window.location.href)}`;
+  window.location.href = loginUrl(window.location.href);
 }

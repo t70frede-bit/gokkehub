@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { saveProfile } from "../_accounts";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -50,11 +51,7 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
 
   const avatarUrl = `${PUBLIC_URL}/${key}`;
 
-  // Persist the new URL in the session so /auth/me returns it immediately
-  const sessionId = getSessionId(request as unknown as Request);
-  if (sessionId) {
-    await updateSession(env.SESSIONS, sessionId, { avatarUrl });
-  }
+  await saveProfile(env, request as unknown as Request, session!, { avatar_url: avatarUrl });
 
   return Response.json({ avatarUrl });
 };
@@ -72,10 +69,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
     await env.AVATARS.delete(`avatars/${session!.userId}.${ext}`);
   }
 
-  const sessionId = getSessionId(request as unknown as Request);
-  if (sessionId) {
-    await updateSession(env.SESSIONS, sessionId, { avatarUrl: null });
-  }
+  await saveProfile(env, request as unknown as Request, session!, { avatar_url: null });
 
   return new Response(null, { status: 204 });
 };

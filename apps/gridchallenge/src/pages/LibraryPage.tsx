@@ -6,6 +6,7 @@ import { usePlayerGames } from "../hooks/usePlayerGames";
 import { usePlayerChallenges } from "../hooks/usePlayerChallenges";
 import { normalizeGameKey } from "../lib/gameKeys";
 import type { ChallengeType, PlayerGame } from "../lib/types";
+import { loginUrl } from "@gokkehub/auth/redirect";
 
 // ── Steam search result ───────────────────────────────────────────────────────
 
@@ -511,7 +512,7 @@ export default function LibraryPage() {
             Sign in with your GokkeHub account to manage your game library.
           </p>
         </div>
-        <a href="https://account.gokkehub.com">
+        <a href={loginUrl(window.location.href)}>
           <Button variant="primary">Sign in with GokkeHub</Button>
         </a>
         <Link to="/" className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>

@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { saveProfile } from "../_accounts";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -33,8 +34,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     return Response.json({ error: "Steam ID too long" }, { status: 400 });
   }
 
-  const sessionId = getSessionId(request as unknown as Request)!;
-  await updateSession(env.SESSIONS, sessionId, { steamId: raw || null });
+  await saveProfile(env, request as unknown as Request, session!, { steam_id: raw || null });
 
   return Response.json({ ok: true, steamId: raw || null });
 };

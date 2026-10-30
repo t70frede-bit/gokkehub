@@ -20,6 +20,9 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         spotify_denied:  "Spotify connection was denied or cancelled.",
         spotify_token:   "Spotify login failed — check your Spotify app credentials.",
         spotify_user:    "Could not fetch Spotify profile after login.",
+        discord_taken:   "That Discord account is already linked to a different GokkeHub account.",
+        spotify_taken:   "That Spotify account is already linked to a different GokkeHub account.",
+        steam_taken:     "That Steam account is already linked to a different GokkeHub account.",
       };
       addToast(messages[error] ?? `OAuth error: ${error}`, "error");
       setSearchParams({}, { replace: true });
@@ -108,7 +111,11 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
     setDisconnecting(provider);
     try {
       const res = await fetch(`/auth/${provider}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) { addToast(`Failed to disconnect ${provider}`, "error"); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        addToast(data.error ?? `Failed to disconnect ${provider}`, "error");
+        return;
+      }
       onSessionRefresh();
       addToast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} disconnected`, "success");
     } catch { addToast(`Failed to disconnect ${provider}`, "error"); }

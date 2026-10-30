@@ -1,31 +1,29 @@
 import { useSearchParams } from "react-router-dom";
 import { Button, Panel } from "@gokkehub/ui";
+import { safeReturnUrl } from "@gokkehub/auth/redirect";
 
 const ERROR_MESSAGES: Record<string, string> = {
   discord_denied: "Discord login was cancelled.",
   discord_token:  "Discord login failed — check app credentials.",
   discord_user:   "Could not fetch Discord profile.",
+  spotify_denied: "Spotify login was cancelled.",
+  spotify_token:  "Spotify login failed. Please try again.",
+  spotify_user:   "Could not fetch Spotify profile.",
+  oauth_state:    "That sign-in link expired or was started in another browser. Please try again.",
 };
-
-const ALLOWED_REDIRECT_ORIGINS = ["https://jeopardy.gokkehub.com", "https://gokkehub.com"];
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const errorKey = searchParams.get("error");
   const errorMsg = errorKey ? (ERROR_MESSAGES[errorKey] ?? `Login error: ${errorKey}`) : null;
 
-  const redirectParam = searchParams.get("redirect");
+  // The server re-validates this and carries it through OAuth `state`.
+  const returnTo = safeReturnUrl(searchParams.get("redirect"));
 
   const startLogin = (provider: "discord" | "spotify") => {
-    if (redirectParam) {
-      try {
-        const origin = new URL(redirectParam).origin;
-        if (ALLOWED_REDIRECT_ORIGINS.includes(origin)) {
-          sessionStorage.setItem("post_login_redirect", redirectParam);
-        }
-      } catch { /* malformed URL — ignore */ }
-    }
-    window.location.href = `/auth/${provider}`;
+    window.location.href = returnTo
+      ? `/auth/${provider}?redirect=${encodeURIComponent(returnTo)}`
+      : `/auth/${provider}`;
   };
 
   return (

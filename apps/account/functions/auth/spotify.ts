@@ -1,5 +1,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { requireAuth } from "@gokkehub/auth/session";
+import { unlinkProvider } from "../_accounts";
+import { beginOAuth } from "@gokkehub/auth/oauth-state";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -17,6 +19,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   });
   if (limited) return limited;
 
+  // `state` ties the callback to this browser (login CSRF) and carries the
+  // page to return to after login.
+  const returnTo = new URL(request.url).searchParams.get("redirect");
+  const { state, cookie } = await beginOAuth(env.SESSIONS, returnTo);
+
   const params = new URLSearchParams({
     client_id: env.SPOTIFY_CLIENT_ID,
     redirect_uri: `https://account.gokkehub.com/auth/spotify/callback`,
@@ -28,24 +35,22 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     // and our fetcher returns []).
     scope: "user-read-email user-read-private user-modify-playback-state user-read-playback-state streaming playlist-read-private playlist-read-collaborative user-top-read user-read-recently-played",
     show_dialog: "true",
+    state,
   });
 
-  return Response.redirect(
-    `https://accounts.spotify.com/authorize?${params.toString()}`,
-    302
-  );
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location:     `https://accounts.spotify.com/authorize?${params.toString()}`,
+      "Set-Cookie": cookie,
+    },
+  });
 };
 
 // DELETE /auth/spotify — disconnect Spotify from account
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
-  const { session, response } = await requireAuth(
-    env.SESSIONS,
-    request as unknown as Request
-  );
+  const req = request as unknown as Request;
+  const { session, response } = await requireAuth(env.SESSIONS, req);
   if (response) return response;
-
-  const sessionId = getSessionId(request as unknown as Request)!;
-  await updateSession(env.SESSIONS, sessionId, { spotify: undefined });
-
-  return new Response(null, { status: 204 });
+  return unlinkProvider(env, req, session!, "spotify");
 };
