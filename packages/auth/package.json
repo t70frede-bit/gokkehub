@@ -3,9 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "exports": {
-    "./session":  "./src/session.ts",
-    "./cookie":   "./src/cookie.ts",
-    "./types":    "./src/types.ts"
+    "./session":     "./src/session.ts",
+    "./cookie":      "./src/cookie.ts",
+    "./types":       "./src/types.ts",
+    "./redirect":    "./src/redirect.ts",
+    "./oauth-state": "./src/oauth-state.ts"
   },
   "files": ["src"],
   "devDependencies": {

@@ -1,5 +1,6 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import { requireAuth, updateSession, getSessionId } from "@gokkehub/auth/session";
+import { beginOAuth } from "@gokkehub/auth/oauth-state";
 import { rateLimit } from "../_ratelimit";
 import type { Env } from "../_env";
 
@@ -15,14 +16,26 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   });
   if (limited) return limited;
 
+  // `state` ties the callback to this browser (login CSRF) and carries the
+  // page to return to after login.
+  const returnTo = new URL(request.url).searchParams.get("redirect");
+  const { state, cookie } = await beginOAuth(env.SESSIONS, returnTo);
+
   const params = new URLSearchParams({
     client_id:     env.DISCORD_CLIENT_ID,
     redirect_uri:  "https://account.gokkehub.com/auth/discord/callback",
     response_type: "code",
     scope:         "identify email",
+    state,
   });
 
-  return Response.redirect(`https://discord.com/oauth2/authorize?${params}`, 302);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location:     `https://discord.com/oauth2/authorize?${params}`,
+      "Set-Cookie": cookie,
+    },
+  });
 };
 
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {

@@ -6,6 +6,7 @@ import {
   updateSession,
 } from "@gokkehub/auth/session";
 import { buildSessionCookie } from "@gokkehub/auth/cookie";
+import { finishOAuth, clearOAuthStateCookie } from "@gokkehub/auth/oauth-state";
 import type { Env } from "../../_env";
 
 const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
@@ -20,6 +21,19 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   if (error || !code) {
     return Response.redirect("https://account.gokkehub.com/login?error=discord_denied", 302);
   }
+
+  // Reject callbacks this browser didn't start (login CSRF), and pick up
+  // where to send the player afterwards.
+  const oauth = await finishOAuth(env.SESSIONS, request as unknown as Request);
+  if (!oauth.ok) {
+    return Response.redirect("https://account.gokkehub.com/login?error=oauth_state", 302);
+  }
+  const done = (extraCookie?: string) => {
+    const headers = new Headers({ Location: oauth.returnTo ?? "https://account.gokkehub.com/profile" });
+    headers.append("Set-Cookie", clearOAuthStateCookie());
+    if (extraCookie) headers.append("Set-Cookie", extraCookie);
+    return new Response(null, { status: 302, headers });
+  };
 
   // Exchange code for tokens
   const tokenRes = await fetch(DISCORD_TOKEN_URL, {
@@ -83,7 +97,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       discord: discordData,
       avatarUrl: existing.avatarUrl ?? avatarUrl,
     });
-    return Response.redirect("https://account.gokkehub.com/profile", 302);
+    return done();
   }
 
   // New session — Discord is the primary login
@@ -133,6 +147,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
             refreshToken: stored.refreshToken,
             expiresAt: Date.now() + refreshed.expires_in * 1000,
             displayName: stored.displayName,
+            imageUrl: null,
             scope: stored.scope,
           },
         });
@@ -144,11 +159,5 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   const cookie = buildSessionCookie(sessionId, env.COOKIE_DOMAIN);
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      "Set-Cookie": cookie,
-      Location: "https://account.gokkehub.com/profile",
-    },
-  });
+  return done(cookie);
 };

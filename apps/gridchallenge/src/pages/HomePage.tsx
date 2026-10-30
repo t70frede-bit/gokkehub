@@ -16,6 +16,7 @@ import type {
   TeamColor,
 } from "../lib/types";
 import { TEAM_COLORS } from "../lib/types";
+import { loginUrl } from "@gokkehub/auth/redirect";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -512,7 +513,7 @@ export default function HomePage() {
             🎮 My game library &amp; challenges
           </Link>
         ) : (
-          <a href="https://account.gokkehub.com" className="underline">
+          <a href={loginUrl(window.location.href)} className="underline">
             Sign in with GokkeHub for more features
           </a>
         )}

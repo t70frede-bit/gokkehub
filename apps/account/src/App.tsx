@@ -1,9 +1,10 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { SiteHeader } from "@gokkehub/ui";
 import LoginPage from "./pages/LoginPage.tsx";
 import ProfilePage from "./pages/ProfilePage.tsx";
 import LibraryPage from "./pages/LibraryPage.tsx";
 import { useSession } from "./hooks/useSession.ts";
+import { safeReturnUrl } from "@gokkehub/auth/redirect";
 
 const TABS = [
   { href: "/profile", label: "Profile" },
@@ -12,6 +13,7 @@ const TABS = [
 
 export default function App() {
   const { session, loading, refresh } = useSession();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -23,12 +25,11 @@ export default function App() {
     );
   }
 
-  // After login, consume any pending post-login redirect (set by LoginPage before OAuth).
-  if (session) {
-    const pending = sessionStorage.getItem("post_login_redirect");
-    if (pending) {
-      sessionStorage.removeItem("post_login_redirect");
-      window.location.replace(pending);
+  // Already signed in and sent here by a game's "Sign in" link — go straight back.
+  if (session && location.pathname === "/login") {
+    const returnTo = safeReturnUrl(new URLSearchParams(location.search).get("redirect"));
+    if (returnTo) {
+      window.location.replace(returnTo);
       return null;
     }
   }

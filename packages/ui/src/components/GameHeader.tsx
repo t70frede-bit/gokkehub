@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import QRCode from "qrcode";
+import { loginUrl } from "@gokkehub/auth/redirect";
 
 export interface GameHeaderSession {
   displayName?: string | null;
@@ -25,6 +26,7 @@ export interface GameHeaderProps {
   homeTo?:        string;
   hubHref?:       string;
   accountHref?:   string;
+  /** Defaults to the account login page, returning to the current page afterwards. */
   signInHref?:    string;
   rightExtras?:   ReactNode;
 
@@ -63,7 +65,7 @@ export function GameHeader({
   homeTo      = "/",
   hubHref     = "https://gokkehub.com",
   accountHref = "https://account.gokkehub.com/profile",
-  signInHref  = "https://account.gokkehub.com",
+  signInHref,
   rightExtras,
   roomCode,
   hideRoomCode = false,
@@ -156,7 +158,12 @@ export function GameHeader({
           </a>
         ) : (
           <a
-            href={signInHref}
+            href={signInHref ?? loginUrl(typeof window !== "undefined" ? window.location.href : null)}
+            onClick={signInHref ? undefined : (e) => {
+              // Read the URL at click time — the SPA may have navigated since render.
+              e.preventDefault();
+              window.location.href = loginUrl(window.location.href);
+            }}
             className="font-medium"
             style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
           >

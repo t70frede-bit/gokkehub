@@ -1,6 +1,7 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
 import { getSession, getSessionId, createSession, updateSession } from "@gokkehub/auth/session";
 import { buildSessionCookie } from "@gokkehub/auth/cookie";
+import { finishOAuth, clearOAuthStateCookie } from "@gokkehub/auth/oauth-state";
 import type { Env } from "../../_env";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -18,6 +19,19 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     // 401. Redirect to /login in that case.
     return Response.redirect("https://account.gokkehub.com/login?error=spotify_denied", 302);
   }
+
+  // Reject callbacks this browser didn't start (login CSRF), and pick up
+  // where to send the player afterwards.
+  const oauth = await finishOAuth(env.SESSIONS, request as unknown as Request);
+  if (!oauth.ok) {
+    return Response.redirect("https://account.gokkehub.com/login?error=oauth_state", 302);
+  }
+  const done = (extraCookie?: string) => {
+    const headers = new Headers({ Location: oauth.returnTo ?? "https://account.gokkehub.com/profile" });
+    headers.append("Set-Cookie", clearOAuthStateCookie());
+    if (extraCookie) headers.append("Set-Cookie", extraCookie);
+    return new Response(null, { status: 302, headers });
+  };
 
   // Exchange code for tokens
   const credentials = btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`);
@@ -90,7 +104,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         scope:        tokens.scope,
       }),
     );
-    return Response.redirect("https://account.gokkehub.com/profile", 302);
+    return done();
   }
 
   // ── No existing session — Spotify is the primary login ─────────────
@@ -121,11 +135,5 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   );
 
   const cookie = buildSessionCookie(sessionId, env.COOKIE_DOMAIN);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      "Set-Cookie": cookie,
-      Location:     "https://account.gokkehub.com/profile",
-    },
-  });
+  return done(cookie);
 };
