@@ -190,6 +190,15 @@ export async function resolveLogin(
 
   if (current) {
     await ensureSessionUser(sb, current);
+    const owner = await findIdentity(sb, acct.provider, acct.providerUserId);
+    if (owner && owner.user_id !== current.userId) {
+      // Completing this login proves the player owns both accounts, so join
+      // them — as long as one side has nothing to lose.
+      const keep = await mergeAccounts(env, sb, current.userId, owner.user_id);
+      if (!keep) throw new IdentityTakenError(acct.provider);
+      await linkIdentity(sb, keep, acct);
+      return keep;
+    }
     await linkIdentity(sb, current.userId, acct);
     return current.userId;
   }
@@ -209,6 +218,76 @@ export async function resolveLogin(
   await linkIdentity(sb, userId, acct);
   await importLegacyLinks(env, sb, userId);
   return userId;
+}
+
+/** Game data keyed by GokkeHub user id: (table, column). */
+const USER_DATA: [string, string][] = [
+  ["player_games", "user_id"],       // Party Bingo library
+  ["player_challenges", "user_id"],
+  ["challenge_upvotes", "user_id"],
+  ["players", "user_id"],            // Party Bingo lobby players
+  ["jp_games", "host_id"],           // Jeopardy games
+  ["jp_players", "user_id"],
+];
+
+/** True when no game data points at this user, so the account can be folded away. */
+export async function isEmptyAccount(sb: SupabaseClient, userId: string): Promise<boolean> {
+  for (const [table, column] of USER_DATA) {
+    const { count, error } = await sb.from(table).select(column, { count: "exact", head: true }).eq(column, userId);
+    if (error) throw error;
+    if (count) return false;
+  }
+  return true;
+}
+
+/**
+ * Join two accounts the same person proved they own. The one with no game
+ * data is folded into the other: its sign-in methods and connected services
+ * move over (unless the kept account already has that provider), empty
+ * profile fields are filled in, and it is deleted. Returns the kept id, or
+ * null when both accounts have game data (re-keying game tables is out of
+ * scope, so they stay separate).
+ */
+export async function mergeAccounts(env: Env, sb: SupabaseClient, a: string, b: string): Promise<string | null> {
+  let from: string, into: string;
+  if (await isEmptyAccount(sb, a))      { from = a; into = b; }
+  else if (await isEmptyAccount(sb, b)) { from = b; into = a; }
+  else return null;
+
+  const [{ data: fromIds, error: e1 }, { data: intoIds, error: e2 }] = await Promise.all([
+    sb.from("gh_identities").select("*").eq("user_id", from),
+    sb.from("gh_identities").select("*").eq("user_id", into),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+  const taken = new Set((intoIds as IdentityRow[]).map((i) => i.provider));
+  for (const ident of fromIds as IdentityRow[]) {
+    const q = sb.from("gh_identities");
+    const { error } = taken.has(ident.provider)
+      ? await q.delete().eq("provider", ident.provider).eq("provider_user_id", ident.provider_user_id)
+      : await q.update({ user_id: into }).eq("provider", ident.provider).eq("provider_user_id", ident.provider_user_id);
+    if (error) throw error;
+  }
+
+  const [{ data: fromUser }, { data: intoUser }] = await Promise.all([
+    sb.from("gh_users").select("*").eq("id", from).maybeSingle(),
+    sb.from("gh_users").select("*").eq("id", into).maybeSingle(),
+  ]);
+  const gaps: Partial<UserRow> = {};
+  for (const k of ["display_name", "avatar_url", "email", "steam_id"] as const) {
+    if (!(intoUser as UserRow | null)?.[k] && (fromUser as UserRow | null)?.[k]) gaps[k] = (fromUser as UserRow)[k];
+  }
+  if (Object.keys(gaps).length) await updateUser(sb, into, gaps);
+
+  const { error } = await sb.from("gh_users").delete().eq("id", from);
+  if (error) throw error;
+
+  // Carry the buzzer sound over if the kept account has none.
+  const fromBuzzer = await env.SESSIONS.get(`buzzer_sound:${from}`);
+  if (fromBuzzer && !(await env.SESSIONS.get(`buzzer_sound:${into}`))) {
+    await env.SESSIONS.put(`buzzer_sound:${into}`, fromBuzzer);
+  }
+  return into;
 }
 
 export async function refreshSpotifyAccess(env: Env, refreshToken: string) {

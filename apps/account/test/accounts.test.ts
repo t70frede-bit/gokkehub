@@ -13,7 +13,8 @@ function query(table: string) {
   const run = () => {
     if (op === "delete") tables[table] = rows().filter((r) => !match(r));
     if (op === "update") rows().filter(match).forEach((r) => Object.assign(r, patch));
-    return { data: rows().filter(match), error: null };
+    const data = rows().filter(match);
+    return { data, error: null, count: data.length };
   };
   const b = {
     select: () => b,
@@ -79,11 +80,34 @@ describe("resolveLogin", () => {
     expect(await resolveLogin(env, spotify("abc"), null)).toBe("123");
   });
 
-  it("refuses to link an account owned by someone else", async () => {
+  it("refuses to join two accounts that both have game data", async () => {
     await resolveLogin(env, spotify("abc"), null);
     await resolveLogin(env, discord("123"), null);
+    tables.player_games = [{ user_id: "sp:abc" }, { user_id: "123" }];
     const session = { userId: "123", email: null, displayName: null, avatarUrl: null, createdAt: 0, expiresAt: 0 };
     await expect(resolveLogin(env, spotify("abc"), session)).rejects.toBeInstanceOf(IdentityTakenError);
+  });
+
+  it("folds a new empty Google account into the Discord one", async () => {
+    await resolveLogin(env, discord("123"), null);
+    tables.player_games = [{ user_id: "123" }];
+    const google = { provider: "google" as const, providerUserId: "g1", displayName: "G", avatarUrl: "pic" };
+    const gid = await resolveLogin(env, google, null);
+    // Signed in with Google, now links Discord → joins into the Discord account.
+    const session = { userId: gid, email: null, displayName: "G", avatarUrl: "pic", createdAt: 0, expiresAt: 0 };
+    expect(await resolveLogin(env, discord("123"), session)).toBe("123");
+    expect(tables.gh_users.map((u) => u.id)).toEqual(["123"]);
+    expect(await resolveLogin(env, google, null)).toBe("123");
+    expect(tables.gh_users[0].avatar_url).toBe("pic");
+  });
+
+  it("folds the other account in when the current one has the data", async () => {
+    await resolveLogin(env, spotify("abc"), null);           // empty sp:abc
+    await resolveLogin(env, discord("123"), null);
+    tables.player_games = [{ user_id: "123" }];
+    const session = { userId: "123", email: null, displayName: null, avatarUrl: null, createdAt: 0, expiresAt: 0 };
+    expect(await resolveLogin(env, spotify("abc"), session)).toBe("123");
+    expect(tables.gh_users.map((u) => u.id)).toEqual(["123"]);
   });
 
   it("gives a Google sign-up a new uuid and finds it again", async () => {
