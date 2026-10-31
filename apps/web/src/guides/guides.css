@@ -1,0 +1,60 @@
+/* How-to-play scenes. Most motion is CSS transitions driven by the beat
+   counter in motion.tsx; these keyframes are the one-shot flourishes that
+   play when an element mounts (keyed on the beat). */
+
+.gs-ripple {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 9999px;
+  border: 2px solid rgb(var(--accent));
+  animation: gs-ripple 600ms ease-out forwards;
+}
+@keyframes gs-ripple {
+  from { transform: scale(0.3); opacity: 1; }
+  to   { transform: scale(1.6); opacity: 0; }
+}
+
+.gs-pop   { animation: gs-pop 360ms cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
+@keyframes gs-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+.gs-shake { animation: gs-shake 420ms ease both; }
+@keyframes gs-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-5px); }
+  40%      { transform: translateX(5px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(3px); }
+}
+
+.gs-rise  { animation: gs-rise 700ms ease-out both; }
+@keyframes gs-rise {
+  from { transform: translateY(6px); opacity: 0; }
+  30%  { opacity: 1; }
+  to   { transform: translateY(-14px); opacity: 0; }
+}
+
+.gs-blink { animation: gs-blink 900ms steps(2, start) infinite; }
+@keyframes gs-blink { to { visibility: hidden; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .gs-stage *,
+  .gs-stage *::before,
+  .gs-stage *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Page pause toggle */
+.gs-paused .gs-stage *,
+.gs-paused .gs-stage *::before,
+.gs-paused .gs-stage *::after {
+  animation-play-state: paused !important;
+}
