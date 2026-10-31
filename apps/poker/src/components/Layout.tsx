@@ -1,4 +1,5 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { GamesMenu } from "@gokkehub/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useStandalone } from "@/hooks/useStandalone";
 import { useAdminPending } from "@/hooks/useAdminPending";
@@ -61,13 +62,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        <button
-          onClick={() => navigate("/")}
-          className="font-display font-bold text-lg leading-none tracking-tight"
-          style={{ color: "rgb(var(--text-primary-rgb))" }}
-        >
-          Gokke<span style={{ color: "rgb(var(--color-primary-rgb))" }}>Poker</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Same games menu as every other GokkeHub game */}
+          <GamesMenu />
+          <button
+            onClick={() => navigate("/")}
+            className="font-display font-bold text-lg leading-none tracking-tight"
+            style={{ color: "rgb(var(--text-primary-rgb))" }}
+          >
+            Gokke<span style={{ color: "rgb(var(--color-primary-rgb))" }}>Poker</span>
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           {activeGroup && (
             <button

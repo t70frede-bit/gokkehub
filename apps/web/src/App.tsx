@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { GameHeader, useAccountSession } from "@gokkehub/ui";
 
 // ── Game catalogue ────────────────────────────────────────────────────────────
 
@@ -177,6 +178,13 @@ const GAMES: Game[] = [
   },
 ];
 
+// ── Shared header (same one every game uses) ─────────────────────────────────
+
+function HubHeader() {
+  const { session } = useAccountSession();
+  return <GameHeader session={session} hubHref="/" />;
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -202,18 +210,7 @@ function Catalogue() {
     >
       {/* Ambient orbs removed for v0.2 — solid surfaces only. */}
 
-      {/* Nav */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-5 max-w-6xl mx-auto">
-        <span className="font-bold text-lg text-content-primary tracking-tight">
-          Gokke<span className="text-gradient">Hub</span>
-        </span>
-        <a
-          href="https://account.gokkehub.com"
-          className="text-sm text-content-secondary hover:text-content-primary transition-colors border border-white/10 rounded-xl px-4 py-2 hover:border-white/25"
-        >
-          My Account
-        </a>
-      </header>
+      <HubHeader />
 
       {/* Hero */}
       <section className="relative z-10 text-center px-6 pt-16 pb-16 max-w-3xl mx-auto">
@@ -402,18 +399,7 @@ function GameDetail({ game }: { game: Game }) {
 
   return (
     <div className="min-h-screen relative overflow-x-hidden" style={{ background: "var(--bg-tint-1)" }}>
-      {/* Nav */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-5 max-w-4xl mx-auto">
-        <a href="/" className="font-bold text-lg text-content-primary tracking-tight">
-          Gokke<span className="text-gradient">Hub</span>
-        </a>
-        <a
-          href="https://account.gokkehub.com"
-          className="text-sm text-content-secondary hover:text-content-primary transition-colors border border-white/10 rounded-xl px-4 py-2 hover:border-white/25"
-        >
-          My Account
-        </a>
-      </header>
+      <HubHeader />
 
       <main className="relative z-10 px-6 max-w-4xl mx-auto pb-24">
         {/* Breadcrumb */}
