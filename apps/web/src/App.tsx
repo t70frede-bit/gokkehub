@@ -153,6 +153,18 @@ const GAMES: Game[] = [
     },
   },
   {
+    name: "Jeopardy",
+    slug: "jeopardy",
+    tagline: "Build a board, race the buzzer",
+    description:
+      "Make your own Jeopardy board with images, audio and custom categories, then host it live. Players buzz in from their phones and play power-ups to swing the scores.",
+    emoji: "❓",
+    url: "https://jeopardy.gokkehub.com",
+    accentRgb: "74, 123, 156",
+    secondaryRgb: "212, 160, 74",
+    status: "live",
+  },
+  {
     name: "BeatRank",
     slug: "beatrank",
     tagline: "Music trivia showdown",
@@ -674,6 +686,7 @@ function HeroJoinForm() {
 const GAME_SUBDOMAINS = [
   { label: "musix",         subdomain: "musix.gokkehub.com"      },
   { label: "gridchallenge", subdomain: "partybingo.gokkehub.com" },
+  { label: "jeopardy",      subdomain: "jeopardy.gokkehub.com"   },
 ] as const;
 
 function JoinRedirect() {
