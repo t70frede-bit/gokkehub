@@ -20,10 +20,10 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         spotify_denied:  "Spotify connection was denied or cancelled.",
         spotify_token:   "Spotify login failed — check your Spotify app credentials.",
         spotify_user:    "Could not fetch Spotify profile after login.",
-        google_taken:    "That Google account is already linked to a different GokkeHub account.",
-        discord_taken:   "That Discord account is already linked to a different GokkeHub account.",
-        spotify_taken:   "That Spotify account is already linked to a different GokkeHub account.",
-        steam_taken:     "That Steam account is already linked to a different GokkeHub account.",
+        google_taken:    "That Google account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
+        discord_taken:   "That Discord account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
+        spotify_taken:   "That Spotify account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
+        steam_taken:     "That Steam account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
       };
       addToast(messages[error] ?? `OAuth error: ${error}`, "error");
       setSearchParams({}, { replace: true });
