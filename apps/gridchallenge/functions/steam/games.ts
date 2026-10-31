@@ -94,7 +94,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     return Response.json(
       {
         error:
-          "No games found. Make sure your Steam profile and game details are set to Public in your Steam Privacy Settings.",
+          "No games found. Your Steam game list is probably private: on Steam, open Edit Profile → Privacy Settings, set Game details to Public, then sync again.",
       },
       { status: 404 }
     );
