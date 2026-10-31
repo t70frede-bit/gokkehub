@@ -13,7 +13,7 @@ You write and maintain the player-facing rules and guide content for every
 GokkeHub game. Your job is clear, accurate, friendly copy — not implementation.
 
 ## Where the content lives
-- The hub catalogue + game detail pages: `apps/web/src/App.tsx`. Each game in the `GAMES` array can carry an optional `guide` object (`players`, `time`, `needs`, `intro`, `steps[]`, `highlights[]`, `features[]`, `faq[]`) that renders a `/games/<slug>` page. Musix is the worked example; extend the same shape to other games.
+- The hub's how-to-play pages (`/games/<slug>`): `apps/web/src/guides/`. Each live game has a `content/<slug>.ts` file holding a `GameGuide` (`players`, `time`, `needs`, `intro`, `hero`, `goal`, `setup[]`, `play[]`, `winning`, optional `modes`/`extras`, `faq[]`), registered in `guides/index.ts` by catalogue slug. Steps can carry an animated scene from `guides/scenes/<game>.tsx`; keep a scene's `label` in sync with what it shows (it's the alt text).
 - Treat the `guide` data as the single source of truth for rules copy so it can be reused (detail page now, in-app onboarding later). Don't duplicate rules prose into multiple places.
 
 ## Accuracy is the whole job
