@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Button, GameCover, Modal, Toggle, useToast } from "@gokkehub/ui";
 import type { PublicSessionData } from "@gokkehub/auth/types";
+import { linkSteamUrl } from "@gokkehub/auth/redirect";
 import { usePlayerGames } from "../hooks/usePlayerGames";
 import { usePlayerChallenges } from "../hooks/usePlayerChallenges";
 import { normalizeGameKey } from "../lib/gameKeys";
@@ -413,6 +414,17 @@ export default function LibraryPage({ session }: Props) {
 
   const loading = gamesLoading || challengesLoading;
 
+  // Back from linking Steam (?steam=linked): import the library straight away.
+  const steamJustLinked = useRef(new URLSearchParams(window.location.search).get("steam") === "linked");
+  useEffect(() => {
+    if (!steamJustLinked.current || gamesLoading || !session.steamId) return;
+    steamJustLinked.current = false;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("steam");
+    window.history.replaceState(window.history.state, "", url.toString());
+    handleSyncSteam();
+  }, [gamesLoading, session.steamId]);
+
   async function handleSyncSteam() {
     const steamId = session.steamId;
     if (!steamId) return;
@@ -528,7 +540,7 @@ export default function LibraryPage({ session }: Props) {
         <SteamSearchAdd existingKeys={existingKeys} onAdd={handleAddSteamGame} />
         {!session.steamId && (
           <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-            Set your Steam ID on the <a href="/profile" style={{ color: "rgba(26,159,255,0.8)" }}>Profile</a> page to enable bulk import.
+            <a href={linkSteamUrl(window.location.href)} style={{ color: "rgba(26,159,255,0.8)" }}>Connect Steam</a> to import your whole library at once.
           </p>
         )}
       </div>

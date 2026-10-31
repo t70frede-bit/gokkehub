@@ -23,6 +23,9 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         google_taken:    "That Google account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
         discord_taken:   "That Discord account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
         spotify_taken:   "That Spotify account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
+        oauth_state:     "That sign-in link expired or was opened in another browser. Please try again.",
+        steam_invalid:   "Steam couldn't confirm the sign-in. Please try again.",
+        steam_id:        "Steam didn't send back a valid account. Please try again.",
         steam_taken:     "That Steam account belongs to another GokkeHub account that also has saved games, so they can't be joined automatically.",
       };
       addToast(messages[error] ?? `OAuth error: ${error}`, "error");
@@ -202,46 +205,70 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
         {/* Steam */}
         <SectionLabel>Steam</SectionLabel>
 
-        <SettingRow
-          label="Steam ID"
-          value={session.steamId ? session.steamId : "Not set"}
-          editing={editingSteamId}
-          onEdit={() => { setEditingSteamId(true); setSteamIdValue(session.steamId ?? ""); }}
-          onCancel={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}
-        >
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={steamIdValue}
-                onChange={(e) => setSteamIdValue(e.target.value)}
-                autoFocus
-                className="input flex-1"
-                placeholder="e.g. 76561198012345678 or your vanity name"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSaveSteamId();
-                  if (e.key === "Escape") { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }
-                }}
-              />
-              <Button size="sm" onClick={handleSaveSteamId} loading={savingSteamId}>Save</Button>
-              <ChipButton onClick={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}>Cancel</ChipButton>
+        {session.linked.steam ? (
+          <p className="text-sm px-1" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+            Your game library is read from your linked Steam account, so there's no Steam ID to enter.
+            If an import finds no games, set <strong>Game details</strong> to Public in your{" "}
+            <a
+              href="https://steamcommunity.com/my/edit/settings"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+              style={{ color: "rgb(var(--color-primary-rgb))" }}
+            >
+              Steam privacy settings
+            </a>.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3 px-1">
+              <p className="text-sm" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                Connect Steam to import your game library automatically. No Steam ID needed.
+              </p>
+              <Button size="sm" onClick={() => { window.location.href = "/auth/steam"; }}>Connect Steam</Button>
             </div>
-            <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
-              Find your Steam ID at{" "}
-              <a
-                href="https://store.steampowered.com/account/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline"
-                style={{ color: "rgb(var(--color-primary-rgb))" }}
-              >
-                store.steampowered.com/account
-              </a>
-              {" "}— or enter your vanity username or full profile URL.
-              Your Steam profile must be set to <strong>Public</strong>.
-            </p>
-          </div>
-        </SettingRow>
+            <SettingRow
+              label="Or enter a Steam ID"
+              value={session.steamId ? session.steamId : "Not set"}
+              editing={editingSteamId}
+              onEdit={() => { setEditingSteamId(true); setSteamIdValue(session.steamId ?? ""); }}
+              onCancel={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}
+            >
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={steamIdValue}
+                    onChange={(e) => setSteamIdValue(e.target.value)}
+                    autoFocus
+                    className="input flex-1"
+                    placeholder="e.g. 76561198012345678 or your vanity name"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveSteamId();
+                      if (e.key === "Escape") { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }
+                    }}
+                  />
+                  <Button size="sm" onClick={handleSaveSteamId} loading={savingSteamId}>Save</Button>
+                  <ChipButton onClick={() => { setEditingSteamId(false); setSteamIdValue(session.steamId ?? ""); }}>Cancel</ChipButton>
+                </div>
+                <p className="text-xs" style={{ color: "rgb(var(--text-muted-rgb))" }}>
+                  Find your Steam ID at{" "}
+                  <a
+                    href="https://store.steampowered.com/account/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                    style={{ color: "rgb(var(--color-primary-rgb))" }}
+                  >
+                    store.steampowered.com/account
+                  </a>
+                  {" "}— or enter your vanity username or full profile URL.
+                  Your Steam profile must be set to <strong>Public</strong>.
+                </p>
+              </div>
+            </SettingRow>
+          </>
+        )}
 
         {/* Linked accounts */}
         <SectionLabel>Linked accounts</SectionLabel>
@@ -292,7 +319,7 @@ export default function ProfilePage({ session, onSessionRefresh }: Props) {
           onLink={() => { window.location.href = "/auth/steam"; }}
           onDisconnect={() => handleDisconnect("steam")}
           color="#66c0f4"
-          description="View your game library"
+          description="Imports your game library into Party Bingo"
         />
         <LastfmRow
           username={session.lastfmUsername ?? null}

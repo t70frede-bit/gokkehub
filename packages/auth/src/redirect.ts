@@ -47,3 +47,14 @@ export function loginUrl(returnTo?: string | null): string {
     ? `${ACCOUNT_ORIGIN}/login?redirect=${encodeURIComponent(safe)}`
     : `${ACCOUNT_ORIGIN}/login`;
 }
+
+/**
+ * The account-app URL that links the player's Steam account (signing in first
+ * if needed) and returns them to `returnTo` with `?steam=linked` added.
+ */
+export function linkSteamUrl(returnTo?: string | null): string {
+  const safe = safeReturnUrl(returnTo);
+  return safe
+    ? `${ACCOUNT_ORIGIN}/auth/steam?redirect=${encodeURIComponent(safe)}`
+    : `${ACCOUNT_ORIGIN}/auth/steam`;
+}

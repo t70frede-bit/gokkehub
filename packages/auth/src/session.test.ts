@@ -53,6 +53,13 @@ describe("toPublicSession (security: never leak tokens)", () => {
     expect(pub.linked).toEqual({ spotify: true, discord: true, google: false, steam: true, lastfm: true });
   });
 
+  it("prefers the linked Steam account over a typed Steam ID", () => {
+    const p = toPublicSession({ ...fullSession, steamId: "typed-vanity" });
+    expect(p.steamId).toBe("7656119");
+    const typedOnly = toPublicSession({ ...fullSession, steam: undefined, steamId: "typed-vanity" });
+    expect(typedOnly.steamId).toBe("typed-vanity");
+  });
+
   it("reports linked:false for absent providers", () => {
     const bare: SessionData = {
       userId: "u",

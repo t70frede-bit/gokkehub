@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button, GameCover, Panel, Input, Badge, Toggle, useToast } from "@gokkehub/ui";
 import { useSession } from "../hooks/useSession";
+import { linkSteamUrl } from "@gokkehub/auth/redirect";
 import { supabase } from "../lib/supabase";
 import {
   loadCsvChallenges,
@@ -234,6 +235,18 @@ export default function LobbyPage() {
   const [addGameKey, setAddGameKey]       = useState(0);
 
   const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Back from linking Steam on the account site (?steam=linked): import the
+  // library straight away, then tidy the URL.
+  const steamJustLinked = useRef(new URLSearchParams(window.location.search).get("steam") === "linked");
+  useEffect(() => {
+    if (!steamJustLinked.current || loading || !session?.steamId) return;
+    steamJustLinked.current = false;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("steam");
+    window.history.replaceState(window.history.state, "", url.toString());
+    syncSteamLibrary();
+  }, [loading, session?.steamId]);
 
   // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -1071,6 +1084,19 @@ export default function LobbyPage() {
               >
                 ➕ Add game
               </button>
+              {session && !session.steamId && (
+                <a
+                  href={linkSteamUrl(window.location.href)}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+                  style={{
+                    background: "rgba(26,159,255,0.12)",
+                    border: "1px solid rgba(26,159,255,0.3)",
+                    color: "rgba(26,159,255,0.9)",
+                  }}
+                >
+                  🔗 Connect Steam
+                </a>
+              )}
               {session?.steamId && (
                 <button
                   onClick={syncSteamLibrary}
@@ -1335,6 +1361,19 @@ export default function LobbyPage() {
               library
             </a>.
           </p>
+          {session && !session.steamId && (
+            <a
+              href={linkSteamUrl(window.location.href)}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+              style={{
+                background: "rgba(26,159,255,0.12)",
+                border: "1px solid rgba(26,159,255,0.3)",
+                color: "rgba(26,159,255,0.9)",
+              }}
+            >
+              🔗 Connect Steam to import your games
+            </a>
+          )}
           {session?.steamId && (
             <button
               onClick={syncSteamLibrary}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeReturnUrl, loginUrl } from "./redirect.ts";
+import { safeReturnUrl, loginUrl, linkSteamUrl } from "./redirect.ts";
 
 describe("safeReturnUrl", () => {
   it("accepts https gokkehub.com and its subdomains", () => {
@@ -38,5 +38,17 @@ describe("loginUrl", () => {
   it("drops an unsafe return URL", () => {
     expect(loginUrl("https://evil.com/")).toBe("https://account.gokkehub.com/login");
     expect(loginUrl()).toBe("https://account.gokkehub.com/login");
+  });
+});
+
+describe("linkSteamUrl", () => {
+  it("carries a safe return URL", () => {
+    expect(linkSteamUrl("https://partybingo.gokkehub.com/lobby/abc")).toBe(
+      "https://account.gokkehub.com/auth/steam?redirect=https%3A%2F%2Fpartybingo.gokkehub.com%2Flobby%2Fabc",
+    );
+  });
+
+  it("drops an unsafe return URL", () => {
+    expect(linkSteamUrl("https://evil.com/")).toBe("https://account.gokkehub.com/auth/steam");
   });
 });

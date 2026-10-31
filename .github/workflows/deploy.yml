@@ -107,11 +107,26 @@ jobs:
           command: pages deploy dist --project-name=account --branch=main
 
   # ── Deploy gridchallenge (partybingo.gokkehub.com) ───────────────────────────
+  # gridchallenge has Pages Functions (functions/steam/*), so deploy from
+  # apps/gridchallenge: a bare `pages deploy apps/gridchallenge/dist` from the
+  # repo root skips Functions and /steam/* falls through to the SPA's
+  # index.html ("Could not connect to Steam").
   deploy-gridchallenge:
     name: Deploy gridchallenge
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Download build artefacts
         uses: actions/download-artifact@v4
         with:
@@ -123,7 +138,8 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/gridchallenge/dist --project-name=gridchallenge --branch=main
+          workingDirectory: apps/gridchallenge
+          command: pages deploy dist --project-name=gridchallenge --branch=main
 
   # ── Deploy timelinedrop (musix.gokkehub.com) ────────────────────────────────
   deploy-timelinedrop:
