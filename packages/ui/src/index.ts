@@ -1,6 +1,10 @@
 // Components
 export { SiteHeader }              from "./components/SiteHeader.tsx";
 export { GameHeader, CopyInviteButton } from "./components/GameHeader.tsx";
+export { GamesMenu }               from "./components/GamesMenu.tsx";
+export { GOKKEHUB_GAMES, isCurrentGame } from "./lib/games.ts";
+export type { GokkeHubGame }       from "./lib/games.ts";
+export { useAccountSession }       from "./lib/useAccountSession.ts";
 export { default as GameCover }    from "./components/GameCover.tsx";
 export type { GameCoverProps }     from "./components/GameCover.tsx";
 export { default as Button }       from "./components/Button.tsx";
@@ -17,6 +21,7 @@ export { ToastProvider, useToast } from "./components/Toast.tsx";
 // Prop types
 export type { SiteHeaderProps, SiteHeaderTab } from "./components/SiteHeader.tsx";
 export type { GameHeaderProps, GameHeaderSession, GameHeaderLinkProps, CopyInviteButtonProps } from "./components/GameHeader.tsx";
+export type { GamesMenuProps }    from "./components/GamesMenu.tsx";
 export type { ButtonProps }       from "./components/Button.tsx";
 export type { PanelProps }        from "./components/Panel.tsx";
 export type { InputProps }        from "./components/Input.tsx";

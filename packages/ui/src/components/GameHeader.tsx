@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import QRCode from "qrcode";
 import { loginUrl } from "@gokkehub/auth/redirect";
+import { GamesMenu } from "./GamesMenu.tsx";
 
 export interface GameHeaderSession {
   displayName?: string | null;
@@ -16,8 +17,8 @@ export interface GameHeaderLinkProps {
 }
 
 export interface GameHeaderProps {
-  /** Display name of the app (e.g. "musix", "gridchallenge") */
-  appName: string;
+  /** Display name of the app (e.g. "musix", "gridchallenge"). Omit on the hub itself. */
+  appName?: string;
   /** Optional logged-in session — renders the account chip when present. */
   session?: GameHeaderSession | null;
   /** SPA-aware link component (e.g. react-router-dom's `Link`). Falls back to <a>. */
@@ -29,6 +30,8 @@ export interface GameHeaderProps {
   /** Defaults to the account login page, returning to the current page afterwards. */
   signInHref?:    string;
   rightExtras?:   ReactNode;
+  /** Show the "Games" menu that links to every GokkeHub game (default true). */
+  showGamesMenu?: boolean;
 
   /** Optional active room — when set, the header shows the code centred and a copy-link button. */
   roomCode?:      string;
@@ -67,6 +70,7 @@ export function GameHeader({
   accountHref = "https://account.gokkehub.com/profile",
   signInHref,
   rightExtras,
+  showGamesMenu = true,
   roomCode,
   hideRoomCode = false,
   hideInvite   = false,
@@ -78,23 +82,36 @@ export function GameHeader({
   return (
     <header className="flex items-center px-4 sm:px-5 flex-shrink-0 gap-3" style={headerStyle}>
 
-      {/* Left: breadcrumb */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <a
-          href={hubHref}
-          className="font-bold leading-none tracking-tight hidden sm:inline"
-          style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
-        >
-          GokkeHub
-        </a>
-        <span className="hidden sm:inline" style={{ color: "rgb(var(--text-muted-rgb))", opacity: 0.4 }}>›</span>
-        <HomeLink
-          to={homeTo}
-          className="font-extrabold leading-none tracking-tight"
-          style={{ ...accentStyle, fontSize: "var(--text-base)" }}
-        >
-          {appName}
-        </HomeLink>
+      {/* Left: games menu + breadcrumb */}
+      <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+        {showGamesMenu && <GamesMenu hubHref={hubHref} />}
+        {appName ? (
+          <>
+            <a
+              href={hubHref}
+              className="font-bold leading-none tracking-tight hidden sm:inline"
+              style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
+            >
+              GokkeHub
+            </a>
+            <span className="hidden sm:inline" style={{ color: "rgb(var(--text-muted-rgb))", opacity: 0.4 }}>›</span>
+            <HomeLink
+              to={homeTo}
+              className="font-extrabold leading-none tracking-tight"
+              style={{ ...accentStyle, fontSize: "var(--text-base)" }}
+            >
+              {appName}
+            </HomeLink>
+          </>
+        ) : (
+          <a
+            href={hubHref}
+            className="font-extrabold leading-none tracking-tight"
+            style={{ color: "rgb(var(--text-primary-rgb))", fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}
+          >
+            Gokke<span style={{ color: "rgb(var(--color-primary-rgb))" }}>Hub</span>
+          </a>
+        )}
       </div>
 
       {/* Centre: room code */}
@@ -141,18 +158,20 @@ export function GameHeader({
         {session ? (
           <a
             href={accountHref}
-            className="flex items-center gap-2 font-medium rounded-md px-2.5 py-1 transition-all"
+            className="flex items-center gap-2 font-medium rounded-full pl-0.5 pr-0.5 sm:pr-3 py-0.5 transition-all"
             style={{
               color:      "rgb(var(--text-secondary-rgb))",
               background: "transparent",
               border:     "1px solid rgb(var(--border-rgb))",
               fontSize:   "var(--text-sm)",
             }}
+            title="Your GokkeHub account"
           >
-            {session.avatarUrl && (
-              <img src={session.avatarUrl} alt="" className="w-5 h-5 rounded-full object-cover" />
-            )}
-            <span className="hidden sm:block">
+            <Avatar
+              url={session.avatarUrl}
+              name={session.displayName ?? session.email}
+            />
+            <span className="hidden sm:block max-w-[10rem] truncate">
               {session.displayName ?? session.email ?? "Account"}
             </span>
           </a>
@@ -164,8 +183,12 @@ export function GameHeader({
               e.preventDefault();
               window.location.href = loginUrl(window.location.href);
             }}
-            className="font-medium"
-            style={{ color: "rgb(var(--text-muted-rgb))", fontSize: "var(--text-sm)" }}
+            className="font-semibold rounded-full px-3 py-1 transition-all whitespace-nowrap"
+            style={{
+              color:      "rgb(var(--color-primary-rgb))",
+              border:     "1px solid rgba(var(--color-primary-rgb),0.5)",
+              fontSize:   "var(--text-sm)",
+            }}
           >
             Sign in
           </a>
@@ -366,5 +389,40 @@ function DefaultLink({ to, className, style, children }: GameHeaderLinkProps) {
     <a href={to} className={className} style={style}>
       {children}
     </a>
+  );
+}
+
+/** Round avatar, falling back to the first letter of the name. */
+function Avatar({ url, name }: { url?: string | null; name?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  const size = 28;
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt=""
+        width={size}
+        height={size}
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className="rounded-full object-cover flex-shrink-0"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className="rounded-full flex items-center justify-center font-bold flex-shrink-0"
+      style={{
+        width:      size,
+        height:     size,
+        color:      "rgb(var(--color-primary-rgb))",
+        background: "rgba(var(--color-primary-rgb),0.16)",
+        fontSize:   "var(--text-sm)",
+      }}
+    >
+      {(name?.trim().charAt(0) || "?").toUpperCase()}
+    </span>
   );
 }
