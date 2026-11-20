@@ -336,7 +336,7 @@ function stack(area, A, u, align, rules){
   const sub = fit(S.sub, SUB_FONT, area.w, area.h*0.3, 58*u, 1.25);
   const ruleSpace = (rules && sub)? 2*(18*u) : 0;
   const used = (badge?badge.h+gap:0) + (sub?sub.h+gap+ruleSpace:0);
-  const head = fit(headTxt, HEAD_FONT, area.w, Math.max(30*u, area.h-used), 190*u, 1.02);
+  const head = fit(headTxt, HEAD_FONT, area.w*0.95, Math.max(30*u, area.h-used), 190*u, 1.02);
   const total = (badge?badge.h:0) + (head?head.h:0) + (sub?sub.h+ruleSpace:0) + gap*((badge?1:0)+(head?1:0)+(sub?1:0)-1);
   let y = area.y + Math.max(0,(area.h-total)/2);
   if(badge){ drawBadge(badge,area.x,y,area.w,align,A); y+=badge.h+gap; }
@@ -356,6 +356,7 @@ function render(){
   $("dim").textContent=`${W} × ${H} px · eksporteres som JPG`;
   const u=Math.sqrt(W*H)/1080, m=Math.round(Math.min(W,H)*0.065), A=ACCENTS[S.acc];
   const wide=W>H*1.2;
+  const pad=Math.round(m*1.1); // extra side space for the main text
   imgRect=null;
   ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
   const lx = d => S.logoPos==="left"? m+d/2 : S.logoPos==="right"? W-m-d/2 : W/2;
@@ -377,12 +378,13 @@ function render(){
       } else { drawLogo(lx(d), m+d/2, d, true); topLimit=m+d+24*u; }
     }
     let bottom = footer(colX,colW,H-m,A,u,S.align)-26*u;
+    colX+=pad; colW-=2*pad;
     const sub=fit(S.sub, SUB_FONT, colW, H*(wide?0.22:0.14), 56*u, 1.25);
     if(sub){ drawBlock(sub,colX,bottom-sub.h,colW,S.align,"#fff"); bottom-=sub.h+20*u; }
     const badge=measureBadge(S.badge,u,colW);
     const headTxt = S.caps? S.head.toUpperCase() : S.head;
     const room = bottom - topLimit - (badge? badge.h+22*u : 0);
-    const head=fit(headTxt, HEAD_FONT, colW, Math.max(30*u, Math.min(H*(wide?0.42:0.3), room)), 190*u, 1.02);
+    const head=fit(headTxt, HEAD_FONT, colW*0.95, Math.max(30*u, Math.min(H*(wide?0.42:0.3), room)), 190*u, 1.02);
     if(head){ drawBlock(head,colX,bottom-head.h,colW,S.align,"#fff"); bottom-=head.h+22*u; }
     if(badge) drawBadge(badge,colX,bottom-badge.h,colW,S.align,A);
   }
@@ -394,7 +396,7 @@ function render(){
       const x=r.w+m, w=W-r.w-2*m; let top=m;
       if(S.logoOn){ const d=Math.round(H*0.3*LS()); drawLogo(x+w/2,m+d/2,d,false); top=m+d+20*u; }
       const bottom=footer(x,w,H-m,A,u,"center")-20*u;
-      stack({x,y:top,w,h:bottom-top},A,u,"center",true);
+      stack({x:x+pad*0.5,y:top,w:w-pad,h:bottom-top},A,u,"center",true);
     } else {
       const ih = H*(F.id==="st"?0.5:F.id==="pt"?0.5:0.47);
       const r={x:m,y:m,w:W-2*m,h:Math.round(ih)};
@@ -403,7 +405,7 @@ function render(){
       let top=r.y+r.h+40*u;
       if(S.logoOn){ const d=Math.round(Math.min(W,H)*0.2*LS()); drawLogo(lx(d), r.y+r.h, d, true); top=r.y+r.h+d/2+24*u; }
       const bottom=footer(m,W-2*m,H-m,A,u,S.align)-24*u;
-      stack({x:m,y:top,w:W-2*m,h:bottom-top},A,u,S.align,true);
+      stack({x:m+pad,y:top,w:W-2*m-2*pad,h:bottom-top},A,u,S.align,true);
     }
   }
   else { // text only
@@ -411,7 +413,7 @@ function render(){
     let top=m;
     if(S.logoOn){ const d=Math.round(Math.min(W,H)*(wide?0.32:0.26)*LS()); drawLogo(lx(d), m+d/2, d, false); top=m+d+30*u; }
     const bottom=footer(m,W-2*m,H-m,A,u,S.align)-30*u;
-    stack({x:m*1.3,y:top,w:W-2.6*m,h:bottom-top},A,u,S.align,true);
+    stack({x:m+pad,y:top,w:W-2*m-2*pad,h:bottom-top},A,u,S.align,true);
   }
 }
 function LS(){ return S.logoSize==="small"?0.62:1; }
