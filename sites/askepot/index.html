@@ -73,17 +73,38 @@
 
   <section class="controls">
     <div class="card">
-      <h2>1 · Format</h2>
+      <h2>Skabelon</h2>
+      <div class="seg" id="tpl"></div>
+    </div>
+
+    <div class="card" id="offerCard" style="display:none">
+      <h2>Tilbud</h2>
+      <div class="seg" id="offer"></div>
+      <div class="row" style="margin-top:4px">
+        <div style="flex:1"><label class="f">Pris</label><input type="text" id="price" inputmode="decimal" placeholder="fx 25"></div>
+        <div style="flex:1"><label class="f">Før-pris <small>– valgfri</small></label><input type="text" id="before" inputmode="decimal" placeholder="fx 45"></div>
+      </div>
+      <p class="hint">Skriv bare tallet – “25” bliver til “25,-”.</p>
+    </div>
+
+    <div class="card" id="eventCard" style="display:none">
+      <h2>Tema</h2>
+      <div class="seg" id="theme"></div>
+      <p class="hint">Temaet lægger et overlay over billedet og vælger en passende accentfarve.</p>
+    </div>
+
+    <div class="card">
+      <h2>Format</h2>
       <div class="seg" id="fmt"></div>
     </div>
 
     <div class="card">
-      <h2>2 · Layout</h2>
+      <h2>Layout</h2>
       <div class="seg" id="lay"></div>
     </div>
 
     <div class="card" id="imgCard">
-      <h2>3 · Billede</h2>
+      <h2>Billede</h2>
       <label class="upload" id="upl"><input type="file" id="file" accept="image/*" hidden><span id="uplTxt">📷 Vælg billede</span></label>
       <div id="imgCtl" class="noimg">
         <p class="hint">Træk i billedet for at flytte det. Knib med to fingre (eller brug scrollhjulet) for at zoome.</p>
@@ -97,10 +118,10 @@
     </div>
 
     <div class="card">
-      <h2>4 · Tekst</h2>
+      <h2>Tekst</h2>
       <label class="f">Mærkat <small>– fast størrelse, boksen tilpasser sig</small></label>
       <input type="text" id="badge" placeholder="fx LØRDAG KL. 21">
-      <label class="f">Overskrift <small>– skalerer automatisk</small></label>
+      <label class="f"><span id="headLbl">Overskrift</span> <small>– skalerer automatisk</small></label>
       <textarea id="head" rows="2" placeholder="fx LIVE MUSIK"></textarea>
       <label class="f">Undertekst <small>– skalerer automatisk</small></label>
       <textarea id="sub" rows="3" placeholder="fx Gratis entré – kom og syng med!"></textarea>
@@ -110,7 +131,7 @@
     </div>
 
     <div class="card">
-      <h2>5 · Stil</h2>
+      <h2>Stil</h2>
       <label class="f">Accentfarve</label>
       <div class="sw" id="acc"></div>
       <label class="chk"><input type="checkbox" id="logoOn" checked> Vis logo</label>
@@ -148,33 +169,60 @@ const LAYOUTS = [
   {id:"text",  name:"Kun tekst", sub:"Uden billede"},
 ];
 const ACCENTS = [
-  {c:"#ffffff", ink:"#000"}, {c:"#d4b062", ink:"#000"}, {c:"#9cc3e6", ink:"#000"}, {c:"#c8102e", ink:"#fff"}
+  {c:"#ffffff", ink:"#000"}, {c:"#d4b062", ink:"#000"}, {c:"#9cc3e6", ink:"#000"}, {c:"#c8102e", ink:"#fff"},
+  {c:"#e0782f", ink:"#000"}, {c:"#7cc47f", ink:"#000"}
 ];
+const TEMPLATES = [
+  {id:"free",  name:"Fri",    sub:"Byg selv"},
+  {id:"offer", name:"Tilbud", sub:"Produkter & priser"},
+  {id:"event", name:"Event",  sub:"Med tema-overlay"},
+];
+const OFFERS = [
+  {id:"special", name:"Særtilbud",        label:"SÆRTILBUD",        d:{badge:"HELE WEEKENDEN", head:"Fadøl", sub:"Stor fadøl 0,5 L", price:"30", before:"45"}},
+  {id:"limited", name:"Begrænset tilbud", label:"BEGRÆNSET TILBUD", d:{badge:"SÅ LÆNGE LAGER HAVES", head:"Julebryg", sub:"Begrænset antal – først til mølle", price:"35", before:"50"}},
+  {id:"daily",   name:"Dagens tilbud",    label:"DAGENS TILBUD",    d:{badge:"KUN I DAG", head:"Dagens shot", sub:"Vælg mellem husets favoritter", price:"15", before:"25"}},
+];
+const THEMES = [
+  {id:"none",   name:"Intet tema", e:"⬛", acc:0, d:{badge:"LØRDAG KL. 21", head:"Stor fest", sub:"Kom og vær med – vi glæder os til at se jer!"}},
+  {id:"xmas",   name:"Jul",        e:"🎄", acc:3, d:{badge:"FREDAG 11. DEC", head:"Julefrokost", sub:"Julestemning, gode venner og kolde juleøl"}},
+  {id:"jdag",   name:"J-dag",      e:"❄️", acc:2, d:{badge:"FREDAG KL. 20.59", head:"J-dag", sub:"Julebryggen lander – vi skænker op, så snart klokken slår 20.59!"}},
+  {id:"ny",     name:"Nytår",      e:"🎆", acc:1, d:{badge:"31. DECEMBER", head:"Godt nytår", sub:"Vi skåler det nye år ind – kom og fejr det med os!"}},
+  {id:"bday",   name:"Fødselsdag", e:"🇩🇰", acc:3, d:{badge:"LØRDAG KL. 20", head:"Fødselsdag", sub:"Kom og fejr dagen med os – hurra, hurra, hurra!"}},
+  {id:"okt",    name:"Oktoberfest",e:"🍺", acc:1, d:{badge:"LØRDAG KL. 18", head:"Oktoberfest", sub:"Masser af øl, pølser og godt humør"}},
+  {id:"music",  name:"Live musik", e:"🎸", acc:0, d:{badge:"FREDAG KL. 21", head:"Live musik", sub:"Live på scenen – kom og syng med!"}},
+  {id:"summer", name:"Sommer",     e:"☀️", acc:1, d:{badge:"LØRDAG KL. 15", head:"Sommerfest", sub:"Kolde fadøl og lange, lyse aftener"}},
+  {id:"autumn", name:"Efterår",    e:"🍂", acc:4, d:{badge:"FREDAG KL. 20", head:"Efterårshygge", sub:"Hyggelige aftener med god musik og gode venner"}},
+  {id:"winter", name:"Vinter",     e:"⛄", acc:2, d:{badge:"FREDAG KL. 20", head:"Vinterhygge", sub:"Kom ind i varmen – baren er åben"}},
+  {id:"spring", name:"Forår",      e:"🌸", acc:5, d:{badge:"LØRDAG KL. 15", head:"Forårsfest", sub:"Foråret er her – det skal fejres!"}},
+];
+const FREE_D = {badge:"FREDAG KL. 21", head:"LIVE MUSIK", sub:"Fredag aften – kom og syng med!"};
+const ALL_DEF = new Set();
+[FREE_D, ...OFFERS.map(o=>o.d), ...THEMES.map(t=>t.d)].forEach(d=>Object.values(d).forEach(v=>{ALL_DEF.add(v);ALL_DEF.add(v.toUpperCase());}));
 const HEAD_FONT = s => `italic 800 ${s}px "Open Sans"`;
 const SUB_FONT  = s => `400 ${s}px Tinos, "Times New Roman", serif`;
 const BADGE_FONT= s => `700 ${s}px Tinos, "Times New Roman", serif`;
 const FOOT_FONT = s => `400 ${s}px Tinos, "Times New Roman", serif`;
 
 const S = {
-  logoSize:"large", fmt:"sq", lay:"photo", align:"center", acc:0, logoPos:"center",
+  tpl:"free", offer:"special", theme:"none", price:"", before:"", logoSize:"large", fmt:"sq", lay:"photo", align:"center", acc:0, logoPos:"center",
   head:"LIVE MUSIK", sub:"Fredag aften – kom og syng med!", badge:"FREDAG KL. 21", caps:true,
   logoOn:true, footOn:true, foot:"Middelfartvej 155 · 5200 Odense V · Tlf. 66 16 86 22",
   dark:0.2, img:null, zoom:1, fx:.5, fy:.5
 };
-try{ const d=JSON.parse(localStorage.getItem("askepot-draft")||"{}"); for(const k of ["logoSize","fmt","lay","align","acc","logoPos","head","sub","badge","caps","logoOn","footOn","foot"]) if(k in d) S[k]=d[k]; }catch(e){}
-function saveDraft(){ try{ const o={}; for(const k of ["logoSize","fmt","lay","align","acc","logoPos","head","sub","badge","caps","logoOn","footOn","foot"]) o[k]=S[k]; localStorage.setItem("askepot-draft",JSON.stringify(o)); }catch(e){} }
+try{ const d=JSON.parse(localStorage.getItem("askepot-draft")||"{}"); for(const k of ["tpl","offer","theme","price","before","logoSize","fmt","lay","align","acc","logoPos","head","sub","badge","caps","logoOn","footOn","foot"]) if(k in d) S[k]=d[k]; }catch(e){}
+function saveDraft(){ try{ const o={}; for(const k of ["tpl","offer","theme","price","before","logoSize","fmt","lay","align","acc","logoPos","head","sub","badge","caps","logoOn","footOn","foot"]) o[k]=S[k]; localStorage.setItem("askepot-draft",JSON.stringify(o)); }catch(e){} }
 
-const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+const cv=document.getElementById("cv"); let ctx=cv.getContext("2d");
 const logoImg=new Image(); logoImg.src=LOGO_SRC; logoImg.onload=()=>req();
 let imgRect=null;
 
 /* ---------- UI builders ---------- */
-function seg(el, items, key, labelFn){
+function seg(el, items, key, labelFn, after){
   el.innerHTML="";
   items.forEach(it=>{
     const b=document.createElement("button"); b.type="button";
     b.innerHTML=labelFn(it); b.className = S[key]===it.id?"on":"";
-    b.onclick=()=>{ S[key]=it.id; seg(el,items,key,labelFn); onChange(); };
+    b.onclick=()=>{ S[key]=it.id; if(after) after(); buildUI(); onChange(); };
     el.appendChild(b);
   });
 }
@@ -182,16 +230,22 @@ function buildUI(){
   seg(fmt, FORMATS, "fmt", f=>`${f.name}<small>${f.sub} · ${f.w}×${f.h}</small>`);
   seg(lay, LAYOUTS, "lay", l=>`${l.name}<small>${l.sub}</small>`);
   seg(align, [{id:"left",name:"Venstre"},{id:"center",name:"Midt"}], "align", a=>a.name);
+  seg(tpl, TEMPLATES, "tpl", t=>`${t.name}<small>${t.sub}</small>`, ()=>applyDefaults());
+  seg(offer, OFFERS, "offer", o=>o.name, ()=>applyDefaults());
+  seg(theme, THEMES, "theme", t=>`${t.e} ${t.name}`, ()=>{ S.acc=THEMES.find(x=>x.id===S.theme).acc; buildUI(); applyDefaults(); });
+  $("offerCard").style.display = S.tpl==="offer"?"block":"none";
+  $("eventCard").style.display = S.tpl==="event"?"block":"none";
+  $("headLbl").textContent = S.tpl==="offer"? "Produkt" : "Overskrift";
   seg(logoSize, [{id:"small",name:"Lille"},{id:"large",name:"Stor"}], "logoSize", a=>a.name);
   seg(logoPos, [{id:"left",name:"Venstre"},{id:"center",name:"Midt"},{id:"right",name:"Højre"}], "logoPos", a=>a.name);
   acc.innerHTML="";
   ACCENTS.forEach((a,i)=>{const b=document.createElement("button");b.type="button";b.style.background=a.c;b.className=S.acc===i?"on":"";b.setAttribute("aria-label","Accentfarve "+(i+1));b.onclick=()=>{S.acc=i;buildUI();onChange();};acc.appendChild(b);});
 }
 const $=id=>document.getElementById(id);
-const logoSize=$("logoSize"),fmt=$("fmt"),lay=$("lay"),align=$("align"),logoPos=$("logoPos"),acc=$("acc");
-$("head").value=S.head; $("sub").value=S.sub; $("badge").value=S.badge; $("caps").checked=S.caps;
+const tpl=$("tpl"),offer=$("offer"),theme=$("theme"),logoSize=$("logoSize"),fmt=$("fmt"),lay=$("lay"),align=$("align"),logoPos=$("logoPos"),acc=$("acc");
+$("price").value=S.price; $("before").value=S.before; $("head").value=S.head; $("sub").value=S.sub; $("badge").value=S.badge; $("caps").checked=S.caps;
 $("logoOn").checked=S.logoOn; $("footOn").checked=S.footOn; $("foot").value=S.foot;
-["head","sub","badge","foot"].forEach(k=>$(k).addEventListener("input",e=>{S[k]=e.target.value;onChange();}));
+["head","sub","badge","foot","price","before"].forEach(k=>$(k).addEventListener("input",e=>{S[k]=e.target.value;onChange();}));
 ["caps","logoOn","footOn"].forEach(k=>$(k).addEventListener("change",e=>{S[k]=e.target.checked;onChange();}));
 $("dark").addEventListener("input",e=>{S.dark=+e.target.value;req();});
 $("zoom").addEventListener("input",e=>{S.zoom=+e.target.value;req();});
@@ -210,6 +264,15 @@ function syncImgUI(){
   $("upl").style.display = uses?"flex":"none";
   $("noImgLayout").style.display = uses?"none":"block";
   $("uplTxt").textContent = S.img? "🔄 Skift billede" : "📷 Vælg billede";
+}
+/** Fill in example text for the chosen template, but never overwrite text the user wrote. */
+function applyDefaults(){
+  const d = S.tpl==="offer"? OFFERS.find(o=>o.id===S.offer).d : S.tpl==="event"? THEMES.find(t=>t.id===S.theme).d : FREE_D;
+  for(const k of ["badge","head","sub","price","before"]){
+    const cur=(S[k]||"").trim();
+    if(k in d && (cur==="" || ALL_DEF.has(cur))){ S[k]=d[k]; $(k).value=d[k]; }
+    if(!(k in d) && ALL_DEF.has(cur)){ S[k]=""; $(k).value=""; }
+  }
 }
 function onChange(){ saveDraft(); syncImgUI(); req(); }
 
@@ -258,14 +321,16 @@ function fit(text, fontFn, maxW, maxH, maxSize, lh){
 }
 function drawBlock(b, x, y, w, align, color){ // y = top of block
   if(!b) return;
+  ctx.save();
   ctx.font=b.font(b.size); ctx.fillStyle=color; ctx.textBaseline="alphabetic";
+  if(color==="#fff"){ ctx.shadowColor="rgba(0,0,0,.55)"; ctx.shadowBlur=Math.max(4,b.size*0.12); }
   ctx.textAlign = align==="center"?"center":"left";
   const ax = align==="center"? x+w/2 : x;
   b.lines.forEach((l,i)=>{
     const baseline = y + i*b.size*b.lh + b.size*b.lh*0.5 + b.size*0.36;
     ctx.fillText(l, ax, baseline);
   });
-  ctx.textAlign="left";
+  ctx.restore();
 }
 /** Badge: fixed font size, box grows to fit text (wraps if wider than maxW). */
 function measureBadge(text, u, maxW){
@@ -333,7 +398,7 @@ function stack(area, A, u, align, rules){
   const gap=22*u;
   const badge=measureBadge(S.badge,u,area.w);
   const headTxt = S.caps? S.head.toUpperCase() : S.head;
-  const sub = fit(S.sub, SUB_FONT, area.w, area.h*0.3, 58*u, 1.25);
+  const sub = fit(S.sub, SUB_FONT, area.w, area.h*0.24, 58*u, 1.25);
   const ruleSpace = (rules && sub)? 2*(18*u) : 0;
   const used = (badge?badge.h+gap:0) + (sub?sub.h+gap+ruleSpace:0);
   const head = fit(headTxt, HEAD_FONT, area.w*0.95, Math.max(30*u, area.h-used), 190*u, 1.02);
@@ -367,8 +432,11 @@ function render(){
     const g=ctx.createLinearGradient(0,H*(wide?0.25:0.4),0,H);
     g.addColorStop(0,"rgba(0,0,0,0)"); g.addColorStop(1,"rgba(0,0,0,.85)");
     ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    drawTheme(W,H,u,r);
     let topLimit=m;
     let colX=m, colW=W-2*m;
+    const offerOn = S.tpl==="offer" && (S.price.trim()||S.before.trim());
+    const discRight = !(S.logoOn && S.logoPos==="right");
     if(S.logoOn){
       const d=Math.round(Math.min(W,H)*(wide?0.34:0.24)*LS());
       if(wide){ // logo top-left/right corner, text uses the other side
@@ -376,6 +444,12 @@ function render(){
         drawLogo(cx, m+d/2, d, true);
         if(S.logoPos==="right"){ colW=W-3*m-d; } else { colX=2*m+d; colW=W-3*m-d; }
       } else { drawLogo(lx(d), m+d/2, d, true); topLimit=m+d+24*u; }
+    }
+    if(offerOn){
+      if(wide){ const dd=Math.round(H*0.44); const right = !(S.logoOn) || S.logoPos!=="right";
+        priceDisc(right? W-m-dd/2 : m+dd/2, m+dd/2, dd, A, u);
+        if(right) colW-=dd+m; else { colX+=dd+m; colW-=dd+m; } }
+      else { const dd=Math.round(Math.min(W,H)*0.31); priceDisc(discRight? W-m-dd/2 : m+dd/2, m+dd/2, dd, A, u); topLimit=Math.max(topLimit, m+dd+24*u); }
     }
     let bottom = footer(colX,colW,H-m,A,u,S.align)-26*u;
     colX+=pad; colW-=2*pad;
@@ -392,16 +466,20 @@ function render(){
     if(wide){
       const r={x:0,y:0,w:Math.round(W*0.5),h:H};
       S.img? drawCover(r) : placeholder(r,u);
+      drawTheme(W,H,u,r);
       ctx.fillStyle=A.c; ctx.fillRect(r.w,0,Math.max(2,2*u),H);
+      if(S.tpl==="offer"){ const dd=Math.round(H*0.42); priceDisc(r.w-dd/2-m*0.6, H-dd/2-m*0.6, dd, A, u); }
       const x=r.w+m, w=W-r.w-2*m; let top=m;
       if(S.logoOn){ const d=Math.round(H*0.3*LS()); drawLogo(x+w/2,m+d/2,d,false); top=m+d+20*u; }
       const bottom=footer(x,w,H-m,A,u,"center")-20*u;
       stack({x:x+pad*0.5,y:top,w:w-pad,h:bottom-top},A,u,"center",true);
     } else {
-      const ih = H*(F.id==="st"?0.5:F.id==="pt"?0.5:0.47);
+      const ih = H*(F.id==="st"?0.5:F.id==="pt"?0.45:0.42);
       const r={x:m,y:m,w:W-2*m,h:Math.round(ih)};
       S.img? drawCover(r) : placeholder(r,u);
+      drawTheme(W,H,u,r);
       ctx.strokeStyle=A.c; ctx.lineWidth=Math.max(2,2*u); ctx.strokeRect(r.x-8*u,r.y-8*u,r.w+16*u,r.h+16*u);
+      if(S.tpl==="offer"){ const dd=Math.round(Math.min(W,H)*0.3); const right=S.logoPos!=="right"; priceDisc(right? r.x+r.w-dd/2-24*u : r.x+dd/2+24*u, r.y+dd/2+24*u, dd, A, u); }
       let top=r.y+r.h+40*u;
       if(S.logoOn){ const d=Math.round(Math.min(W,H)*0.2*LS()); drawLogo(lx(d), r.y+r.h, d, true); top=r.y+r.h+d/2+24*u; }
       const bottom=footer(m,W-2*m,H-m,A,u,S.align)-24*u;
@@ -410,11 +488,126 @@ function render(){
   }
   else { // text only
     if(logoImg.complete){ ctx.save(); ctx.globalAlpha=0.045; const d=Math.min(W,H)*1.15; ctx.drawImage(logoImg,W/2-d/2,H/2-d/2,d,d); ctx.restore(); }
+    drawTheme(W,H,u,null);
     let top=m;
     if(S.logoOn){ const d=Math.round(Math.min(W,H)*(wide?0.32:0.26)*LS()); drawLogo(lx(d), m+d/2, d, false); top=m+d+30*u; }
+    if(S.tpl==="offer" && (S.price.trim()||S.before.trim())){ const dd=Math.round(Math.min(W,H)*(wide?0.4:0.27)); const right=!(S.logoOn&&S.logoPos==="right");
+      priceDisc(right? W-m-dd/2 : m+dd/2, m+dd/2, dd, A, u); top=Math.max(top, m+dd+24*u); }
     const bottom=footer(m,W-2*m,H-m,A,u,S.align)-30*u;
     stack({x:m+pad,y:top,w:W-2*m-2*pad,h:bottom-top},A,u,S.align,true);
   }
+}
+/* ---------- theme overlays (seeded, so preview = export) ---------- */
+function rng(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function tint(r, stops, x0,y0,x1,y1){ const g=ctx.createLinearGradient(x0,y0,x1,y1); stops.forEach(([o,c])=>g.addColorStop(o,c)); ctx.fillStyle=g; ctx.fillRect(r.x,r.y,r.w,r.h); }
+function snow(W,H,u,R,n,big){
+  for(let i=0;i<n;i++){ const x=R()*W,y=R()*H,r=(1.2+R()*R()*5)*u; ctx.fillStyle=`rgba(255,255,255,${0.45+R()*0.5})`; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill(); }
+  ctx.strokeStyle="rgba(255,255,255,.85)"; ctx.lineCap="round";
+  for(let i=0;i<big;i++){ const x=R()*W,y=R()*H,s=(10+R()*22)*u,a0=R(); ctx.lineWidth=Math.max(1.5,2.2*u*s/24);
+    for(let k=0;k<6;k++){ const a=a0+k*Math.PI/3, ex=x+Math.cos(a)*s, ey=y+Math.sin(a)*s; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(ex,ey);
+      const mx=x+Math.cos(a)*s*0.6, my=y+Math.sin(a)*s*0.6; for(const sgn of [-1,1]){ const b=a+sgn*0.7; ctx.moveTo(mx,my); ctx.lineTo(mx+Math.cos(b)*s*0.35, my+Math.sin(b)*s*0.35); } ctx.stroke(); } }
+}
+function lights(W,H,u,R){
+  const y0=H*0.012, sag=H*0.06, n=Math.round(W/(70*u)), cols=["#ff4b4b","#ffd36b","#5fd36f","#6fb7ff","#ff8fe0"];
+  ctx.strokeStyle="rgba(20,30,20,.9)"; ctx.lineWidth=3*u; ctx.beginPath();
+  for(let i=0;i<=60;i++){ const t=i/60, x=t*W, y=y0+sag*4*t*(1-t); i?ctx.lineTo(x,y):ctx.moveTo(x,y); } ctx.stroke();
+  for(let i=0;i<n;i++){ const t=(i+0.5)/n, x=t*W, y=y0+sag*4*t*(1-t)+10*u, c=cols[i%cols.length];
+    const g=ctx.createRadialGradient(x,y,0,x,y,34*u); g.addColorStop(0,c+"aa"); g.addColorStop(1,c+"00"); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,34*u,0,7); ctx.fill();
+    ctx.fillStyle=c; ctx.beginPath(); ctx.ellipse(x,y+4*u,7*u,11*u,0,0,7); ctx.fill(); ctx.fillStyle="#333"; ctx.fillRect(x-4*u,y-9*u,8*u,7*u); }
+}
+function fireworks(W,H,u,R){
+  const cols=["#ffd36b","#ffffff","#ff7b7b","#8fd3ff"];
+  for(let b=0;b<5;b++){ const cx=W*(0.1+R()*0.8), cy=H*(0.06+R()*0.38), rad=Math.min(W,H)*(0.09+R()*0.1), c=cols[b%cols.length], rays=26;
+    ctx.strokeStyle=c; ctx.fillStyle=c; ctx.lineCap="round";
+    for(let k=0;k<rays;k++){ const a=k/rays*Math.PI*2+R()*0.1, r1=rad*(0.25+R()*0.15), r2=rad*(0.85+R()*0.2);
+      ctx.globalAlpha=0.85; ctx.lineWidth=2.5*u; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx+Math.cos(a)*(r2+8*u),cy+Math.sin(a)*(r2+8*u),3.5*u,0,7); ctx.fill(); }
+    ctx.globalAlpha=1; }
+  sparkles(W,H,u,R,90,["#ffd36b","#ffffff"]);
+}
+function sparkles(W,H,u,R,n,cols){ for(let i=0;i<n;i++){ const x=R()*W,y=R()*H,s=(3+R()*9)*u; ctx.fillStyle=cols[i%cols.length]; ctx.globalAlpha=0.5+R()*0.5;
+  ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s*0.25,y-s*0.25); ctx.lineTo(x+s,y); ctx.lineTo(x+s*0.25,y+s*0.25); ctx.lineTo(x,y+s); ctx.lineTo(x-s*0.25,y+s*0.25); ctx.lineTo(x-s,y); ctx.lineTo(x-s*0.25,y-s*0.25); ctx.fill(); } ctx.globalAlpha=1; }
+function confetti(W,H,u,R,n,cols){ for(let i=0;i<n;i++){ ctx.save(); ctx.translate(R()*W,R()*H); ctx.rotate(R()*Math.PI); ctx.fillStyle=cols[i%cols.length]; ctx.globalAlpha=0.75+R()*0.25; ctx.fillRect(-6*u,-3*u,12*u,6*u); ctx.restore(); } }
+function dannebrog(x,y,w){ const h=w*28/37; ctx.fillStyle="#c8102e"; ctx.fillRect(x,y,w,h); ctx.fillStyle="#fff"; ctx.fillRect(x+w*12/37,y,w*4/37,h); ctx.fillRect(x,y+h*12/28,w,h*4/28); }
+function bunting(W,H,u,R){
+  for(const [y0,sag,fw,off] of [[H*0.0,H*0.07,46*u,0],[H*0.05,H*0.06,40*u,0.5]]){
+    ctx.strokeStyle="rgba(255,255,255,.85)"; ctx.lineWidth=2.5*u; ctx.beginPath();
+    for(let i=0;i<=60;i++){ const t=i/60; i?ctx.lineTo(t*W,y0+sag*4*t*(1-t)):ctx.moveTo(0,y0); } ctx.stroke();
+    const n=Math.round(W/(fw*1.6));
+    for(let i=0;i<n;i++){ const t=(i+off+0.25)/n; if(t>1) continue; const x=t*W, y=y0+sag*4*t*(1-t);
+      ctx.save(); ctx.translate(x,y); ctx.rotate((0.5-t)*0.25); ctx.shadowColor="rgba(0,0,0,.35)"; ctx.shadowBlur=6*u; dannebrog(-fw/2,0,fw); ctx.restore(); }
+  }
+  confetti(W,H,u,R,70,["#c8102e","#ffffff"]);
+}
+function lozenges(W,H,u){
+  const bh=Math.round(Math.min(W,H)*0.07), s=bh/2;
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,bh); ctx.clip(); ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,bh); ctx.fillStyle="#1f73c4";
+  for(let row=-1;row<=2;row++) for(let x=-s*2;x<W+s*2;x+=s*2){ const cx=x+(row%2?s:0), cy=row*s; ctx.beginPath(); ctx.moveTo(cx,cy-s); ctx.lineTo(cx+s,cy); ctx.lineTo(cx,cy+s); ctx.lineTo(cx-s,cy); ctx.fill(); }
+  ctx.restore(); ctx.fillStyle="#d4b062"; ctx.fillRect(0,bh,W,Math.max(3,5*u));
+}
+function bubbles(W,H,u,R,n){ for(let i=0;i<n;i++){ const x=R()*W,y=H*(0.15+R()*0.85),r=(3+R()*12)*u; ctx.strokeStyle=`rgba(255,215,120,${0.35+R()*0.4})`; ctx.lineWidth=2*u; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.stroke(); } }
+function beams(W,H,u){ for(const [x,a] of [[W*0.18,0.35],[W*0.5,0],[W*0.82,-0.35]]){ ctx.save(); ctx.translate(x,-10*u); ctx.rotate(a);
+  const L=H*1.1, g=ctx.createLinearGradient(0,0,0,L); g.addColorStop(0,"rgba(255,255,230,.32)"); g.addColorStop(1,"rgba(255,255,230,0)"); ctx.fillStyle=g;
+  ctx.beginPath(); ctx.moveTo(-14*u,0); ctx.lineTo(14*u,0); ctx.lineTo(L*0.22,L); ctx.lineTo(-L*0.22,L); ctx.fill(); ctx.restore(); } }
+function notes(W,H,u,R,n){ for(let i=0;i<n;i++){ const x=R()*W,y=R()*H*0.9,s=(16+R()*22)*u,dbl=R()<0.45; ctx.save(); ctx.translate(x,y); ctx.rotate((R()-0.5)*0.5); ctx.globalAlpha=0.35+R()*0.45; ctx.fillStyle="#fff";
+  const head=(hx)=>{ ctx.beginPath(); ctx.ellipse(hx,0,s*0.42,s*0.3,-0.35,0,7); ctx.fill(); ctx.fillRect(hx+s*0.32,-s*2,s*0.1,s*2); };
+  head(0); if(dbl){ head(s*1.1); ctx.fillRect(s*0.32,-s*2,s*1.2,s*0.22); } else { ctx.beginPath(); ctx.moveTo(s*0.42,-s*2); ctx.quadraticCurveTo(s*1.1,-s*1.5,s*0.8,-s*0.9); ctx.lineTo(s*0.42,-s*1.6); ctx.fill(); }
+  ctx.restore(); } }
+function sun(W,H,u){ const r=Math.max(W,H)*0.7, g=ctx.createRadialGradient(W,0,0,W,0,r); g.addColorStop(0,"rgba(255,214,110,.75)"); g.addColorStop(0.25,"rgba(255,170,60,.35)"); g.addColorStop(1,"rgba(255,150,40,0)"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.translate(W,0); ctx.globalAlpha=0.18; ctx.fillStyle="#fff2b0"; for(let k=0;k<9;k++){ ctx.rotate(Math.PI/2/9); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-r*1.2,-18*u); ctx.lineTo(-r*1.2,18*u); ctx.fill(); } ctx.restore(); }
+function bokeh(W,H,u,R,n,c){ for(let i=0;i<n;i++){ const x=R()*W,y=R()*H,r=(10+R()*40)*u; ctx.fillStyle=c; ctx.globalAlpha=0.06+R()*0.12; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill(); } ctx.globalAlpha=1; }
+function leaves(W,H,u,R,n){ const cols=["#e0782f","#c8452b","#d9a63a","#8a4b22"]; for(let i=0;i<n;i++){ const s=(14+R()*22)*u; ctx.save(); ctx.translate(R()*W,R()*H); ctx.rotate(R()*Math.PI*2); ctx.globalAlpha=0.75+R()*0.25; ctx.fillStyle=cols[i%cols.length];
+  ctx.beginPath(); ctx.moveTo(-s,0); ctx.quadraticCurveTo(0,-s*0.75,s,0); ctx.quadraticCurveTo(0,s*0.75,-s,0); ctx.fill(); ctx.strokeStyle="rgba(60,25,10,.55)"; ctx.lineWidth=1.5*u; ctx.beginPath(); ctx.moveTo(-s*1.25,0); ctx.lineTo(s*0.9,0); ctx.stroke(); ctx.restore(); } ctx.globalAlpha=1; }
+function petals(W,H,u,R,n){ const cols=["#ffd1e1","#ffffff","#ffb3cc"]; for(let i=0;i<n;i++){ const s=(7+R()*11)*u; ctx.save(); ctx.translate(R()*W,R()*H); ctx.rotate(R()*Math.PI*2); ctx.globalAlpha=0.7+R()*0.3; ctx.fillStyle=cols[i%cols.length];
+  ctx.beginPath(); ctx.moveTo(0,-s); ctx.bezierCurveTo(s*0.9,-s*0.6,s*0.6,s*0.7,0,s); ctx.bezierCurveTo(-s*0.6,s*0.7,-s*0.9,-s*0.6,0,-s); ctx.fill(); ctx.restore(); } ctx.globalAlpha=1; }
+function frost(W,H){ const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,Math.max(W,H)*0.75); g.addColorStop(0,"rgba(220,240,255,0)"); g.addColorStop(1,"rgba(220,240,255,.45)"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
+/** Draws the chosen event overlay. r = the photo area (tints stay inside it). */
+let _layer=null;
+/** Draw decorations on a separate layer and fade them in the lower part, where the text usually sits. */
+function particles(W,H,fn){
+  if(!_layer) _layer=document.createElement("canvas");
+  _layer.width=W; _layer.height=H; const main=ctx; ctx=_layer.getContext("2d"); ctx.clearRect(0,0,W,H);
+  try{ fn(); const g=ctx.createLinearGradient(0,H*0.4,0,H*0.75); g.addColorStop(0,"rgba(0,0,0,1)"); g.addColorStop(1,"rgba(0,0,0,.3)");
+    ctx.globalCompositeOperation="destination-in"; ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
+  finally{ ctx=main; }
+  ctx.drawImage(_layer,0,0);
+}
+function drawTheme(W,H,u,r){
+  if(S.tpl!=="event"||S.theme==="none") return;
+  const R=rng(W*7+H*13+S.theme.length*101), all={x:0,y:0,w:W,h:H}; r=r||all;
+  ctx.save();
+  switch(S.theme){
+    case "xmas":   tint(r,[[0,"rgba(120,0,10,.25)"],[1,"rgba(0,40,20,.25)"]],0,0,W,H); particles(W,H,()=>snow(W,H,u,R,170,10)); lights(W,H,u,R); break;
+    case "jdag":   tint(r,[[0,"rgba(10,45,140,.55)"],[1,"rgba(5,20,70,.35)"]],0,0,0,H); particles(W,H,()=>snow(W,H,u,R,320,22)); break;
+    case "ny":     tint(r,[[0,"rgba(10,10,40,.45)"],[1,"rgba(0,0,0,0)"]],0,0,0,H*0.7); particles(W,H,()=>fireworks(W,H,u,R)); break;
+    case "bday":   particles(W,H,()=>bunting(W,H,u,R)); break;
+    case "okt":    tint(r,[[0,"rgba(255,170,40,.18)"],[1,"rgba(120,60,0,.25)"]],0,0,0,H); particles(W,H,()=>bubbles(W,H,u,R,40)); lozenges(W,H,u); break;
+    case "music":  tint(r,[[0,"rgba(60,0,90,.35)"],[1,"rgba(0,0,0,0)"]],0,0,0,H); particles(W,H,()=>{beams(W,H,u); notes(W,H,u,R,14);}); break;
+    case "summer": sun(W,H,u); particles(W,H,()=>bokeh(W,H,u,R,30,"#fff2b0")); break;
+    case "autumn": tint(r,[[0,"rgba(200,90,20,.30)"],[1,"rgba(90,30,0,.25)"]],0,0,W,H); particles(W,H,()=>leaves(W,H,u,R,34)); break;
+    case "winter": tint(r,[[0,"rgba(120,180,255,.30)"],[1,"rgba(20,50,110,.25)"]],0,0,0,H); frost(W,H); particles(W,H,()=>snow(W,H,u,R,220,14)); break;
+    case "spring": tint(r,[[0,"rgba(255,170,200,.22)"],[1,"rgba(90,170,90,.22)"]],0,0,W,H); particles(W,H,()=>petals(W,H,u,R,55)); break;
+  }
+  ctx.restore();
+}
+function fmtPrice(v){ v=(v||"").trim(); return /^\d+([.,]\d{1,2})?$/.test(v)? v.replace(".",",")+",-" : v; }
+/** Round price sticker for the offer template. */
+function priceDisc(cx,cy,d,A,u){
+  if(S.tpl!=="offer") return;
+  const price=fmtPrice(S.price), before=fmtPrice(S.before), label=OFFERS.find(o=>o.id===S.offer).label;
+  if(!price && !before) return;
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(-0.14);
+  ctx.shadowColor="rgba(0,0,0,.5)"; ctx.shadowBlur=24*u; ctx.fillStyle=A.c; ctx.beginPath(); ctx.arc(0,0,d/2,0,7); ctx.fill(); ctx.shadowBlur=0;
+  ctx.strokeStyle=A.ink; ctx.globalAlpha=0.35; ctx.lineWidth=Math.max(2,2*u); ctx.beginPath(); ctx.arc(0,0,d/2-10*u,0,7); ctx.stroke(); ctx.globalAlpha=1;
+  const lb=fit(label, BADGE_FONT, d*0.62, d*0.2, d*0.085, 1.1);
+  const pr=fit(price, HEAD_FONT, d*0.66, d*0.34, d*0.36, 1);
+  const bf=before? fit("Før "+before, SUB_FONT, d*0.5, d*0.12, d*0.095, 1.1) : null;
+  const gap=d*0.02, total=(lb?lb.h:0)+(pr?pr.h:0)+(bf?bf.h:0)+gap*2;
+  let y=-total/2;
+  if(lb){ drawBlock(lb,-d/2,y,d,"center",A.ink); y+=lb.h+gap; }
+  if(pr){ drawBlock(pr,-d/2,y,d,"center",A.ink); y+=pr.h+gap; }
+  if(bf){ drawBlock(bf,-d/2,y,d,"center",A.ink); ctx.font=bf.font(bf.size); const tw=ctx.measureText(bf.lines[0]).width; ctx.fillStyle=A.ink; ctx.fillRect(-tw/2,y+bf.h*0.48,tw,Math.max(2,bf.size*0.08)); }
+  ctx.restore();
 }
 function LS(){ return S.logoSize==="small"?0.62:1; }
 let raf=0; function req(){ if(!raf) raf=requestAnimationFrame(()=>{raf=0;render();}); }
