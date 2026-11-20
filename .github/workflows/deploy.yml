@@ -228,4 +228,48 @@ jobs:
           workingDirectory: apps/jeopardy
           command: pages deploy dist --project-name=jeopardy --branch=main
 
+  # ── Deploy askepot (askepot.gokkehub.com) ───────────────────────────────────
+  # Static single-file tool in sites/askepot (outside the npm workspaces, so no
+  # build step). Creates the Pages project and attaches the custom domain on the
+  # first run; both steps are idempotent and never fail the job.
+  deploy-askepot:
+    name: Deploy askepot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure Pages project exists
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create askepot --production-branch=main
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy sites/askepot --project-name=askepot --branch=main
+
+      - name: Attach askepot.gokkehub.com
+        continue-on-error: true
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          api() { curl -sS -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" "$@"; }
+          echo "Pages custom domain:"
+          api -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/askepot/domains" \
+            --data '{"name":"askepot.gokkehub.com"}' | head -c 600; echo
+          ZONE=$(api "https://api.cloudflare.com/client/v4/zones?name=gokkehub.com" | jq -r '.result[0].id // empty')
+          if [ -n "$ZONE" ]; then
+            echo "DNS record:"
+            api -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
+              --data '{"type":"CNAME","name":"askepot","content":"askepot.pages.dev","proxied":true}' | head -c 600; echo
+          else
+            echo "No zone access for this token - add the DNS record in the dashboard if the domain is not active."
+          fi
+
   # trackguess, beatrank deploy jobs will be added once those apps are built
