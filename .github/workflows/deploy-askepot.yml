@@ -1,0 +1,25 @@
+name: Deploy askepot
+
+# Separate from deploy.yml so it never touches the other GokkeHub sites.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sites/askepot/**"
+      - ".github/workflows/deploy-askepot.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy askepot (askepot.gokkehub.com)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy sites/askepot --project-name=askepot --branch=main
